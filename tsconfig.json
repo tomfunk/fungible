@@ -10,5 +10,5 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["core/**/*", "tui/**/*", "mcp/**/*", "scripts/**/*", "tests/**/*", "vitest.config.ts"]
+  "include": ["core/**/*", "tui/**/*", "mcp/**/*", "api/**/*", "scripts/**/*", "tests/**/*", "vitest.config.ts"]
 }
