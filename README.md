@@ -22,6 +22,7 @@ A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs,
 - **Time ranges** — view Dashboard by week, month, quarter, year, or all time
 - **Trends** — month-by-month bar charts for expenses, income, net, or any category; per-range aggregation
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
+- **HTTP API** — REST-style API server for scripting and automation
 
 ## Try it (no account needed)
 
@@ -212,6 +213,33 @@ npm run import-csv /path/to/file.csv
 # Seed default category rules
 npm run seed-rules
 ```
+
+## HTTP API
+
+Exposes the same tools as the MCP server over HTTP — useful for scripting and automation.
+
+```bash
+npm run api
+# Listening on http://localhost:3456
+```
+
+**Endpoint:** `POST /tools/:name` with a JSON body.
+
+```bash
+curl -X POST http://localhost:3456/tools/spending_summary \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <key>" \
+  -d '{"year": 2026, "month": 5}'
+```
+
+**Configuration** (in `~/.fungible/.env`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FUNGIBLE_API_KEY` | _(none)_ | Bearer token required on all requests. If unset, auth is skipped (dev only). |
+| `FUNGIBLE_API_PORT` | `3456` | Port to listen on. |
+
+Available tools: same set as the MCP server below.
 
 ## MCP Server
 
