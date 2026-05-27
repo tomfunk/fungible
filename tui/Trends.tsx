@@ -5,13 +5,13 @@ import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type P
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL } from './ui.js';
+import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
 function viewColor(view: View): string {
-  if (view.mode === 'net')           return 'cyan';
+  if (view.mode === 'net')           return C_ACCENT;
   if (view.mode === 'income')        return C_POSITIVE;
   if (view.mode === 'flexbreakdown') return C_NEUTRAL;
   if (view.mode === 'flex' && view.flex) return FLEX_COLORS[view.flex];
@@ -111,7 +111,7 @@ export function Trends({
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="trends" showHints={showHints} />
       </Box>
 
@@ -123,7 +123,7 @@ export function Trends({
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
           {TRENDS_RANGES.map((r) => (
-            <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
+            <Text key={r} color={r === range ? C_ACCENT : undefined} dimColor={r !== range} bold={r === range}>
               {RANGE_LABELS[r]}
             </Text>
           ))}
@@ -153,7 +153,7 @@ export function Trends({
                 <Text dimColor>{''.padStart(13)}</Text>
                 <Text color={FLEX_COLORS.fixed} dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
                 <Text color={FLEX_COLORS.flexible} dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
-                <Text color="cyan"   dimColor>{'discr'}</Text>
+                <Text color={C_ACCENT}   dimColor>{'discr'}</Text>
               </Box>
             )}
             {visible.map((row, i) => {
@@ -167,7 +167,7 @@ export function Trends({
                 const net = row.income - row.expenses;
                 return (
                   <Box key={row.from} gap={1}>
-                    <Text color={isSelected ? 'cyan' : undefined}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>
                       {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                     </Text>
                     <Text color={net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>
@@ -186,7 +186,7 @@ export function Trends({
                 const discrF = Math.min(FLEX_BAR, Math.max(0, Math.round(((row.discretionary ?? 0) / flexMax) * FLEX_BAR)));
                 return (
                   <Box key={row.from} gap={2}>
-                    <Text color={isSelected ? 'cyan' : undefined}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>
                       {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                     </Text>
                     <Text color={isSelected ? 'white' : undefined} dimColor={!isSelected}>
@@ -194,14 +194,14 @@ export function Trends({
                     </Text>
                     <Text color={FLEX_COLORS.fixed} dimColor={!isSelected}>{'█'.repeat(fixedF) + '░'.repeat(FLEX_BAR - fixedF)}</Text>
                     <Text color="yellow" dimColor={!isSelected}>{'█'.repeat(flexF)  + '░'.repeat(FLEX_BAR - flexF)}</Text>
-                    <Text color="cyan"   dimColor={!isSelected}>{'█'.repeat(discrF) + '░'.repeat(FLEX_BAR - discrF)}</Text>
+                    <Text color={C_ACCENT}   dimColor={!isSelected}>{'█'.repeat(discrF) + '░'.repeat(FLEX_BAR - discrF)}</Text>
                   </Box>
                 );
               }
 
               return (
                 <Box key={row.from} gap={2}>
-                  <Text color={isSelected ? 'cyan' : undefined}>
+                  <Text color={isSelected ? C_ACCENT : undefined}>
                     {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                   </Text>
                   <Text color={isSelected ? 'white' : undefined} dimColor={!isSelected}>

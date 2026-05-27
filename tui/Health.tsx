@@ -4,7 +4,7 @@ import type { Screen } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
-import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL } from './ui.js';
+import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
 
 function savingsRateColor(rate: number): string {
   if (rate < 0)  return C_NEGATIVE;
@@ -112,7 +112,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Nav */}
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="health" showHints={showHints} />
       </Box>
 
@@ -220,7 +220,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text dimColor>{'FIRE number'.padEnd(L)}</Text>
           <Text bold>{fmt(fireNumber).padStart(12)}</Text>
           <Text dimColor>  {fmtPct(fireProgress * 100)}</Text>
-          <Text color="cyan" dimColor>{progressBar(fireProgress)}</Text>
+          <Text color={C_ACCENT} dimColor>{progressBar(fireProgress)}</Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Coast FIRE'.padEnd(L)}</Text>
@@ -229,7 +229,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           ) : coast === 0 ? (
             <Text color={C_POSITIVE} bold>{'Achieved!'.padStart(12)}</Text>
           ) : (
-            <Text bold color="cyan">{`~${Math.ceil(coast)} yr`.padStart(12)}</Text>
+            <Text bold color={C_ACCENT}>{`~${Math.ceil(coast)} yr`.padStart(12)}</Text>
           )}
           <Text dimColor>
             {coast === null
@@ -246,7 +246,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           ) : years === 0 ? (
             <Text color={C_POSITIVE} bold>{'Achieved!'.padStart(12)}</Text>
           ) : (
-            <Text bold color="cyan">{`~${Math.ceil(years)} yr`.padStart(12)}</Text>
+            <Text bold color={C_ACCENT}>{`~${Math.ceil(years)} yr`.padStart(12)}</Text>
           )}
         </Box>
       </Box>
@@ -257,10 +257,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
       <Box flexDirection="column" marginTop={1}>
         <Box gap={2}>
-          <Text color={currentDial === 'spend' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>
             {currentDial === 'spend' ? '▶' : ' '} {'Monthly spending'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'spend' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'spend' ? C_ACCENT : 'white'}>
             {'[ '}{fmt(monthlySpend).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -271,10 +271,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
 
         <Box gap={2}>
-          <Text color={currentDial === 'savings' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>
             {currentDial === 'savings' ? '▶' : ' '} {'Monthly savings'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'savings' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'savings' ? C_ACCENT : 'white'}>
             {'[ '}{fmt(monthlySavings).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -285,10 +285,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
 
         <Box gap={2}>
-          <Text color={currentDial === 'withdrawal' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>
             {currentDial === 'withdrawal' ? '▶' : ' '} {'Withdrawal rate'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'withdrawal' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : 'white'}>
             {'[ '}{fmtPct(withdrawal).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -299,10 +299,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
 
         <Box gap={2}>
-          <Text color={currentDial === 'growth' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>
             {currentDial === 'growth' ? '▶' : ' '} {'Growth rate'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'growth' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'growth' ? C_ACCENT : 'white'}>
             {'[ '}{fmtPct(growth).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>

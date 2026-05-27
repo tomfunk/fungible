@@ -5,7 +5,7 @@ import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE } from './ui.js';
+import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -145,7 +145,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="tags" showHints={showHints} />
       </Box>
 
@@ -191,12 +191,12 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
                   const isSelected = catCursor === i;
                   return (
                     <Box key={row.category} gap={2}>
-                      <Text color={isSelected ? 'cyan' : undefined}>
+                      <Text color={isSelected ? C_ACCENT : undefined}>
                         {isSelected ? '▶ ' : '  '}
                         {truncate(row.category, 20).padEnd(20)}
                       </Text>
                       <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
-                      <Text color="cyan" dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>
+                      <Text color={C_ACCENT} dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>
                     </Box>
                   );
                 })
@@ -212,9 +212,9 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
           </Box>
           {mode === 'search' && (
             <Box marginTop={1}>
-              <Text color="cyan">/</Text>
+              <Text color={C_ACCENT}>/</Text>
               <Text color="yellow">{search}</Text>
-              <Text color="cyan">█</Text>
+              <Text color={C_ACCENT}>█</Text>
               <Text dimColor>  Esc cancel</Text>
             </Box>
           )}
@@ -227,8 +227,8 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
               const isSelected = i === cursor;
               return (
                 <Box key={t.id} gap={2} marginTop={i === 0 ? 1 : 0}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
+                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                     {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
                   </Text>
                   <Text dimColor>{t.count} transaction{t.count !== 1 ? 's' : ''}</Text>
@@ -242,13 +242,13 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
           {statusMsg && <Text color="green">{statusMsg}</Text>}
 
           {mode === 'add' && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
               <Text bold>New Tag</Text>
               <Text dimColor>Type name · Enter save · Esc cancel</Text>
               <Box marginTop={1}>
                 <Text>Name: </Text>
                 <Text color="yellow">{newName}</Text>
-                <Text color="cyan">{CURSOR}</Text>
+                <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
             </Box>
           )}
@@ -259,7 +259,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
               <Box marginTop={1}>
                 <Text>Name: </Text>
                 <Text color="yellow">{newName}</Text>
-                <Text color="cyan">{CURSOR}</Text>
+                <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
             </Box>
           )}

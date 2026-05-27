@@ -4,7 +4,7 @@ import { runAgentTurn } from '../core/agent.js';
 import type { Message } from '../core/llm-provider.js';
 import { detectProvider, getProviderModel } from '../core/llm-provider.js';
 import { truncate } from './fmt.js';
-import { CURSOR } from './ui.js';
+import { CURSOR, C_ACCENT, C_DIM } from './ui.js';
 import type { Screen, TxFilter } from './App.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ export function Chat({
   if (!isActive && !displayMsgs.length && !isStreaming) {
     const noKey = label === 'no key set';
     return (
-      <Box borderStyle="single" borderColor="gray" paddingX={1}>
+      <Box borderStyle="single" borderColor={C_DIM} paddingX={1}>
         <Text dimColor>agent  </Text>
         {noKey
           ? <Text dimColor color="yellow">no API key — add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env</Text>
@@ -180,11 +180,11 @@ export function Chat({
   }
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={isActive ? 'cyan' : 'gray'} paddingX={1}>
+    <Box flexDirection="column" borderStyle="single" borderColor={isActive ? C_ACCENT : C_DIM} paddingX={1}>
 
       {/* Header */}
       <Box justifyContent="space-between">
-        <Text color={isActive ? 'cyan' : undefined} dimColor={!isActive}>
+        <Text color={isActive ? C_ACCENT : undefined} dimColor={!isActive}>
           agent ({label})
         </Text>
         {isActive
@@ -198,7 +198,7 @@ export function Chat({
         if (msg.role === 'user') {
           return (
             <Box key={i} gap={1}>
-              <Text color="cyan">You</Text>
+              <Text color={C_ACCENT}>You</Text>
               <Text>{truncate(msg.text, colW - 6)}</Text>
             </Box>
           );
@@ -231,11 +231,11 @@ export function Chat({
         <Box gap={1}>
           <Text color="green">Agent</Text>
           <Text wrap="wrap">{streamText}</Text>
-          <Text color="cyan" dimColor>{CURSOR}</Text>
+          <Text color={C_ACCENT} dimColor>{CURSOR}</Text>
         </Box>
       ) : isStreaming && !confirm ? (
         <Box>
-          <Text dimColor color="cyan">⟳ thinking…</Text>
+          <Text dimColor color={C_ACCENT}>⟳ thinking…</Text>
         </Box>
       ) : null}
 
@@ -256,9 +256,9 @@ export function Chat({
       {/* Input line */}
       {isActive && !confirm && (
         <Box>
-          <Text color="cyan">› </Text>
+          <Text color={C_ACCENT}>› </Text>
           <Text>{input}</Text>
-          {!isStreaming && <Text color="cyan">{CURSOR}</Text>}
+          {!isStreaming && <Text color={C_ACCENT}>{CURSOR}</Text>}
         </Box>
       )}
     </Box>

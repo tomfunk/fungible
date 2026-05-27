@@ -4,7 +4,7 @@ import { getAccountsWithBalances, type AccountBalance, type HistoryRow } from '.
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE } from './ui.js';
+import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
 
 const BAR_WIDTH = 32;
 const PAGE = 20;
@@ -125,7 +125,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="networth" showHints={showHints} />
       </Box>
 
@@ -207,7 +207,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 <Text bold>History</Text>
                 <Box gap={2}>
                   {NW_RANGES.map((r) => (
-                    <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
+                    <Text key={r} color={r === range ? C_ACCENT : undefined} dimColor={r !== range} bold={r === range}>
                       {NW_RANGE_LABELS[r]}
                     </Text>
                   ))}
@@ -219,7 +219,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   const isSelected = pageStart + i === cursor;
                   return (
                     <Box key={row.date} gap={2}>
-                      <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
+                      <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                         {row.label.padEnd(labelW)}
                       </Text>
                       <Text color={row.net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>

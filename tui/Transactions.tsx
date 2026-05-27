@@ -17,7 +17,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_MANUAL } from './ui.js';
+import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
 
 type Tx = TxRow;
 
@@ -416,7 +416,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="transactions" showHints={showHints} />
       </Box>
       <Box marginTop={1}>
@@ -433,25 +433,25 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
       {mode === 'search' && (
         <Box marginTop={1}>
-          <Text color="cyan">/</Text>
+          <Text color={C_ACCENT}>/</Text>
           <Text>{searchInput}</Text>
-          <Text color="cyan">{CURSOR}</Text>
+          <Text color={C_ACCENT}>{CURSOR}</Text>
           <Text dimColor>  Esc cancel</Text>
         </Box>
       )}
       <Box marginTop={1}><Divider /></Box>
 
       <Box gap={2} marginTop={1}>
-        <Text color={sort.startsWith('date') ? 'cyan' : undefined} dimColor={!sort.startsWith('date')}>
+        <Text color={sort.startsWith('date') ? C_ACCENT : undefined} dimColor={!sort.startsWith('date')}>
           {'  DATE ' + (sort === 'date-desc' ? '↓' : sort === 'date-asc' ? '↑' : ' ') + '   '}
         </Text>
-        <Text color={sort.startsWith('name') ? 'cyan' : undefined} dimColor={!sort.startsWith('name')}>
+        <Text color={sort.startsWith('name') ? C_ACCENT : undefined} dimColor={!sort.startsWith('name')}>
           {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(descW)}
         </Text>
-        <Text color={sort.startsWith('amount') ? 'cyan' : undefined} dimColor={!sort.startsWith('amount')}>
+        <Text color={sort.startsWith('amount') ? C_ACCENT : undefined} dimColor={!sort.startsWith('amount')}>
           {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(10)}
         </Text>
-        <Text color={sort.startsWith('category') ? 'cyan' : undefined} dimColor={!sort.startsWith('category')}>
+        <Text color={sort.startsWith('category') ? C_ACCENT : undefined} dimColor={!sort.startsWith('category')}>
           {'CATEGORY' + (sort === 'category-asc' ? ' ↑' : sort === 'category-desc' ? ' ↓' : '')}
         </Text>
       </Box>
@@ -464,7 +464,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         return (
           <Box key={tx.id} flexDirection="column">
             <Box gap={2}>
-              <Text color={isSelected ? 'cyan' : undefined} dimColor={isIgnored && !isSelected}>
+              <Text color={isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
                 {isSelected ? '▶ ' : '  '}{tx.date}
               </Text>
               <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
@@ -480,7 +480,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             </Box>
             {hasTags && isSelected && (
               <Box paddingLeft={14}>
-                <Text color="cyan">{truncate('# ' + tx.tag_names, inner - 14)}</Text>
+                <Text color={C_ACCENT}>{truncate('# ' + tx.tag_names, inner - 14)}</Text>
               </Box>
             )}
           </Box>
@@ -507,7 +507,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               const has = txTagIds.has(t.id);
               return (
                 <Box key={t.id}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
                   <Text color={has ? 'green' : undefined} dimColor={!isSelected && !has}>
                     {has ? '● ' : '○ '}{t.name}
                   </Text>
@@ -523,12 +523,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       )}
 
       {mode === 'tag-all' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold>Tag all <Text color="cyan">{txs.length}</Text> visible transactions</Text>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
+          <Text bold>Tag all <Text color={C_ACCENT}>{txs.length}</Text> visible transactions</Text>
           <Box marginTop={1} gap={2}>
             <Text dimColor>Tag: </Text>
             <Text color="yellow">{tagInput}</Text>
-            <Text color="cyan">{CURSOR}</Text>
+            <Text color={C_ACCENT}>{CURSOR}</Text>
           </Box>
           {filteredTags.length === 0 && tagInput ? (
             <Box marginTop={1}><Text dimColor>Enter to create & apply "{tagInput}"</Text></Box>
@@ -537,7 +537,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               const isSel = i === tagCursor;
               return (
                 <Box key={t.id}>
-                  <Text color={isSel ? 'cyan' : undefined}>{isSel ? '▶ ' : '  '}</Text>
+                  <Text color={isSel ? C_ACCENT : undefined}>{isSel ? '▶ ' : '  '}</Text>
                   <Text dimColor={!isSel}>{t.name}</Text>
                 </Box>
               );
@@ -548,15 +548,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       )}
 
       {mode === 'edit-all' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="magenta" paddingX={2} paddingY={1}>
-          <Text bold>Set category for all <Text color="cyan">{txs.length}</Text> visible transactions</Text>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_MANUAL} paddingX={2} paddingY={1}>
+          <Text bold>Set category for all <Text color={C_ACCENT}>{txs.length}</Text> visible transactions</Text>
           <Text dimColor>↑↓ select  ·  Enter apply  ·  Esc cancel</Text>
           <Box flexDirection="column" marginTop={1}>
             {visibleCats.map((cat, i) => {
               const idx = catWinStart + i;
               const isSel = idx === editCatCursor;
               return (
-                <Text key={cat} color={isSel ? 'cyan' : undefined} dimColor={!isSel}>
+                <Text key={cat} color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>
                   {isSel ? '▶ ' : '  '}{cat}
                 </Text>
               );
@@ -566,34 +566,34 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       )}
 
       {mode === 'edit' && selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
 
           <Box marginTop={1} gap={3}>
             <Box flexDirection="column">
-              <Text color={editField === 'name' ? 'cyan' : 'gray'} bold>Name</Text>
+              <Text color={editField === 'name' ? C_ACCENT : C_DIM} bold>Name</Text>
               {editField === 'name'
-                ? <Box><Text color="yellow">{editName || <Text dimColor>type new name…</Text>}</Text><Text color="cyan">█</Text></Box>
+                ? <Box><Text color="yellow">{editName || <Text dimColor>type new name…</Text>}</Text><Text color={C_ACCENT}>█</Text></Box>
                 : <Text dimColor>{editName || '(unchanged)'}</Text>
               }
             </Box>
 
             <Box flexDirection="column">
-              <Text color={editField === 'category' ? 'cyan' : 'gray'} bold>Category</Text>
+              <Text color={editField === 'category' ? C_ACCENT : C_DIM} bold>Category</Text>
               {editField === 'category' ? (
                 <Box flexDirection="column">
                   {visibleCats.map((cat, i) => {
                     const idx = catWinStart + i;
                     const isSel = idx === editCatCursor;
                     return (
-                      <Text key={cat} color={isSel ? 'cyan' : undefined} dimColor={!isSel}>
+                      <Text key={cat} color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>
                         {isSel ? '▶ ' : '  '}{cat}
                       </Text>
                     );
                   })}
                 </Box>
               ) : (
-                <Text color="cyan">{categories[editCatCursor]}</Text>
+                <Text color={C_ACCENT}>{categories[editCatCursor]}</Text>
               )}
             </Box>
           </Box>
@@ -601,17 +601,17 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} gap={3}>
             {editField === 'name'
               ? <Text dimColor>Enter / → to pick category  ·  Esc cancel</Text>
-              : <><Text color="cyan">[t] / Enter  this transaction</Text><Text color="cyan">[r] make rule</Text><Text dimColor>← name  ·  Esc cancel</Text></>
+              : <><Text color={C_ACCENT}>[t] / Enter  this transaction</Text><Text color={C_ACCENT}>[r] make rule</Text><Text dimColor>← name  ·  Esc cancel</Text></>
             }
           </Box>
         </Box>
       )}
 
       {mode === 'edit-rule' && selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="magenta" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_MANUAL} paddingX={2} paddingY={1}>
           <Text bold>Make Rule</Text>
           {categories[editCatCursor] !== selected.category && (
-            <Text dimColor>Category: <Text color="red">{selected.category}</Text> → <Text color="cyan">{categories[editCatCursor]}</Text></Text>
+            <Text dimColor>Category: <Text color="red">{selected.category}</Text> → <Text color={C_ACCENT}>{categories[editCatCursor]}</Text></Text>
           )}
           {editName.trim().length > 0 && (
             <Text dimColor>Name: <Text color="green">{editName}</Text></Text>

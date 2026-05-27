@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
 import { DATA_DIR } from '../core/paths.js';
+import { C_ACCENT } from './ui.js';
 
 type Step =
   | 'welcome'
@@ -176,7 +177,7 @@ export function Setup() {
   return (
     <Box flexDirection="column" paddingX={3} paddingY={2}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">fungible  </Text>
+        <Text bold color={C_ACCENT}>fungible  </Text>
         <Text dimColor>setup</Text>
       </Box>
 
@@ -207,8 +208,8 @@ export function Setup() {
           </Text>
           <Box marginTop={1}>
             <Text>Do you have a Plaid account?  </Text>
-            <Text color="cyan">[y] Yes  </Text>
-            <Text color="cyan">[n] Skip</Text>
+            <Text color={C_ACCENT}>[y] Yes  </Text>
+            <Text color={C_ACCENT}>[n] Skip</Text>
           </Box>
         </Box>
       )}
@@ -220,7 +221,7 @@ export function Setup() {
           <Box marginTop={1}>
             <Text>Client ID: </Text>
             <Text color="yellow">{clientId}</Text>
-            <Text color="cyan">█</Text>
+            <Text color={C_ACCENT}>█</Text>
           </Box>
           <Text dimColor>Enter to continue · Esc back</Text>
         </Box>
@@ -233,7 +234,7 @@ export function Setup() {
           <Box marginTop={1}>
             <Text>Secret: </Text>
             <Text color="yellow">{'*'.repeat(secret.length)}</Text>
-            <Text color="cyan">█</Text>
+            <Text color={C_ACCENT}>█</Text>
           </Box>
           <Text dimColor>Enter to continue · Esc back</Text>
         </Box>
@@ -246,7 +247,7 @@ export function Setup() {
           <Box marginTop={1} gap={2}>
             <Text>Environment: </Text>
             <Text dimColor>← </Text>
-            <Text color="cyan">{PLAID_ENVS[plaidEnvIdx]}</Text>
+            <Text color={C_ACCENT}>{PLAID_ENVS[plaidEnvIdx]}</Text>
             <Text dimColor> →</Text>
           </Box>
           <Text dimColor>← → to change · Enter to save</Text>
@@ -259,8 +260,8 @@ export function Setup() {
           <Text dimColor>Connect your first bank via Plaid (opens in browser)</Text>
           <Box marginTop={1}>
             <Text>Link now?  </Text>
-            <Text color="cyan">[y] Yes  </Text>
-            <Text color="cyan">[n] Skip</Text>
+            <Text color={C_ACCENT}>[y] Yes  </Text>
+            <Text color={C_ACCENT}>[n] Skip</Text>
           </Box>
         </Box>
       )}
@@ -287,8 +288,8 @@ export function Setup() {
           <Text dimColor>You can edit or delete these anytime from the Rules screen.</Text>
           <Box marginTop={1}>
             <Text>Seed rules?  </Text>
-            <Text color="cyan">[y] Yes  </Text>
-            <Text color="cyan">[n] Skip</Text>
+            <Text color={C_ACCENT}>[y] Yes  </Text>
+            <Text color={C_ACCENT}>[n] Skip</Text>
           </Box>
         </Box>
       )}
@@ -300,7 +301,7 @@ export function Setup() {
             <Text dimColor>{seedResult.rules} rules seeded · {seedResult.recategorized} transactions recategorized</Text>
           )}
           <Box marginTop={1} flexDirection="column">
-            <Text>Run <Text color="cyan">fungible</Text> to launch.</Text>
+            <Text>Run <Text color={C_ACCENT}>fungible</Text> to launch.</Text>
           </Box>
           <Box marginTop={1}><Text dimColor>Press Enter to exit</Text></Box>
         </Box>

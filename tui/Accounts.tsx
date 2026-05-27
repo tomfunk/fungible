@@ -12,7 +12,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY } from './ui.js';
+import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_ACCENT } from './ui.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -512,7 +512,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Header */}
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="accounts" showHints={showHints} />
       </Box>
 
@@ -557,10 +557,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
                 return (
                   <Box key={acct.id} gap={2}>
-                    <Text color={isSelected ? 'cyan' : undefined}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>
                       {isSelected ? '▶ ' : '  '}
                     </Text>
-                    <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
+                    <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                       {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
                     <Text dimColor={!isSelected} color={isSelected && acct.nickname ? 'yellow' : undefined}>{acct.nickname ? '✎' : ' '}</Text>
@@ -589,7 +589,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="red" paddingX={2} paddingY={1}>
               <Text bold color="red">Delete account — this cannot be undone</Text>
               <Box marginTop={1} flexDirection="column">
-                <Text><Text color="cyan">{selectedAcct.nickname ?? selectedAcct.name}</Text>  {selectedAcct.mask ? `···${selectedAcct.mask}` : ''}</Text>
+                <Text><Text color={C_ACCENT}>{selectedAcct.nickname ?? selectedAcct.name}</Text>  {selectedAcct.mask ? `···${selectedAcct.mask}` : ''}</Text>
                 {selectedAcct.id.startsWith('manual-')
                   ? <Text dimColor>Removes this asset and its balance history.</Text>
                   : <Text dimColor>Removes this account, all its transactions, and balance history.</Text>
@@ -610,7 +610,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box marginTop={1}>
                 <Text>Nickname: </Text>
                 <Text color="yellow">{nicknameInput}</Text>
-                <Text color="cyan">{CURSOR}</Text>
+                <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
             </Box>
@@ -623,7 +623,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box marginTop={1}>
                 <Text>New value: $</Text>
                 <Text color="yellow">{updateValueInput}</Text>
-                <Text color="cyan">█</Text>
+                <Text color={C_ACCENT}>█</Text>
               </Box>
               {updateValueError && <Text color="red">{updateValueError}</Text>}
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
@@ -632,22 +632,22 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           {/* Edit panel */}
           {acctMode === 'edit' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
               <Text bold>Edit: {selectedAcct.name}{selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}</Text>
               <Box marginTop={1} flexDirection="column" gap={1}>
                 <Box gap={2}>
-                  <Text color={editField === 'type' ? 'cyan' : 'white'}>
+                  <Text color={editField === 'type' ? C_ACCENT : 'white'}>
                     {editField === 'type' ? '▶ ' : '  '}Type
                   </Text>
-                  <Text color={editField === 'type' ? 'cyan' : undefined}>
+                  <Text color={editField === 'type' ? C_ACCENT : undefined}>
                     {'← '}{editType}{'  →'}
                   </Text>
                 </Box>
                 <Box gap={2}>
-                  <Text color={editField === 'subtype' ? 'cyan' : 'white'}>
+                  <Text color={editField === 'subtype' ? C_ACCENT : 'white'}>
                     {editField === 'subtype' ? '▶ ' : '  '}Subtype
                   </Text>
-                  <Text color={editField === 'subtype' ? 'cyan' : 'yellow'}>
+                  <Text color={editField === 'subtype' ? C_ACCENT : 'yellow'}>
                     {'← '}{editSubtype || '—'}{'  →'}
                   </Text>
                 </Box>
@@ -668,11 +668,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               return (
                 <Box key={pair.csvId} flexDirection="column" marginBottom={1}>
                   <Box gap={2}>
-                    <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶' : ' '}</Text>
                     <Text dimColor>{truncate(pair.accountName, 20).padEnd(20)}</Text>
                     <Text color="yellow">CSV</Text>
                     <Text dimColor>{pair.csvDate}</Text>
-                    <Text color={isSelected ? 'cyan' : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
                     <Text color="red">${Math.abs(pair.csvAmount).toFixed(2)}</Text>
                   </Box>
                   <Box gap={2}>
@@ -695,10 +695,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'landing' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Box flexDirection="column" gap={1} marginTop={1}>
-                <Text color="cyan">[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
-                <Text color="cyan">[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
-                <Text color="cyan">[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
-                <Text color={syncStatus === 'syncing' ? 'yellow' : 'cyan'}>
+                <Text color={C_ACCENT}>[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
+                <Text color={C_ACCENT}>[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+                <Text color={C_ACCENT}>[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
+                <Text color={syncStatus === 'syncing' ? 'yellow' : C_ACCENT}>
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
               </Box>
@@ -727,7 +727,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text dimColor>Enter the path to your CSV file:</Text>
               <Box>
                 <Text>Path: </Text>
-                <Text color="yellow">{filePath}<Text color="cyan">█</Text></Text>
+                <Text color="yellow">{filePath}<Text color={C_ACCENT}>█</Text></Text>
               </Box>
               {fileError && <Text color="red">{fileError}</Text>}
               <Text dimColor>Press Enter to load · Esc back</Text>
@@ -749,7 +749,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   const sample = csvRows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(', ');
                   return (
                     <Box key={i} gap={2}>
-                      <Text color={i === colCursor ? 'cyan' : 'white'} dimColor={i !== colCursor}>
+                      <Text color={i === colCursor ? C_ACCENT : 'white'} dimColor={i !== colCursor}>
                         {i === colCursor ? '▶ ' : '  '}
                         {h.padEnd(24)}
                         <Text dimColor>  {truncate(sample, 36)}</Text>
@@ -771,16 +771,16 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'map-amount-mode' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>How is the amount structured?</Text>
-              <Text color="cyan">[s] Single column  <Text dimColor>(one column, positive or negative)</Text></Text>
-              <Text color="cyan">[d] Debit / Credit  <Text dimColor>(two separate columns)</Text></Text>
+              <Text color={C_ACCENT}>[s] Single column  <Text dimColor>(one column, positive or negative)</Text></Text>
+              <Text color={C_ACCENT}>[d] Debit / Credit  <Text dimColor>(two separate columns)</Text></Text>
             </Box>
           )}
 
           {addStep === 'direction' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>In column <Text color="yellow">"{headers[amountCol!]}"</Text>, does a positive number mean...</Text>
-              <Text color="cyan">[i] Inflow  <Text dimColor>(money coming in)</Text></Text>
-              <Text color="cyan">[o] Outflow <Text dimColor>(money going out)</Text></Text>
+              <Text color={C_ACCENT}>[i] Inflow  <Text dimColor>(money coming in)</Text></Text>
+              <Text color={C_ACCENT}>[o] Outflow <Text dimColor>(money going out)</Text></Text>
             </Box>
           )}
 
@@ -791,7 +791,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box flexDirection="column" marginTop={1}>
                 {csvAccounts.map((acct, i) => (
                   <Box key={acct.id} gap={2}>
-                    <Text color={i === csvAccountCursor ? 'cyan' : 'white'} dimColor={i !== csvAccountCursor}>
+                    <Text color={i === csvAccountCursor ? C_ACCENT : 'white'} dimColor={i !== csvAccountCursor}>
                       {i === csvAccountCursor ? '▶ ' : '  '}{acct.name}
                       <Text dimColor>  {acct.mask ? `···${acct.mask}` : ''}</Text>
                     </Text>
@@ -805,7 +805,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Ready to import</Text>
               <Text>File: <Text color="yellow">{filePath}</Text></Text>
-              <Text>Account: <Text color="cyan">{csvAccounts[csvAccountCursor]?.name}</Text></Text>
+              <Text>Account: <Text color={C_ACCENT}>{csvAccounts[csvAccountCursor]?.name}</Text></Text>
               <Text>{csvRows.length} rows · sample preview:</Text>
               <Box flexDirection="column" marginTop={1}>
                 <Box gap={2}>
@@ -825,7 +825,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 })}
               </Box>
               <Box marginTop={1} gap={4}>
-                <Text color="cyan">[y] Import</Text>
+                <Text color={C_ACCENT}>[y] Import</Text>
                 <Text color="red">[n] Cancel</Text>
               </Box>
             </Box>
@@ -847,7 +847,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box marginTop={1}>
                 <Text>Name: </Text>
                 <Text color="yellow">{manualName}</Text>
-                <Text color="cyan">█</Text>
+                <Text color={C_ACCENT}>█</Text>
               </Box>
               <Text dimColor>Enter to continue · Esc cancel</Text>
             </Box>
@@ -856,11 +856,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'manual-value' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Manual Asset — Current Value</Text>
-              <Text dimColor>Asset: <Text color="cyan">{manualName}</Text></Text>
+              <Text dimColor>Asset: <Text color={C_ACCENT}>{manualName}</Text></Text>
               <Box marginTop={1}>
                 <Text>Value: $</Text>
                 <Text color="yellow">{manualValue}</Text>
-                <Text color="cyan">█</Text>
+                <Text color={C_ACCENT}>█</Text>
               </Box>
               {manualValueError && <Text color="red">{manualValueError}</Text>}
               <Text dimColor>Enter to save · Esc back</Text>
@@ -870,7 +870,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'manual-done' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold color="green">Asset added</Text>
-              <Text><Text color="cyan">{manualName}</Text> added to your accounts.</Text>
+              <Text><Text color={C_ACCENT}>{manualName}</Text> added to your accounts.</Text>
               <Text dimColor>Update its value anytime from the Accounts tab with [v].</Text>
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>

@@ -14,7 +14,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL } from './ui.js';
+import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
 
 const BAR_WIDTH = 20;
 
@@ -275,7 +275,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="dashboard" showHints={showHints} />
       </Box>
 
@@ -293,7 +293,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
           {RANGES.map((r) => (
-            <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
+            <Text key={r} color={r === range ? C_ACCENT : undefined} dimColor={r !== range} bold={r === range}>
               {RANGE_LABELS[r]}
             </Text>
           ))}
@@ -314,11 +314,11 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       {/* Search bar */}
       {(searchMode || search) && (
         <Box gap={2} marginTop={1}>
-          <Text color="cyan">/</Text>
+          <Text color={C_ACCENT}>/</Text>
           {searchMode ? (
-            <Text>{searchInput}<Text color="cyan">{CURSOR}</Text></Text>
+            <Text>{searchInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text>
           ) : (
-            <Text color="cyan">{search}</Text>
+            <Text color={C_ACCENT}>{search}</Text>
           )}
           {searchStats && (
             <Text dimColor>
@@ -358,8 +358,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                 const spendColor = drift ? driftColor(drift.current, drift.avg12m) : C_NEGATIVE;
                 return (
                   <Box key={acct.id} gap={2}>
-                    <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
-                    <Text color={isFiltered ? 'yellow' : isSelected ? 'cyan' : undefined} dimColor={!isSelected && !isFiltered}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶' : ' '}</Text>
+                    <Text color={isFiltered ? 'yellow' : isSelected ? C_ACCENT : undefined} dimColor={!isSelected && !isFiltered}>
                       {(acct.name.length > dashAcctNameW ? acct.name.slice(0, dashAcctNameW - 1) + '…' : acct.name).padEnd(dashAcctNameW)}
                     </Text>
                     {driftMode
@@ -431,7 +431,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                       const nameW = driftCatNameW;
                       return (
                         <Box key={`${row.category}-${i}`} gap={2}>
-                          <Text color={isSelected ? 'cyan' : color}>
+                          <Text color={isSelected ? C_ACCENT : color}>
                             {isSelected ? '▶ ' : '  '}
                             {row.category.length > nameW ? row.category.slice(0, nameW - 1) + '…' : row.category.padEnd(nameW)}
                           </Text>
@@ -453,12 +453,12 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                       const isSelected = catCursor === i;
                       return (
                         <Box key={`${row.category}-${i}`} gap={2}>
-                          <Text color={isSelected ? 'cyan' : undefined}>
+                          <Text color={isSelected ? C_ACCENT : undefined}>
                             {isSelected ? '▶ ' : '  '}
                             {row.category.length > dashCatNameW ? row.category.slice(0, dashCatNameW - 1) + '…' : row.category.padEnd(dashCatNameW)}
                           </Text>
                           <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
-                          <Text color="cyan" dimColor={!isSelected}>
+                          <Text color={C_ACCENT} dimColor={!isSelected}>
                             {bar(row.total, maxCategorySpend, dashBarW)}
                           </Text>
                         </Box>

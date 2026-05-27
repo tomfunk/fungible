@@ -16,11 +16,13 @@ export const C_NEGATIVE = 'red'     as const;  // expenses, negative values, lia
 export const C_WARNING  = 'yellow'  as const;  // caution, approaching limits, moderate risk
 export const C_NEUTRAL  = 'white'   as const;  // neutral / neither good nor bad
 export const C_MANUAL   = 'magenta' as const;  // manual overrides, delta indicator
+export const C_ACCENT   = 'cyan'    as const;  // primary accent: selection, focus, brand, interactive elements
+export const C_DIM      = 'gray'    as const;  // inactive / unfocused elements (complement to C_ACCENT)
 
 export const FLEX_COLORS: Record<'fixed' | 'flexible' | 'discretionary', string> = {
   fixed:         C_NEGATIVE,
   flexible:      C_WARNING,
-  discretionary: 'cyan',
+  discretionary: C_ACCENT,
 };
 
 export function useTerminalWidth(): number {
