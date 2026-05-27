@@ -7,7 +7,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR, MONTHS } from './ui.js';
 
 type Tx = TxRow;
 
@@ -33,8 +33,6 @@ function fmt(amount: number) {
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
 }
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function applyRuleToAll() {
   const rows = db.prepare(
@@ -73,8 +71,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [accountName, setAccountName] = useState<string | null>(initialFilter?.accountName ?? null);
   const [sort, setSort] = useState<SortMode>('date-desc');
   const [bounds] = useState(getDataBounds);
-  const [search, setSearch] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState(initialFilter?.search ?? '');
+  const [searchInput, setSearchInput] = useState(initialFilter?.search ?? '');
   const [txs, setTxs] = useState<Tx[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
@@ -350,13 +348,16 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
     if (mode === 'list') {
       if (key.tab) { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
+      // Pass active search to adjacent screens (1=dashboard, 3=trends)
+      if (input === '1') { onNavigate('dashboard', search ? { search } : undefined); return; }
+      if (input === '3') { onNavigate('trends', search ? { search } : undefined); return; }
       if (handleNavKey(input, 'transactions', onNavigate)) return;
       if (key.escape) {
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
         if (tag) { setTag(null); return; }
         if (account) { setAccount(null); setAccountName(null); return; }
-        onNavigate('dashboard');
+        onNavigate('dashboard', search ? { search } : undefined);
         return;
       }
       if (key.leftArrow && from) {
@@ -485,7 +486,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         <Box marginTop={1}>
           <Text color="cyan">/</Text>
           <Text>{searchInput}</Text>
-          <Text color="cyan">█</Text>
+          <Text color="cyan">{CURSOR}</Text>
           <Text dimColor>  Esc cancel</Text>
         </Box>
       )}
@@ -578,7 +579,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} gap={2}>
             <Text dimColor>Tag: </Text>
             <Text color="yellow">{tagInput}</Text>
-            <Text color="cyan">▊</Text>
+            <Text color="cyan">{CURSOR}</Text>
           </Box>
           {filteredTags.length === 0 && tagInput ? (
             <Box marginTop={1}><Text dimColor>Enter to create & apply "{tagInput}"</Text></Box>
