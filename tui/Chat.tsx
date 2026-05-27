@@ -4,6 +4,7 @@ import { runAgentTurn } from '../core/agent.js';
 import type { Message } from '../core/llm-provider.js';
 import { detectProvider, getProviderModel } from '../core/llm-provider.js';
 import { truncate } from '../core/fmt.js';
+import { CURSOR } from './ui.js';
 import type { Screen, TxFilter } from './App.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -230,7 +231,7 @@ export function Chat({
         <Box gap={1}>
           <Text color="green">Agent</Text>
           <Text wrap="wrap">{streamText}</Text>
-          <Text color="cyan" dimColor>▊</Text>
+          <Text color="cyan" dimColor>{CURSOR}</Text>
         </Box>
       ) : isStreaming && !confirm ? (
         <Box>
@@ -257,7 +258,7 @@ export function Chat({
         <Box>
           <Text color="cyan">› </Text>
           <Text>{input}</Text>
-          {!isStreaming && <Text color="cyan">▊</Text>}
+          {!isStreaming && <Text color="cyan">{CURSOR}</Text>}
         </Box>
       )}
     </Box>

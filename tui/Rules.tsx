@@ -7,11 +7,10 @@ import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, get
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR, FLEX_COLORS } from './ui.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-const FLEX_COLORS: Record<string, string> = { fixed: 'red', flexible: 'yellow', discretionary: 'cyan' };
 type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name' | 'rename-category';
 type Section = 'rules' | 'names' | 'categories';
 
@@ -567,14 +566,14 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
           <Text bold>New Category</Text>
           <Text dimColor>Type a name · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="cyan">▊</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="cyan">{CURSOR}</Text></Text></Box>
         </Box>
       )}
       {mode === 'rename-category' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
           <Text bold>Rename Category</Text>
           <Text dimColor>Updates all transactions, rules, and hidden settings · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{renameCatInput}<Text color="cyan">▊</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{renameCatInput}<Text color="cyan">{CURSOR}</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-min-amount' && (

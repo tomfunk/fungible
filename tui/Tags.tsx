@@ -5,7 +5,7 @@ import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../cor
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR } from './ui.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -249,7 +249,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
               <Box marginTop={1}>
                 <Text>Name: </Text>
                 <Text color="yellow">{newName}</Text>
-                <Text color="cyan">▊</Text>
+                <Text color="cyan">{CURSOR}</Text>
               </Box>
             </Box>
           )}
@@ -260,7 +260,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
               <Box marginTop={1}>
                 <Text>Name: </Text>
                 <Text color="yellow">{newName}</Text>
-                <Text color="cyan">▊</Text>
+                <Text color="cyan">{CURSOR}</Text>
               </Box>
             </Box>
           )}

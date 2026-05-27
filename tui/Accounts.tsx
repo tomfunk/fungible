@@ -10,7 +10,7 @@ import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount 
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY } from './ui.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,8 +46,6 @@ const SUBTYPES: Record<string, string[]> = {
   loan:        ['mortgage', 'student', 'auto', 'home equity', 'personal', 'line of credit', 'business', 'other'],
   other:       [],
 };
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -581,7 +579,6 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1}>
               {linkedAccounts.map((acct, i) => {
                 const isSelected = i === acctCursor;
-                const SUBTYPE_DISPLAY: Record<string, string> = { 'crypto exchange': 'crypto' };
                 const raw = acct.subtype ?? acct.type;
                 const label = (SUBTYPE_DISPLAY[raw] ?? raw).padEnd(14);
                 const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
@@ -640,7 +637,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box marginTop={1}>
                 <Text>Nickname: </Text>
                 <Text color="yellow">{nicknameInput}</Text>
-                <Text color="cyan">▊</Text>
+                <Text color="cyan">{CURSOR}</Text>
               </Box>
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
             </Box>
