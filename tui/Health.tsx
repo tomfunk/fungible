@@ -18,7 +18,7 @@ function runwayColor(months: number, green: number, yellow: number): string {
   if (months >= yellow) return C_WARNING;
   return C_NEGATIVE;
 }
-import { fmt, fmtPct, fmtMonths } from '../core/fmt.js';
+import { fmt, fmtPct, fmtMonths } from './fmt.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { fmt, fmtSigned, fmtPct, fmtMonths, bar, truncate } from '../core/fmt.js';
+import { fmt, fmtSigned, fmtPct, fmtMonths } from '../core/fmt.js';
+import { bar, truncate } from '../tui/charUtils.js';
 
 describe('fmt', () => {
   it('formats positive numbers with dollar sign', () => {

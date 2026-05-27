@@ -1,3 +1,5 @@
+import { db } from './db.js';
+
 /** Returns true if the transaction amount is within the rule's optional range. */
 export function inAmountRange(
   amount: number | undefined,
@@ -28,6 +30,21 @@ export function validateRegex(pattern: string): void {
   if (Date.now() - start > 100) {
     throw new Error(`Regex pattern causes excessive backtracking and cannot be used: ${pattern}`);
   }
+}
+
+/** Count how many transactions match a pattern (name substring or regex). */
+export function countPatternMatches(pattern: string, matchType: 'name' | 'regex'): number {
+  if (!pattern) return 0;
+  try {
+    if (matchType === 'name') {
+      return (db.prepare(
+        "SELECT COUNT(*) as c FROM transactions WHERE name LIKE ? OR COALESCE(merchant_name, '') LIKE ?"
+      ).get(`%${pattern}%`, `%${pattern}%`) as { c: number }).c;
+    }
+    const re = new RegExp(pattern, 'i');
+    const rows = db.prepare('SELECT name, merchant_name FROM transactions').all() as { name: string; merchant_name: string | null }[];
+    return rows.filter((r) => re.test(r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).length;
+  } catch { return 0; }
 }
 
 /** Returns true if any haystack string matches the pattern. */

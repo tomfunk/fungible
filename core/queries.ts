@@ -32,15 +32,17 @@ export function getMonthlySummary(year: number, month: number): MonthlySummary {
   return getRangeSummary(from, to);
 }
 
-export function getRangeSummary(from: string, to: string): MonthlySummary {
+export function getRangeSummary(from: string, to: string, accountId?: string): MonthlySummary {
+  const acctClause = accountId ? 'AND account_id = ?' : '';
+  const args: (string)[] = accountId ? [from, to, accountId] : [from, to];
   const rows = db.prepare(`
     SELECT category, SUM(amount) as total
     FROM transactions
-    WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0
+    WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0 ${acctClause}
       AND category NOT IN (SELECT category FROM hidden_categories)
     GROUP BY category
     ORDER BY total DESC
-  `).all(from, to) as { category: string; total: number }[];
+  `).all(...args) as { category: string; total: number }[];
 
   // Plaid: positive = money out, negative = money in
   const income = rows
@@ -84,31 +86,8 @@ export type FlexSummary = {
   untagged: number;
 };
 
-export function getFlexSummary(from: string, to: string): FlexSummary {
-  // Group by category first (matching getRangeSummary), then bucket by flexibility tier.
-  // This ensures fixed + flexible + discretionary + untagged == totalExpenses.
-  const rows = db.prepare(`
-    SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(cat_totals.total) as total
-    FROM (
-      SELECT t.category, SUM(t.amount) as total
-      FROM transactions t
-      WHERE t.date >= ? AND t.date <= ? AND t.pending = 0 AND t.ignored = 0
-        AND t.category NOT IN (SELECT category FROM hidden_categories)
-      GROUP BY t.category
-      HAVING SUM(t.amount) > 0
-    ) as cat_totals
-    LEFT JOIN categories c ON c.name = cat_totals.category
-    GROUP BY tier
-  `).all(from, to) as { tier: string; total: number }[];
-
-  const result: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
-  for (const r of rows) {
-    if (r.tier === 'fixed') result.fixed = r.total;
-    else if (r.tier === 'flexible') result.flexible = r.total;
-    else if (r.tier === 'discretionary') result.discretionary = r.total;
-    else result.untagged = r.total;
-  }
-  return result;
+export function getFlexSummary(from: string, to: string, accountId?: string): FlexSummary {
+  return queryFlexTotals(from, to, accountId);
 }
 
 export function getRecentTransactions(limit = 10): RecentTransaction[] {

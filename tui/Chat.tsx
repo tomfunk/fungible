@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { runAgentTurn } from '../core/agent.js';
 import type { Message } from '../core/llm-provider.js';
 import { detectProvider, getProviderModel } from '../core/llm-provider.js';
-import { truncate } from '../core/fmt.js';
+import { truncate } from './fmt.js';
 import { CURSOR } from './ui.js';
 import type { Screen, TxFilter } from './App.js';
 

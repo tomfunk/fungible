@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
+import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -51,7 +51,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
     if (mode === 'add') {
       if (key.escape) { setMode('list'); setNewName(''); return; }
       if (key.return && newName.trim()) {
-        db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(newName.trim());
+        createTag(newName.trim());
         setNewName('');
         setMode('list');
         load();
@@ -67,7 +67,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       if (key.return && newName.trim()) {
         const tag = visibleTags[cursor];
         if (tag) {
-          db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(newName.trim(), tag.id);
+          renameTag(tag.id, newName.trim());
           load();
         }
         setNewName('');
@@ -122,8 +122,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
     if (input === 'n' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
     if (input === 'x' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
-      db.prepare('DELETE FROM transaction_tags WHERE tag_id = ?').run(tag.id);
-      db.prepare('DELETE FROM tags WHERE id = ?').run(tag.id);
+      deleteTag(tag.id);
       setStatusMsg(`Deleted "${tag.name}"`);
       setTimeout(() => setStatusMsg(''), 2000);
       setCursor((c) => Math.max(0, c - 1));

@@ -63,3 +63,17 @@ export function categorize(name: string, merchant: string | null, plaidCategory:
 
   return 'Uncategorized';
 }
+
+/** Re-categorize all transactions that don't have a manual override. Returns the count updated. */
+export function applyCategoriesToAll(): number {
+  const rows = db.prepare(
+    'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE manual_category IS NULL'
+  ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
+  const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
+  let count = 0;
+  for (const tx of rows) {
+    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+    if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
+  }
+  return count;
+}

@@ -6,7 +6,6 @@ import {
   type MonthlySummary, type FlexSummary, type AccountRow,
   type CategoryDrift, type FlexDriftData, type AccountDrift,
 } from '../core/queries.js';
-import { db } from '../core/db.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
   getDriftWindows,
@@ -42,43 +41,6 @@ function fmtDelta(delta: number): string {
   return fmtSigned(delta, 0);
 }
 
-function getFilteredRangeSummary(from: string, to: string, accountId: string): MonthlySummary {
-  const row = db.prepare(`
-    SELECT
-      COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) as income,
-      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as expenses
-    FROM transactions
-    WHERE date >= ? AND date <= ? AND account_id = ?
-      AND pending = 0 AND ignored = 0
-      AND category NOT IN (SELECT category FROM hidden_categories)
-  `).get(from, to, accountId) as { income: number; expenses: number };
-
-  const byCategory = db.prepare(`
-    SELECT category, SUM(amount) as total
-    FROM transactions
-    WHERE date >= ? AND date <= ? AND account_id = ?
-      AND amount > 0 AND pending = 0 AND ignored = 0
-      AND category NOT IN (SELECT category FROM hidden_categories)
-    GROUP BY category ORDER BY total DESC
-  `).all(from, to, accountId) as { category: string; total: number }[];
-
-  return { income: row.income, expenses: row.expenses, net: row.income - row.expenses, byCategory };
-}
-
-function getFilteredFlexSummary(from: string, to: string, accountId: string): FlexSummary {
-  return db.prepare(`
-    SELECT
-      COALESCE(SUM(CASE WHEN c.flexibility = 'fixed'         AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as fixed,
-      COALESCE(SUM(CASE WHEN c.flexibility = 'flexible'      AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as flexible,
-      COALESCE(SUM(CASE WHEN c.flexibility = 'discretionary' AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as discretionary,
-      COALESCE(SUM(CASE WHEN c.flexibility IS NULL           AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as untagged
-    FROM transactions t
-    LEFT JOIN categories c ON c.name = t.category
-    WHERE t.date >= ? AND t.date <= ? AND t.account_id = ?
-      AND t.pending = 0 AND t.ignored = 0
-      AND t.category NOT IN (SELECT category FROM hidden_categories)
-  `).get(from, to, accountId) as FlexSummary;
-}
 
 const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [
   { key: 'fixed',         label: 'Fixed',        color: FLEX_COLORS.fixed         },
@@ -123,8 +85,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setAccountRows(getAccountRows(from, to));
     setAcctCursor(0);
     if (acct) {
-      setSummary(getFilteredRangeSummary(from, to, acct.id));
-      setFlexData(getFilteredFlexSummary(from, to, acct.id));
+      setSummary(getRangeSummary(from, to, acct.id));
+      setFlexData(getFlexSummary(from, to, acct.id));
       setUncategorized(getUncategorizedCount(from, to, acct.id));
     } else {
       setSummary(getRangeSummary(from, to));

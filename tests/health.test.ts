@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { yearsToFire, coastYears, savingsRateColor, runwayColor } from '../core/health.js';
+import { yearsToFire, coastYears } from '../core/health.js';
 
 describe('yearsToFire', () => {
   it('returns 0 when already at or above target', () => {
@@ -62,41 +62,3 @@ describe('coastYears', () => {
   });
 });
 
-describe('savingsRateColor', () => {
-  it('returns red for negative rates', () => {
-    expect(savingsRateColor(-1)).toBe('red');
-    expect(savingsRateColor(-100)).toBe('red');
-  });
-
-  it('returns yellow for 0-9%', () => {
-    expect(savingsRateColor(0)).toBe('yellow');
-    expect(savingsRateColor(9.9)).toBe('yellow');
-  });
-
-  it('returns white for 10-19%', () => {
-    expect(savingsRateColor(10)).toBe('white');
-    expect(savingsRateColor(19.9)).toBe('white');
-  });
-
-  it('returns green for 20%+', () => {
-    expect(savingsRateColor(20)).toBe('green');
-    expect(savingsRateColor(50)).toBe('green');
-  });
-});
-
-describe('runwayColor', () => {
-  it('returns green when months >= green threshold', () => {
-    expect(runwayColor(12, 6, 3)).toBe('green');
-    expect(runwayColor(6, 6, 3)).toBe('green');
-  });
-
-  it('returns yellow when months is between yellow and green thresholds', () => {
-    expect(runwayColor(4, 6, 3)).toBe('yellow');
-    expect(runwayColor(3, 6, 3)).toBe('yellow');
-  });
-
-  it('returns red when months is below yellow threshold', () => {
-    expect(runwayColor(2, 6, 3)).toBe('red');
-    expect(runwayColor(0, 6, 3)).toBe('red');
-  });
-});

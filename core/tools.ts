@@ -11,8 +11,11 @@ import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData
 import { getDriftWindows } from './dateUtils.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
-import { categorize } from './categorize.js';
+import { applyCategoriesToAll } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored } from './transactions.js';
+import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
+import { fmt, fmtSigned } from './fmt.js';
 import { syncAll } from './sync.js';
 import { db } from './db.js';
 import { validateRegex } from './rule-utils.js';
@@ -390,7 +393,6 @@ export async function executeTool(
     case 'get_balances': {
       const b = getBalances();
       if (!b.accounts.length) return 'No balance data available. Sync accounts first.';
-      const fmt = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       return [
         'Assets:',
         ...b.accounts.filter((a) => a.isAsset).map((a) => `  ${a.name}: ${fmt(a.balance)} (${a.subtype ?? a.type})`),
@@ -409,15 +411,14 @@ export async function executeTool(
         input['withdrawal_rate'] ? num('withdrawal_rate') : 4,
         input['growth_rate']     ? num('growth_rate')     : 7,
       );
-      const fmt  = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
       const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
       return [
-        `Net worth: ${h.netWorth >= 0 ? '' : '-'}${fmt(h.netWorth)}`,
-        `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash)} in checking/savings)`,
-        `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid)} incl. brokerage)`,
-        `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses)}`,
-        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings)}`,
-        `FIRE number: ${fmt(h.fireNumber)}`,
+        `Net worth: ${h.netWorth >= 0 ? '' : '-'}${fmt(h.netWorth, 0)}`,
+        `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash, 0)} in checking/savings)`,
+        `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid, 0)} incl. brokerage)`,
+        `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses, 0)}`,
+        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)}`,
+        `FIRE number: ${fmt(h.fireNumber, 0)}`,
         `FIRE progress: ${(h.fireProgress * 100).toFixed(1)}%`,
         `Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)}`}`,
       ].join('\n');
@@ -435,8 +436,8 @@ export async function executeTool(
       const { current, lastPeriod, lastYear, rolling12 } = windows;
       const rows = getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
       if (!rows.length) return `No expense data for ${year}-${String(month).padStart(2, '0')} through day ${day}.`;
-      const fmtAmt   = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
-      const signedFmt = (n: number) => n === 0 ? '—' : `${n > 0 ? '+' : '-'}$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+      const fmtAmt   = (n: number) => fmt(n, 0);
+      const signedFmt = (n: number) => n === 0 ? '—' : fmtSigned(n, 0);
       const heat = (current: number, avg: number) => {
         if (avg === 0) return current > 0 ? ' 🔴' : '';
         const r = current / avg;
@@ -461,14 +462,13 @@ export async function executeTool(
     case 'get_trends': {
       const rows = getSpendingTrends(input['months'] ? num('months') : 12, input['category'] ? str('category') : undefined);
       if (!rows.length) return 'No data.';
-      const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
       const hasCat = Boolean(input['category']);
       const header = hasCat
         ? `Month         ${str('category').padStart(12)}  Expenses      Income        Net`
         : 'Month         Expenses      Income        Net';
       const dataLines = rows.map((r) => hasCat
-        ? `${r.label.padEnd(14)}${fmt(r.categoryTotal ?? 0).padStart(12)}  ${fmt(r.expenses).padStart(12)}  ${fmt(r.income).padStart(12)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net)}`
-        : `${r.label.padEnd(14)}${fmt(r.expenses).padStart(12)}  ${fmt(r.income).padStart(12)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net)}`
+        ? `${r.label.padEnd(14)}${fmt(r.categoryTotal ?? 0, 0).padStart(12)}  ${fmt(r.expenses, 0).padStart(12)}  ${fmt(r.income, 0).padStart(12)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net, 0)}`
+        : `${r.label.padEnd(14)}${fmt(r.expenses, 0).padStart(12)}  ${fmt(r.income, 0).padStart(12)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net, 0)}`
       );
       return [header, '─'.repeat(header.length), ...dataLines].join('\n');
     }
@@ -548,23 +548,22 @@ export async function executeTool(
     case 'edit_transaction': {
       const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
-      db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?').run(str('category'), str('category'), str('id'));
+      setTransactionCategory(str('id'), str('category'));
       return `Set "${tx.name}" → ${str('category')} (pinned)`;
     }
 
     case 'clear_edit': {
-      const tx = db.prepare('SELECT name, merchant_name, raw_category, amount FROM transactions WHERE id = ?')
-        .get(str('id')) as { name: string; merchant_name: string | null; raw_category: string | null; amount: number } | undefined;
+      const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
-      const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-      db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?').run(cat, str('id'));
-      return `Cleared override on "${tx.name}" — reverted to ${cat}`;
+      clearTransactionOverride(str('id'));
+      const reverted = (db.prepare('SELECT category FROM transactions WHERE id = ?').get(str('id')) as { category: string }).category;
+      return `Cleared override on "${tx.name}" — reverted to ${reverted}`;
     }
 
     case 'ignore_transaction': {
       const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
-      db.prepare('UPDATE transactions SET ignored = ? WHERE id = ?').run(bool('ignore') ? 1 : 0, str('id'));
+      setTransactionIgnored(str('id'), bool('ignore'));
       return `"${tx.name}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
     }
 
@@ -573,15 +572,7 @@ export async function executeTool(
       db.prepare(
         'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(input['priority'] ? num('priority') : 10, str('match_type'), str('pattern'), str('category'), opt('min_amount'), opt('max_amount'));
-      const rows = db.prepare(
-        'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE manual_category IS NULL'
-      ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
-      const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
-      let count = 0;
-      for (const tx of rows) {
-        const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-        if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
-      }
+      const count = applyCategoriesToAll();
       return `Rule added: "${str('pattern')}" → ${str('category')}\nRecategorized ${count} transactions.`;
     }
 
@@ -612,13 +603,12 @@ export async function executeTool(
       const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
       if (bool('add')) {
-        db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(str('tag'));
-        const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(str('tag')) as { id: number };
-        db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)').run(str('id'), tagRow.id);
+        const tagId = getOrCreateTag(str('tag'));
+        addTagToTransaction(str('id'), tagId);
         return `Tagged "${tx.name}" with #${str('tag')}`;
       } else {
         const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(str('tag')) as { id: number } | undefined;
-        if (tagRow) db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?').run(str('id'), tagRow.id);
+        if (tagRow) removeTagFromTransaction(str('id'), tagRow.id);
         return `Removed #${str('tag')} from "${tx.name}"`;
       }
     }

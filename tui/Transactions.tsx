@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
-import { categorize } from '../core/categorize.js';
-import { rebuildDisplayNames } from '../core/rename.js';
+import {
+  setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
+  setTransactionDisplayName, deleteTransaction,
+  upsertCategoryRule, upsertNameRule,
+  setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
+} from '../core/transactions.js';
+import {
+  getTagOptions, getTransactionTagIds, getOrCreateTag,
+  addTagToTransaction, removeTagFromTransaction, addTagToTransactions,
+  type TagOption,
+} from '../core/tags.js';
+import { applyCategoriesToAll } from '../core/categorize.js';
+import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -11,7 +21,6 @@ import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_MANUAL } from './ui.js'
 
 type Tx = TxRow;
 
-type TagOption = { id: number; name: string };
 
 type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag' | 'tag-all' | 'edit-all';
 type EditField = 'name' | 'category';
@@ -34,33 +43,6 @@ function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
 }
 
-function applyRuleToAll() {
-  const rows = db.prepare(
-    'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE manual_category IS NULL'
-  ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
-  const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
-  let count = 0;
-  for (const tx of rows) {
-    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-    if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
-  }
-  return count;
-}
-
-
-function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
-  if (!pattern) return 0;
-  try {
-    if (matchType === 'name') {
-      return (db.prepare(
-        "SELECT COUNT(*) as c FROM transactions WHERE name LIKE ? OR COALESCE(merchant_name, '') LIKE ?"
-      ).get(`%${pattern}%`, `%${pattern}%`) as { c: number }).c;
-    }
-    const re = new RegExp(pattern, 'i');
-    const rows = db.prepare('SELECT name, merchant_name FROM transactions').all() as { name: string; merchant_name: string | null }[];
-    return rows.filter((r) => re.test(r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).length;
-  } catch { return 0; }
-}
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
@@ -115,11 +97,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openTagPanel() {
     if (!selected) return;
-    const tags = db.prepare('SELECT id, name FROM tags ORDER BY name').all() as TagOption[];
-    const txTags = db.prepare('SELECT tag_id FROM transaction_tags WHERE transaction_id = ?')
-      .all(selected.id) as { tag_id: number }[];
-    setAllTags(tags);
-    setTxTagIds(new Set(txTags.map((r) => r.tag_id)));
+    setAllTags(getTagOptions());
+    setTxTagIds(getTransactionTagIds(selected.id));
     setTagInput('');
     setTagCursor(0);
     setMode('tag');
@@ -128,10 +107,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   function toggleTag(tagId: number) {
     if (!selected) return;
     if (txTagIds.has(tagId)) {
-      db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?').run(selected.id, tagId);
+      removeTagFromTransaction(selected.id, tagId);
       setTxTagIds((s) => { const n = new Set(s); n.delete(tagId); return n; });
     } else {
-      db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)').run(selected.id, tagId);
+      addTagToTransaction(selected.id, tagId);
       setTxTagIds((s) => new Set([...s, tagId]));
     }
     load(search, true);
@@ -139,12 +118,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function createAndApplyTag(name: string) {
     if (!selected) return;
-    db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(name);
-    const newTag = db.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: number };
-    db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)').run(selected.id, newTag.id);
-    const updated = db.prepare('SELECT id, name FROM tags ORDER BY name').all() as TagOption[];
-    setAllTags(updated);
-    setTxTagIds((s) => new Set([...s, newTag.id]));
+    const tagId = getOrCreateTag(name);
+    addTagToTransaction(selected.id, tagId);
+    setAllTags(getTagOptions());
+    setTxTagIds((s) => new Set([...s, tagId]));
     setTagInput('');
     setTagCursor(0);
     load(search, true);
@@ -158,11 +135,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     const catChanged = newCat !== selected.category;
 
     if (nameChanged) {
-      db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?').run(newDisplay, selected.id);
+      setTransactionDisplayName(selected.id, newDisplay);
     }
     if (catChanged) {
-      db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?')
-        .run(newCat, newCat, selected.id);
+      setTransactionCategory(selected.id, newCat);
     }
 
     if (nameChanged || catChanged) setStatusMsg('Transaction updated');
@@ -181,28 +157,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     const saved: string[] = [];
 
     if (catChanged) {
-      const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
-        .get(editMatchType, editPattern) as { id: number } | undefined;
-      if (existing) {
-        db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(newCat, existing.id);
-      } else {
-        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)')
-          .run(editMatchType, editPattern, newCat);
-      }
-      const count = applyRuleToAll();
+      const count = upsertCategoryRule(editPattern, editMatchType, newCat);
       saved.push(`category rule (${count} updated)`);
     }
 
     if (nameChanged) {
-      const existing = db.prepare('SELECT id FROM name_rules WHERE match_type = ? AND pattern = ?')
-        .get(editMatchType, editPattern) as { id: number } | undefined;
-      if (existing) {
-        db.prepare('UPDATE name_rules SET replacement = ? WHERE id = ?').run(newDisplay, existing.id);
-      } else {
-        db.prepare('INSERT INTO name_rules (match_type, pattern, replacement) VALUES (?, ?, ?)')
-          .run(editMatchType, editPattern, newDisplay);
-      }
-      rebuildDisplayNames();
+      upsertNameRule(editPattern, editMatchType, newDisplay);
       saved.push('name rule');
     }
 
@@ -214,17 +174,13 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function toggleIgnored() {
     if (!selected) return;
-    db.prepare('UPDATE transactions SET ignored = CASE WHEN ignored = 1 THEN 0 ELSE 1 END WHERE id = ?')
-      .run(selected.id);
+    setTransactionIgnored(selected.id, !selected.ignored);
     load(search, true);
   }
 
   function clearOverride() {
     if (!selected || !selected.manual_category) return;
-    const raw = (db.prepare('SELECT raw_category FROM transactions WHERE id = ?')
-      .get(selected.id) as { raw_category: string | null })?.raw_category ?? null;
-    db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?')
-      .run(categorize(selected.name, selected.merchant_name, raw, selected.amount), selected.id);
+    clearTransactionOverride(selected.id);
     setStatusMsg('Override cleared');
     setTimeout(() => setStatusMsg(''), 2000);
     load(search, true);
@@ -277,12 +233,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         if (t) {
           tagId = t.id;
         } else if (tagInput.trim()) {
-          db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(tagInput.trim());
-          tagId = (db.prepare('SELECT id FROM tags WHERE name = ?').get(tagInput.trim()) as { id: number }).id;
+          tagId = getOrCreateTag(tagInput.trim());
         }
         if (tagId !== null) {
-          const insert = db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)');
-          for (const tx of txs) insert.run(tx.id, tagId);
+          addTagToTransactions(txs.map((tx) => tx.id), tagId);
           setStatusMsg(`Tagged ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
           setTimeout(() => setStatusMsg(''), 2500);
           setMode('list');
@@ -302,8 +256,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (key.return) {
         const newCat = categories[editCatCursor];
         if (newCat) {
-          const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?');
-          for (const tx of txs) stmt.run(newCat, newCat, tx.id);
+          setTransactionCategoryBulk(txs.map((t) => t.id), newCat);
           setStatusMsg(`Set category to "${newCat}" for ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
           setTimeout(() => setStatusMsg(''), 3000);
           setMode('list');
@@ -391,8 +344,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       }
       if (input === 'g' && selected) openTagPanel();
       if (input === 'G' && txs.length > 0) {
-        const tags = db.prepare('SELECT id, name FROM tags ORDER BY name').all() as TagOption[];
-        setAllTags(tags);
+        setAllTags(getTagOptions());
         setTagInput('');
         setTagCursor(0);
         setMode('tag-all');
@@ -400,27 +352,24 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       }
       if (input === 'c' && selected?.manual_category) clearOverride();
       if (input === 'C' && txs.length > 0) {
-        const rows = db.prepare('SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (' + txs.map(() => '?').join(',') + ') AND manual_category IS NOT NULL').all(...txs.map((t) => t.id)) as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
-        const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?');
-        for (const tx of rows) stmt.run(categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount), tx.id);
-        setStatusMsg(`Cleared overrides on ${rows.length} transaction${rows.length !== 1 ? 's' : ''}`);
+        clearOverridesBulk(txs.map((t) => t.id));
+        const count = txs.filter((t) => t.manual_category).length;
+        setStatusMsg(`Cleared overrides on ${count} transaction${count !== 1 ? 's' : ''}`);
         setTimeout(() => setStatusMsg(''), 2500);
         load(search, true);
         return;
       }
       if (input === 'i' && selected) toggleIgnored();
       if (input === 'I' && txs.length > 0) {
-        const target = selected?.ignored ? 0 : 1;
-        const stmt = db.prepare('UPDATE transactions SET ignored = ? WHERE id = ?');
-        for (const tx of txs) stmt.run(target, tx.id);
+        const target = !selected?.ignored;
+        setIgnoredBulk(txs.map((t) => t.id), target);
         setStatusMsg(`${target ? 'Ignored' : 'Un-ignored'} ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
         setTimeout(() => setStatusMsg(''), 2500);
         load(search, true);
         return;
       }
       if (input === 'x' && selected?.id.startsWith('csv-')) {
-        db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ?').run(selected.id);
-        db.prepare('DELETE FROM transactions WHERE id = ?').run(selected.id);
+        deleteTransaction(selected.id);
         load(search);
         return;
       }
@@ -462,7 +411,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const visibleCats = categories.slice(catWinStart, catWinStart + CAT_WIN);
 
   // Live match count for rule panel
-  const matchCount = mode === 'edit-rule' ? countMatches(editPattern, editMatchType) : 0;
+  const matchCount = mode === 'edit-rule' ? countPatternMatches(editPattern, editMatchType) : 0;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
