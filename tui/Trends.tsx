@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
-import { buildSearchRe } from '../core/queries.js';
 import { addDays, weekLabel, type TrendsRange } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
@@ -284,31 +283,8 @@ export function Trends({
   const [range, setRange] = useState<TrendsRange>('month');
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
-  const [filteredViews, setFilteredViews] = useState<View[]>(views);
 
-  // When search is active, restrict left/right cycling to views with matching transactions
-  useEffect(() => {
-    const search = initialFilter?.search;
-    if (!search) { setFilteredViews(views); return; }
-    const re = buildSearchRe(search);
-    const txRows = db.prepare(
-      `SELECT COALESCE(display_name, name) as display, merchant_name, category
-       FROM transactions WHERE pending = 0 AND ignored = 0`
-    ).all() as { display: string; merchant_name: string | null; category: string }[];
-    const matchingCats = new Set(
-      txRows
-        .filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false))
-        .map((r) => r.category),
-    );
-    setFilteredViews(views.filter((v) => v.mode !== 'category' || matchingCats.has(v.category ?? '')));
-  }, [initialFilter?.search]);
-
-  // Clamp viewIdx when filteredViews shrinks
-  useEffect(() => {
-    setViewIdx((i) => Math.min(i, Math.max(0, filteredViews.length - 1)));
-  }, [filteredViews.length]);
-
-  const view = filteredViews[viewIdx] ?? filteredViews[0] ?? views[0];
+  const view = views[viewIdx] ?? views[0];
   const isNet = view.mode === 'net';
   const isFlexBreakdown = view.mode === 'flexbreakdown';
 
@@ -318,23 +294,18 @@ export function Trends({
     setCursor(Math.max(0, data.length - 1));
   }, [viewIdx, range]);
 
-  const inheritedSearch = initialFilter?.search;
-
   useInput((input, key) => {
-    if (key.escape) { onNavigate('dashboard', inheritedSearch ? { search: inheritedSearch } : undefined); return; }
-    // Pass search along when navigating to dashboard (1) or transactions (2)
-    if (input === '1') { onNavigate('dashboard', inheritedSearch ? { search: inheritedSearch } : undefined); return; }
+    if (key.escape) { onNavigate('dashboard'); return; }
     if (input === '2') {
       const row = rows[cursor];
       onNavigate('transactions', {
         ...(row ? { from: row.from, to: row.to } : {}),
         ...(view.category ? { category: view.category } : {}),
-        ...(inheritedSearch ? { search: inheritedSearch } : {}),
       });
       return;
     }
     if (handleNavKey(input, 'trends', onNavigate)) return;
-    if (key.tab)        { setViewIdx((i) => (i + 1) % filteredViews.length); return; }
+    if (key.tab)        { setViewIdx((i) => (i + 1) % views.length); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
     if (input === 'r') {
@@ -343,11 +314,7 @@ export function Trends({
     }
     if (key.return) {
       const row = rows[cursor];
-      if (row) onNavigate('transactions', {
-        category: view.category ?? undefined,
-        from: row.from, to: row.to,
-        ...(inheritedSearch ? { search: inheritedSearch } : {}),
-      });
+      if (row) onNavigate('transactions', { category: view.category ?? undefined, from: row.from, to: row.to });
     }
   }, { isActive: isActive !== false });
 
@@ -373,7 +340,7 @@ export function Trends({
 
   const labelWidth = range === 'week' ? 22 : range === 'month' ? 10 : range === 'quarter' ? 8 : 6;
   const color = viewColor(view);
-  const posLabel = `${viewIdx + 1} / ${filteredViews.length}`;
+  const posLabel = `${viewIdx + 1} / ${views.length}`;
 
   const termW = useTerminalWidth();
   const inner = Math.max(70, termW) - 4;
@@ -406,10 +373,7 @@ export function Trends({
           ))}
           {showHints && <Text dimColor>[r]</Text>}
         </Box>
-        <Box gap={2}>
-          <Text bold>{view.label}</Text>
-          <Text dimColor>[Tab] {posLabel}</Text>
-        </Box>
+        <Text><Text bold>{view.label}</Text><Text dimColor>  {posLabel}</Text></Text>
       </Box>
       <Divider />
 
