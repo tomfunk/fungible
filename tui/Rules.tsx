@@ -9,7 +9,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, FLEX_COLORS, C_ACCENT, C_MANUAL } from './ui.js';
+import { useTerminalWidth, CURSOR, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
@@ -325,7 +325,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           {SECTIONS.map((s) => (
-            <Text key={s} bold color={section === s ? 'white' : undefined} dimColor={section !== s}>
+            <Text key={s} bold color={section === s ? C_NEUTRAL : undefined} dimColor={section !== s}>
               {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : 'Categories'}
             </Text>
           ))}
@@ -346,7 +346,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         </Box>
       ) : search ? (
         <Box marginTop={1} gap={1}>
-          <Text color="yellow">"{search}"</Text>
+          <Text color={C_WARNING}>"{search}"</Text>
           <Text dimColor>· Esc to clear</Text>
         </Box>
       ) : null}
@@ -371,8 +371,8 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
               : '';
             return (
               <Box key={rule.id} gap={2}>
-                <Text color={isSelected ? C_ACCENT : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
-                <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
+                <Text color={isSelected ? C_ACCENT : C_NEUTRAL}>{isSelected ? '▶ ' : '  '}</Text>
+                <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                 <Text dimColor={!isSelected}>
                   {rule.pattern.length > rulePatW ? rule.pattern.slice(0, rulePatW - 1) + '…' : rule.pattern.padEnd(rulePatW)}
                 </Text>
@@ -385,7 +385,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           <Divider />
           <Box gap={4}>
             <Text dimColor>{filteredRules.length}{search ? `/${rules.length}` : ''} rules</Text>
-            {uncategorized > 0 && <Text color="yellow">{uncategorized} uncategorized transactions</Text>}
+            {uncategorized > 0 && <Text color={C_WARNING}>{uncategorized} uncategorized transactions</Text>}
           </Box>
         </>
       )}
@@ -411,15 +411,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                   : '';
                 return (
                   <Box key={rule.id} gap={2}>
-                    <Text color={isSelected ? C_ACCENT : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
-                    <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
+                    <Text color={isSelected ? C_ACCENT : C_NEUTRAL}>{isSelected ? '▶ ' : '  '}</Text>
+                    <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                     <Text dimColor={!isSelected}>
                       {rule.pattern.length > namePatW ? rule.pattern.slice(0, namePatW - 1) + '…' : rule.pattern.padEnd(namePatW)}
                     </Text>
                     {amtLabel
                       ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 12).padEnd(12)}</Text>
                       : <Text>{' '.repeat(12)}</Text>}
-                    <Text color="green" dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
+                    <Text color={C_POSITIVE} dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
                   </Box>
                 );
               })}
@@ -448,7 +448,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                     ? <Text color={flexColor} dimColor={!isSelected}>{cat.flexibility.padEnd(14)}</Text>
                     : <Text dimColor>{'—'.padEnd(14)}</Text>}
                   {isHidden
-                    ? <Text color="yellow" dimColor={!isSelected}>hidden</Text>
+                    ? <Text color={C_WARNING} dimColor={!isSelected}>hidden</Text>
                     : <Text dimColor>—</Text>}
                 </Box>
               );
@@ -462,19 +462,19 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         </>
       )}
 
-      {statusMsg && <Text color="green" bold>{statusMsg}</Text>}
+      {statusMsg && <Text color={C_POSITIVE} bold>{statusMsg}</Text>}
 
       {mode === 'add-pattern' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Pattern</Text>
           <Text dimColor>Type pattern · Enter · Esc cancel</Text>
-          <Box marginTop={1}><Text>Pattern: </Text><Text color="yellow">{newPattern}<Text color={C_ACCENT}>█</Text></Text></Box>
+          <Box marginTop={1}><Text>Pattern: </Text><Text color={C_WARNING}>{newPattern}<Text color={C_ACCENT}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-type' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Match Type</Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text></Text>
           <Box gap={4} marginTop={1}>
             <Text color={C_ACCENT}>[n] name match</Text>
             <Text color={C_ACCENT}>[r] regex match</Text>
@@ -484,27 +484,27 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       {mode === 'add-min-amount' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Min Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  Type: <Text color="yellow">{newType}</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  Type: <Text color={C_WARNING}>{newType}</Text></Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Min $: </Text><Text color="yellow">{newMinAmount}<Text color={C_ACCENT}>█</Text></Text></Box>
+          <Box marginTop={1}><Text>Min $: </Text><Text color={C_WARNING}>{newMinAmount}<Text color={C_ACCENT}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-max-amount' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Max Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  {newMinAmount && <Text>Min: <Text color={C_MANUAL}>${newMinAmount}</Text></Text>}</Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  {newMinAmount && <Text>Min: <Text color={C_MANUAL}>${newMinAmount}</Text></Text>}</Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Max $: </Text><Text color="yellow">{newMaxAmount}<Text color={C_ACCENT}>█</Text></Text></Box>
+          <Box marginTop={1}><Text>Max $: </Text><Text color={C_WARNING}>{newMaxAmount}<Text color={C_ACCENT}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-category' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Category</Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  Type: <Text color="yellow">{newType}</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  Type: <Text color={C_WARNING}>{newType}</Text></Text>
           <Text dimColor>↑↓ select · Enter save · Esc cancel</Text>
           <Box flexDirection="column" marginTop={1}>
             {categories.map((cat, i) => (
-              <Text key={cat} color={i === catCursor ? C_ACCENT : 'white'} dimColor={i !== catCursor}>
+              <Text key={cat} color={i === catCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== catCursor}>
                 {i === catCursor ? '▶ ' : '  '}{cat}
               </Text>
             ))}
@@ -513,57 +513,57 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       )}
 
       {mode === 'add-name-pattern' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Pattern</Text>
           <Text dimColor>Matches against the raw transaction name</Text>
-          <Box marginTop={1}><Text>Pattern: </Text><Text color="yellow">{newNamePattern}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Pattern: </Text><Text color={C_WARNING}>{newNamePattern}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-type' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Match Type</Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text></Text>
           <Box gap={4} marginTop={1}>
-            <Text color="green">[n] name match (replaces whole name)</Text>
-            <Text color="green">[r] regex (can use capture groups)</Text>
+            <Text color={C_POSITIVE}>[n] name match (replaces whole name)</Text>
+            <Text color={C_POSITIVE}>[r] regex (can use capture groups)</Text>
           </Box>
         </Box>
       )}
       {mode === 'add-category-name' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
           <Text bold>New Category</Text>
           <Text dimColor>Type a name · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color={C_ACCENT}>{CURSOR}</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color={C_WARNING}>{newCategoryName}<Text color={C_ACCENT}>{CURSOR}</Text></Text></Box>
         </Box>
       )}
       {mode === 'rename-category' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
           <Text bold>Rename Category</Text>
           <Text dimColor>Updates all transactions, rules, and hidden settings · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{renameCatInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color={C_WARNING}>{renameCatInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-min-amount' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Min Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  Type: <Text color={C_WARNING}>{newNameType}</Text></Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Min $: </Text><Text color="yellow">{newNameMinAmount}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Min $: </Text><Text color={C_WARNING}>{newNameMinAmount}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-max-amount' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Max Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  {newNameMinAmount && <Text>Min: <Text color={C_MANUAL}>${newNameMinAmount}</Text>  </Text>}</Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  {newNameMinAmount && <Text>Min: <Text color={C_MANUAL}>${newNameMinAmount}</Text>  </Text>}</Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Max $: </Text><Text color="yellow">{newNameMaxAmount}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Max $: </Text><Text color={C_WARNING}>{newNameMaxAmount}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-replacement' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Replacement</Text>
           <Text>
-            Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text>
+            Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  Type: <Text color={C_WARNING}>{newNameType}</Text>
             {(newNameMinAmount || newNameMaxAmount) && (
               <Text>  Amount: <Text color={C_MANUAL}>
                 {newNameMinAmount && newNameMaxAmount && newNameMinAmount === newNameMaxAmount
@@ -575,7 +575,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             )}
           </Text>
           <Text dimColor>The display name to show instead</Text>
-          <Box marginTop={1}><Text>Replace with: </Text><Text color="green">{newReplacement}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Replace with: </Text><Text color={C_POSITIVE}>{newReplacement}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
     </Box>

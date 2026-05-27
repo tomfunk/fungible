@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
 import { DATA_DIR } from '../core/paths.js';
-import { C_ACCENT } from './ui.js';
+import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 
 type Step =
   | 'welcome'
@@ -192,7 +192,7 @@ export function Setup() {
           </Box>
           {alreadyConfigured && (
             <Box marginTop={1}>
-              <Text color="green">Plaid credentials already configured in .env</Text>
+              <Text color={C_POSITIVE}>Plaid credentials already configured in .env</Text>
             </Box>
           )}
           <Box marginTop={1}><Text dimColor>Press Enter to begin</Text></Box>
@@ -220,7 +220,7 @@ export function Setup() {
           <Text dimColor>Found in your Plaid dashboard under Team Settings → Keys</Text>
           <Box marginTop={1}>
             <Text>Client ID: </Text>
-            <Text color="yellow">{clientId}</Text>
+            <Text color={C_WARNING}>{clientId}</Text>
             <Text color={C_ACCENT}>█</Text>
           </Box>
           <Text dimColor>Enter to continue · Esc back</Text>
@@ -233,7 +233,7 @@ export function Setup() {
           <Text dimColor>The secret key for your chosen environment</Text>
           <Box marginTop={1}>
             <Text>Secret: </Text>
-            <Text color="yellow">{'*'.repeat(secret.length)}</Text>
+            <Text color={C_WARNING}>{'*'.repeat(secret.length)}</Text>
             <Text color={C_ACCENT}>█</Text>
           </Box>
           <Text dimColor>Enter to continue · Esc back</Text>
@@ -269,7 +269,7 @@ export function Setup() {
       {step === 'linking' && (
         <Box flexDirection="column" gap={1}>
           <Text bold>Linking bank account</Text>
-          <Text color={linkStatus === 'done' ? 'green' : linkStatus === 'error' ? 'red' : 'yellow'}>
+          <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
             {linkMsg}
           </Text>
           {linkStatus === 'running' && (
@@ -296,7 +296,7 @@ export function Setup() {
 
       {step === 'done' && (
         <Box flexDirection="column" gap={1}>
-          <Text bold color="green">Setup complete</Text>
+          <Text bold color={C_POSITIVE}>Setup complete</Text>
           {seedResult && (
             <Text dimColor>{seedResult.rules} rules seeded · {seedResult.recategorized} transactions recategorized</Text>
           )}

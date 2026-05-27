@@ -17,7 +17,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
 
 type Tx = TxRow;
 
@@ -422,7 +422,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       <Box marginTop={1}>
         <Text bold>
           Transactions
-          {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
+          {filterLabel ? <Text color={C_WARNING}>  {filterLabel}</Text> : null}
         </Text>
       </Box>
       {showHints && <Box justifyContent="flex-end">
@@ -472,7 +472,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
                 {fmt(tx.amount).padStart(10)}
               </Text>
               <Text
-                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? C_MANUAL : undefined}
+                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : isPinned ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
               >
                 {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
@@ -489,15 +489,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
       <Divider />
       <Text dimColor>{txs.length} transactions{txs.length === 200 ? ' (limit 200)' : ''}</Text>
-      {statusMsg && <Text color="green">{statusMsg}</Text>}
+      {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
       {mode === 'tag' && selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
           <Text bold>Tags  <Text dimColor>{selected.display_name ?? selected.name}</Text></Text>
           <Box marginTop={1} gap={2}>
             <Text dimColor>Filter/new: </Text>
-            <Text color="yellow">{tagInput}</Text>
-            <Text color="yellow">█</Text>
+            <Text color={C_WARNING}>{tagInput}</Text>
+            <Text color={C_WARNING}>█</Text>
           </Box>
           {filteredTags.length === 0 && tagInput ? (
             <Box marginTop={1}><Text dimColor>Enter to create "{tagInput}"</Text></Box>
@@ -508,7 +508,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               return (
                 <Box key={t.id}>
                   <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={has ? 'green' : undefined} dimColor={!isSelected && !has}>
+                  <Text color={has ? C_POSITIVE : undefined} dimColor={!isSelected && !has}>
                     {has ? '● ' : '○ '}{t.name}
                   </Text>
                 </Box>
@@ -527,7 +527,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Text bold>Tag all <Text color={C_ACCENT}>{txs.length}</Text> visible transactions</Text>
           <Box marginTop={1} gap={2}>
             <Text dimColor>Tag: </Text>
-            <Text color="yellow">{tagInput}</Text>
+            <Text color={C_WARNING}>{tagInput}</Text>
             <Text color={C_ACCENT}>{CURSOR}</Text>
           </Box>
           {filteredTags.length === 0 && tagInput ? (
@@ -573,7 +573,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             <Box flexDirection="column">
               <Text color={editField === 'name' ? C_ACCENT : C_DIM} bold>Name</Text>
               {editField === 'name'
-                ? <Box><Text color="yellow">{editName || <Text dimColor>type new name…</Text>}</Text><Text color={C_ACCENT}>█</Text></Box>
+                ? <Box><Text color={C_WARNING}>{editName || <Text dimColor>type new name…</Text>}</Text><Text color={C_ACCENT}>█</Text></Box>
                 : <Text dimColor>{editName || '(unchanged)'}</Text>
               }
             </Box>
@@ -611,10 +611,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_MANUAL} paddingX={2} paddingY={1}>
           <Text bold>Make Rule</Text>
           {categories[editCatCursor] !== selected.category && (
-            <Text dimColor>Category: <Text color="red">{selected.category}</Text> → <Text color={C_ACCENT}>{categories[editCatCursor]}</Text></Text>
+            <Text dimColor>Category: <Text color={C_NEGATIVE}>{selected.category}</Text> → <Text color={C_ACCENT}>{categories[editCatCursor]}</Text></Text>
           )}
           {editName.trim().length > 0 && (
-            <Text dimColor>Name: <Text color="green">{editName}</Text></Text>
+            <Text dimColor>Name: <Text color={C_POSITIVE}>{editName}</Text></Text>
           )}
 
           <Box gap={2} marginTop={1}>
@@ -622,9 +622,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             <Text color={C_MANUAL}>{editPattern}</Text><Text color={C_MANUAL}>█</Text>
           </Box>
           <Box gap={3} marginTop={1}>
-            <Text color={editMatchType === 'name' ? 'white' : undefined} dimColor={editMatchType !== 'name'}>[n] name</Text>
-            <Text color={editMatchType === 'regex' ? 'white' : undefined} dimColor={editMatchType !== 'regex'}>[x] regex</Text>
-            <Text color="yellow">{matchCount} transactions match</Text>
+            <Text color={editMatchType === 'name' ? C_NEUTRAL : undefined} dimColor={editMatchType !== 'name'}>[n] name</Text>
+            <Text color={editMatchType === 'regex' ? C_NEUTRAL : undefined} dimColor={editMatchType !== 'regex'}>[x] regex</Text>
+            <Text color={C_WARNING}>{matchCount} transactions match</Text>
           </Box>
           <Box marginTop={1}><Text dimColor>Enter save  ·  Esc back</Text></Box>
         </Box>

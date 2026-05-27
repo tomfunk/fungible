@@ -5,7 +5,7 @@ import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
+import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -195,7 +195,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
                         {isSelected ? '▶ ' : '  '}
                         {truncate(row.category, 20).padEnd(20)}
                       </Text>
-                      <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
+                      <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
                       <Text color={C_ACCENT} dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>
                     </Box>
                   );
@@ -207,13 +207,13 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       ) : (
         <>
           <Box justifyContent="space-between" marginTop={1}>
-            <Text bold>Tags{search ? <Text color="yellow">  /{search}</Text> : null}</Text>
+            <Text bold>Tags{search ? <Text color={C_WARNING}>  /{search}</Text> : null}</Text>
             {showHints && <Text dimColor>[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
           {mode === 'search' && (
             <Box marginTop={1}>
               <Text color={C_ACCENT}>/</Text>
-              <Text color="yellow">{search}</Text>
+              <Text color={C_WARNING}>{search}</Text>
               <Text color={C_ACCENT}>█</Text>
               <Text dimColor>  Esc cancel</Text>
             </Box>
@@ -239,7 +239,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
 
           <Box marginTop={1}><Divider /></Box>
           <Text dimColor>{search ? `${visibleTags.length} of ${tags.length}` : `${tags.length}`} tag{tags.length !== 1 ? 's' : ''}</Text>
-          {statusMsg && <Text color="green">{statusMsg}</Text>}
+          {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
           {mode === 'add' && (
             <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
@@ -247,18 +247,18 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
               <Text dimColor>Type name · Enter save · Esc cancel</Text>
               <Box marginTop={1}>
                 <Text>Name: </Text>
-                <Text color="yellow">{newName}</Text>
+                <Text color={C_WARNING}>{newName}</Text>
                 <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
             </Box>
           )}
           {mode === 'rename' && visibleTags[cursor] && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
               <Text bold>Rename Tag</Text>
               <Text dimColor>Enter save · Esc cancel</Text>
               <Box marginTop={1}>
                 <Text>Name: </Text>
-                <Text color="yellow">{newName}</Text>
+                <Text color={C_WARNING}>{newName}</Text>
                 <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
             </Box>

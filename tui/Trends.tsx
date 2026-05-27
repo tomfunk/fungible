@@ -153,7 +153,7 @@ export function Trends({
                 <Text dimColor>{''.padStart(13)}</Text>
                 <Text color={FLEX_COLORS.fixed} dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
                 <Text color={FLEX_COLORS.flexible} dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
-                <Text color={C_ACCENT}   dimColor>{'discr'}</Text>
+                <Text color={FLEX_COLORS.discretionary} dimColor>{'discr'}</Text>
               </Box>
             )}
             {visible.map((row, i) => {
@@ -189,12 +189,12 @@ export function Trends({
                     <Text color={isSelected ? C_ACCENT : undefined}>
                       {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                     </Text>
-                    <Text color={isSelected ? 'white' : undefined} dimColor={!isSelected}>
+                    <Text color={isSelected ? C_NEUTRAL : undefined} dimColor={!isSelected}>
                       {fmt(row.total).padStart(13)}
                     </Text>
                     <Text color={FLEX_COLORS.fixed} dimColor={!isSelected}>{'█'.repeat(fixedF) + '░'.repeat(FLEX_BAR - fixedF)}</Text>
-                    <Text color="yellow" dimColor={!isSelected}>{'█'.repeat(flexF)  + '░'.repeat(FLEX_BAR - flexF)}</Text>
-                    <Text color={C_ACCENT}   dimColor={!isSelected}>{'█'.repeat(discrF) + '░'.repeat(FLEX_BAR - discrF)}</Text>
+                    <Text color={FLEX_COLORS.flexible} dimColor={!isSelected}>{'█'.repeat(flexF)  + '░'.repeat(FLEX_BAR - flexF)}</Text>
+                    <Text color={FLEX_COLORS.discretionary} dimColor={!isSelected}>{'█'.repeat(discrF) + '░'.repeat(FLEX_BAR - discrF)}</Text>
                   </Box>
                 );
               }
@@ -204,7 +204,7 @@ export function Trends({
                   <Text color={isSelected ? C_ACCENT : undefined}>
                     {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                   </Text>
-                  <Text color={isSelected ? 'white' : undefined} dimColor={!isSelected}>
+                  <Text color={isSelected ? C_NEUTRAL : undefined} dimColor={!isSelected}>
                     {fmt(row.total).padStart(13)}
                   </Text>
                   <Text color={color} dimColor={!isSelected}>

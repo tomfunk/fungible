@@ -20,9 +20,9 @@ export const C_ACCENT   = 'cyan'    as const;  // primary accent: selection, foc
 export const C_DIM      = 'gray'    as const;  // inactive / unfocused elements (complement to C_ACCENT)
 
 export const FLEX_COLORS: Record<'fixed' | 'flexible' | 'discretionary', string> = {
-  fixed:         C_NEGATIVE,
-  flexible:      C_WARNING,
-  discretionary: C_ACCENT,
+  fixed:         'red',        // mandatory, unavoidable
+  flexible:      'yellow',     // somewhat controllable
+  discretionary: 'blue',       // fully optional
 };
 
 export function useTerminalWidth(): number {

@@ -260,7 +260,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>
             {currentDial === 'spend' ? '▶' : ' '} {'Monthly spending'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'spend' ? C_ACCENT : 'white'}>
+          <Text color={currentDial === 'spend' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmt(monthlySpend).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -274,7 +274,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>
             {currentDial === 'savings' ? '▶' : ' '} {'Monthly savings'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'savings' ? C_ACCENT : 'white'}>
+          <Text color={currentDial === 'savings' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmt(monthlySavings).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -288,7 +288,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>
             {currentDial === 'withdrawal' ? '▶' : ' '} {'Withdrawal rate'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : 'white'}>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmtPct(withdrawal).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -302,7 +302,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>
             {currentDial === 'growth' ? '▶' : ' '} {'Growth rate'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'growth' ? C_ACCENT : 'white'}>
+          <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmtPct(growth).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
