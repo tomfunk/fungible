@@ -5,7 +5,7 @@ import { addDays, weekLabel, type TrendsRange } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, MONTHS, FLEX_COLORS } from './ui.js';
+import { useTerminalWidth, MONTHS, FLEX_COLORS, C_POSITIVE, C_NEGATIVE } from './ui.js';
 const pad = (n: number) => String(n).padStart(2, '0');
 const Q_FROM = ['01', '04', '07', '10'];
 const Q_TO   = ['03', '06', '09', '12'];
@@ -386,16 +386,16 @@ export function Trends({
               <Box gap={1} marginBottom={1}>
                 <Text dimColor>{' '.repeat(2 + labelWidth)}</Text>
                 <Text dimColor>{''.padStart(13)}</Text>
-                <Text color="red" dimColor>{'expenses ←'.padStart(HALF_BAR)}</Text>
+                <Text color={C_NEGATIVE} dimColor>{'expenses ←'.padStart(HALF_BAR)}</Text>
                 <Text dimColor>{'|'}</Text>
-                <Text color="green">{'→ income'}</Text>
+                <Text color={C_POSITIVE}>{'→ income'}</Text>
               </Box>
             )}
             {isFlexBreakdown && (
               <Box gap={2} marginBottom={1}>
                 <Text dimColor>{' '.repeat(2 + labelWidth)}</Text>
                 <Text dimColor>{''.padStart(13)}</Text>
-                <Text color="red"    dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
+                <Text color={FLEX_COLORS.fixed} dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
                 <Text color="yellow" dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
                 <Text color="cyan"   dimColor>{'discr'}</Text>
               </Box>
@@ -414,12 +414,12 @@ export function Trends({
                     <Text color={isSelected ? 'cyan' : undefined}>
                       {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                     </Text>
-                    <Text color={net >= 0 ? 'green' : 'red'} dimColor={!isSelected}>
+                    <Text color={net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>
                       {fmtSigned(net).padStart(13)}
                     </Text>
-                    <Text color="red"   dimColor={!isSelected}>{leftBar}</Text>
+                    <Text color={C_NEGATIVE} dimColor={!isSelected}>{leftBar}</Text>
                     <Text dimColor>|</Text>
-                    <Text color="green" dimColor={!isSelected}>{rightBar}</Text>
+                    <Text color={C_POSITIVE} dimColor={!isSelected}>{rightBar}</Text>
                   </Box>
                 );
               }
@@ -436,7 +436,7 @@ export function Trends({
                     <Text color={isSelected ? 'white' : undefined} dimColor={!isSelected}>
                       {fmt(row.total).padStart(13)}
                     </Text>
-                    <Text color="red"    dimColor={!isSelected}>{'█'.repeat(fixedF) + '░'.repeat(FLEX_BAR - fixedF)}</Text>
+                    <Text color={FLEX_COLORS.fixed} dimColor={!isSelected}>{'█'.repeat(fixedF) + '░'.repeat(FLEX_BAR - fixedF)}</Text>
                     <Text color="yellow" dimColor={!isSelected}>{'█'.repeat(flexF)  + '░'.repeat(FLEX_BAR - flexF)}</Text>
                     <Text color="cyan"   dimColor={!isSelected}>{'█'.repeat(discrF) + '░'.repeat(FLEX_BAR - discrF)}</Text>
                   </Box>
@@ -467,7 +467,7 @@ export function Trends({
             </Box>
             <Box flexDirection="column">
               <Text dimColor>avg/{RANGE_LABELS[range].toLowerCase()}</Text>
-              <Text bold color={isNet ? (avg >= 0 ? 'green' : 'red') : undefined}>
+              <Text bold color={isNet ? (avg >= 0 ? C_POSITIVE : C_NEGATIVE) : undefined}>
                 {isNet ? fmtSigned(avg) : fmt(avg)}
               </Text>
             </Box>

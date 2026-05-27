@@ -7,7 +7,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { useTerminalWidth, CURSOR, MONTHS } from './ui.js';
+import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_MANUAL } from './ui.js';
 
 type Tx = TxRow;
 
@@ -519,11 +519,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
                 {isSelected ? '▶ ' : '  '}{tx.date}
               </Text>
               <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
-              <Text color={isIgnored ? undefined : tx.amount < 0 ? 'green' : undefined} dimColor={isIgnored}>
+              <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
                 {fmt(tx.amount).padStart(10)}
               </Text>
               <Text
-                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? 'magenta' : undefined}
+                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
               >
                 {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
@@ -670,7 +670,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
           <Box gap={2} marginTop={1}>
             <Text>Pattern </Text>
-            <Text color="magenta">{editPattern}</Text><Text color="magenta">█</Text>
+            <Text color={C_MANUAL}>{editPattern}</Text><Text color={C_MANUAL}>█</Text>
           </Box>
           <Box gap={3} marginTop={1}>
             <Text color={editMatchType === 'name' ? 'white' : undefined} dimColor={editMatchType !== 'name'}>[n] name</Text>

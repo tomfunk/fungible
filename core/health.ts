@@ -103,15 +103,3 @@ export function coastYears(
   return yr > 200 ? null : yr;
 }
 
-export function savingsRateColor(rate: number): string {
-  if (rate < 0)  return 'red';
-  if (rate < 10) return 'yellow';
-  if (rate < 20) return 'white';
-  return 'green';
-}
-
-export function runwayColor(months: number, green: number, yellow: number): string {
-  if (months >= green)  return 'green';
-  if (months >= yellow) return 'yellow';
-  return 'red';
-}

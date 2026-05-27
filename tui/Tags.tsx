@@ -5,7 +5,7 @@ import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../cor
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR } from './ui.js';
+import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE } from './ui.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -162,15 +162,15 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
           <Box gap={6} marginY={1}>
             <Box flexDirection="column">
               <Text dimColor>Income</Text>
-              <Text color="green" bold>{fmt(tagSummary.income)}</Text>
+              <Text color={C_POSITIVE} bold>{fmt(tagSummary.income)}</Text>
             </Box>
             <Box flexDirection="column">
               <Text dimColor>Expenses</Text>
-              <Text color="red" bold>{fmt(tagSummary.expenses)}</Text>
+              <Text color={C_NEGATIVE} bold>{fmt(tagSummary.expenses)}</Text>
             </Box>
             <Box flexDirection="column">
               <Text dimColor>Net</Text>
-              <Text color={tagSummary.net >= 0 ? 'green' : 'red'} bold>
+              <Text color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} bold>
                 {tagSummary.net >= 0 ? '+' : '-'}{fmt(tagSummary.net)}
               </Text>
             </Box>

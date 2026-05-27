@@ -15,7 +15,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, FLEX_COLORS } from './ui.js';
+import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_MANUAL } from './ui.js';
 
 const BAR_WIDTH = 20;
 
@@ -29,11 +29,11 @@ function pct(part: number, total: number) {
 /** Heat-map color based on current spend vs 12-month rolling average. */
 function driftColor(current: number, avg12m: number): string {
   if (current === 0) return 'white';
-  if (avg12m === 0) return 'red';          // new spending with no history
+  if (avg12m === 0) return C_NEGATIVE;     // new spending with no history
   const ratio = current / avg12m;
-  if (ratio <= 1.10) return 'green';       // within 10% of average
-  if (ratio <= 1.30) return 'yellow';      // creeping (10–30% over)
-  return 'red';                            // spiked (>30% over)
+  if (ratio <= 1.10) return C_POSITIVE;   // within 10% of average
+  if (ratio <= 1.30) return 'yellow';     // creeping (10–30% over)
+  return C_NEGATIVE;                      // spiked (>30% over)
 }
 
 /** Format a drift delta value compactly (no cents). */
@@ -340,7 +340,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         <Box gap={2}>
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
-          {driftMode && <Text color="magenta" bold>delta</Text>}
+          {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>
             {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints ? '  [Tab]  [d]' : ''}
           </Text>
@@ -393,7 +393,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                 const isSelected = i === acctCursor;
                 const isFiltered = selectedAccount?.id === acct.id;
                 const drift = driftMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
-                const spendColor = drift ? driftColor(drift.current, drift.avg12m) : 'red';
+                const spendColor = drift ? driftColor(drift.current, drift.avg12m) : C_NEGATIVE;
                 return (
                   <Box key={acct.id} gap={2}>
                     <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
@@ -404,8 +404,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                       ? <Text color={drift ? spendColor : 'white'} dimColor={!drift}>
                           {drift ? fmtDelta(drift.lastPeriodDelta).padStart(10) : '—'.padStart(10)}
                         </Text>
-                      : <Text color="green" dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>}
-                    <Text color={driftMode ? spendColor : 'red'} dimColor={acct.spending === 0}>
+                      : <Text color={C_POSITIVE} dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>}
+                    <Text color={driftMode ? spendColor : C_NEGATIVE} dimColor={acct.spending === 0}>
                       {(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(10)}
                     </Text>
                     {isFiltered && <Text color="yellow">  ●</Text>}
@@ -423,15 +423,15 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           <Box gap={6} marginY={1}>
             <Box flexDirection="column">
               <Text dimColor>Income</Text>
-              <Text color="green" bold>{fmt(displaySummary.income)}</Text>
+              <Text color={C_POSITIVE} bold>{fmt(displaySummary.income)}</Text>
             </Box>
             <Box flexDirection="column">
               <Text dimColor>Expenses</Text>
-              <Text color="red" bold>{fmt(displaySummary.expenses)}</Text>
+              <Text color={C_NEGATIVE} bold>{fmt(displaySummary.expenses)}</Text>
             </Box>
             <Box flexDirection="column">
               <Text dimColor>Net</Text>
-              <Text color={displaySummary.net >= 0 ? 'green' : 'red'} bold>
+              <Text color={displaySummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} bold>
                 {displaySummary.net >= 0 ? '+' : '-'}{fmt(displaySummary.net)}
               </Text>
             </Box>

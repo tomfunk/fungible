@@ -4,7 +4,7 @@ import { getAccountsWithBalances, type AccountBalance, type HistoryRow } from '.
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY } from './ui.js';
+import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE } from './ui.js';
 
 const BAR_WIDTH = 32;
 const PAGE = 20;
@@ -147,14 +147,14 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         <>
           {/* Big net worth number */}
           <Box marginTop={1} marginBottom={1}>
-            <Text bold color={netWorth >= 0 ? 'green' : 'red'}>
+            <Text bold color={netWorth >= 0 ? C_POSITIVE : C_NEGATIVE}>
               {fmtSigned(netWorth).padStart(18)}
             </Text>
           </Box>
 
           {/* Assets */}
           <Box flexDirection="column">
-            <Text bold color="green">Assets</Text>
+            <Text bold color={C_POSITIVE}>Assets</Text>
             {view === 'accounts' ? assets.map((a) => (
               <Box key={a.name + a.balance} gap={2}>
                 <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W).padEnd(NAME_W)}</Text>
@@ -172,13 +172,13 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             </Box>
             <Box gap={2}>
               <Text bold>{'Total assets'.padEnd(NAME_W)}</Text>
-              <Text bold color="green">{fmt(totalAssets).padStart(AMT_W)}</Text>
+              <Text bold color={C_POSITIVE}>{fmt(totalAssets).padStart(AMT_W)}</Text>
             </Box>
           </Box>
 
           {/* Liabilities */}
           <Box flexDirection="column" marginTop={1}>
-            <Text bold color="red">Liabilities</Text>
+            <Text bold color={C_NEGATIVE}>Liabilities</Text>
             {view === 'accounts' ? liabilities.map((a) => (
               <Box key={a.name + a.balance} gap={2}>
                 <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W).padEnd(NAME_W)}</Text>
@@ -195,7 +195,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             </Box>
             <Box gap={2}>
               <Text bold>{'Total debt'.padEnd(NAME_W)}</Text>
-              <Text bold color="red">{fmt(totalLiabilities).padStart(AMT_W)}</Text>
+              <Text bold color={C_NEGATIVE}>{fmt(totalLiabilities).padStart(AMT_W)}</Text>
             </Box>
           </Box>
 
@@ -222,10 +222,10 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                       <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
                         {row.label.padEnd(labelW)}
                       </Text>
-                      <Text color={row.net >= 0 ? 'green' : 'red'} dimColor={!isSelected}>
+                      <Text color={row.net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>
                         {fmtSigned(row.net).padStart(14)}
                       </Text>
-                      <Text color={row.net >= 0 ? 'green' : 'red'} dimColor>
+                      <Text color={row.net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor>
                         {bar(row.net, maxNet, BAR_WIDTH)}
                       </Text>
                     </Box>
