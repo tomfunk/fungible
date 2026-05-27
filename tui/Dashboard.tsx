@@ -15,7 +15,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_MANUAL } from './ui.js';
+import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL } from './ui.js';
 
 const BAR_WIDTH = 20;
 
@@ -28,11 +28,11 @@ function pct(part: number, total: number) {
 
 /** Heat-map color based on current spend vs 12-month rolling average. */
 function driftColor(current: number, avg12m: number): string {
-  if (current === 0) return 'white';
+  if (current === 0) return C_NEUTRAL;
   if (avg12m === 0) return C_NEGATIVE;     // new spending with no history
   const ratio = current / avg12m;
   if (ratio <= 1.10) return C_POSITIVE;   // within 10% of average
-  if (ratio <= 1.30) return 'yellow';     // creeping (10–30% over)
+  if (ratio <= 1.30) return C_WARNING;    // creeping (10–30% over)
   return C_NEGATIVE;                      // spiked (>30% over)
 }
 
@@ -84,7 +84,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
   { key: 'fixed',         label: 'Fixed',        color: FLEX_COLORS.fixed         },
   { key: 'flexible',      label: 'Flexible',      color: FLEX_COLORS.flexible      },
   { key: 'discretionary', label: 'Discretionary', color: FLEX_COLORS.discretionary },
-  { key: 'untagged',      label: 'Untagged',      color: 'white'                   },
+  { key: 'untagged',      label: 'Untagged',      color: C_NEUTRAL                 },
 ];
 
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
@@ -401,7 +401,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                       {(acct.name.length > dashAcctNameW ? acct.name.slice(0, dashAcctNameW - 1) + '…' : acct.name).padEnd(dashAcctNameW)}
                     </Text>
                     {driftMode
-                      ? <Text color={drift ? spendColor : 'white'} dimColor={!drift}>
+                      ? <Text color={drift ? spendColor : C_NEUTRAL} dimColor={!drift}>
                           {drift ? fmtDelta(drift.lastPeriodDelta).padStart(10) : '—'.padStart(10)}
                         </Text>
                       : <Text color={C_POSITIVE} dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>}

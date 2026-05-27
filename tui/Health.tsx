@@ -4,18 +4,18 @@ import type { Screen } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
-import { C_POSITIVE, C_NEGATIVE } from './ui.js';
+import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL } from './ui.js';
 
 function savingsRateColor(rate: number): string {
   if (rate < 0)  return C_NEGATIVE;
-  if (rate < 10) return 'yellow';
-  if (rate < 20) return 'white';
+  if (rate < 10) return C_WARNING;
+  if (rate < 20) return C_NEUTRAL;
   return C_POSITIVE;
 }
 
 function runwayColor(months: number, green: number, yellow: number): string {
   if (months >= green)  return C_POSITIVE;
-  if (months >= yellow) return 'yellow';
+  if (months >= yellow) return C_WARNING;
   return C_NEGATIVE;
 }
 import { fmt, fmtPct, fmtMonths } from '../core/fmt.js';
@@ -195,7 +195,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
               {debtMonths === null ? (
                 <Text color={C_NEGATIVE}>{'no surplus'.padStart(8)}</Text>
               ) : (
-                <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? 'yellow' : 'white'}>
+                <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
                   {fmtMonths(debtMonths).padStart(8)}
                 </Text>
               )}
@@ -242,7 +242,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         <Box gap={3}>
           <Text dimColor>{'Est. years away'.padEnd(L)}</Text>
           {years === null ? (
-            <Text color="yellow">{'100+ years'.padStart(12)}</Text>
+            <Text color={C_WARNING}>{'100+ years'.padStart(12)}</Text>
           ) : years === 0 ? (
             <Text color={C_POSITIVE} bold>{'Achieved!'.padStart(12)}</Text>
           ) : (

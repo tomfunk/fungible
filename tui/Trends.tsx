@@ -396,7 +396,7 @@ export function Trends({
                 <Text dimColor>{' '.repeat(2 + labelWidth)}</Text>
                 <Text dimColor>{''.padStart(13)}</Text>
                 <Text color={FLEX_COLORS.fixed} dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
-                <Text color="yellow" dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
+                <Text color={FLEX_COLORS.flexible} dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
                 <Text color="cyan"   dimColor>{'discr'}</Text>
               </Box>
             )}
