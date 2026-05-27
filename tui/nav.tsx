@@ -26,7 +26,8 @@ const keyOf = (s: Screen) => Object.entries(SCREEN_KEYS).find(([, v]) => v === s
 const hint  = (s: Screen) => `[${keyOf(s)}] ${LABELS[s]}`;
 
 /** Two-line right-aligned nav hints, excluding the current screen. */
-export function NavHints({ current }: { current: Screen }) {
+export function NavHints({ current, showHints }: { current: Screen; showHints: boolean }) {
+  if (!showHints) return <Text dimColor>[h]</Text>;
   const row1 = ROW1.filter((s) => s !== current).map(hint).join('  ');
   const row2 = ROW2.filter((s) => s !== current).map(hint).join('  ');
   return (

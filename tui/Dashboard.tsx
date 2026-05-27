@@ -9,6 +9,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
 const BAR_WIDTH = 20;
 
@@ -64,7 +65,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
   { key: 'untagged',      label: 'Untagged',      color: 'white'  },
 ];
 
-export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean }) {
+export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const now = new Date();
   const [range, setRange] = useState<Range>('month');
   const [anchor, setAnchor] = useState<Date>(() => getPeriodStart('month', now));
@@ -104,6 +105,18 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
   }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   const categories = summary?.byCategory ?? [];
+
+  const termW = useTerminalWidth();
+  const inner = Math.max(60, termW) - 4;
+  // Categories view: [sel+name] gap [amount=10] gap [bar] — 2 gaps of 2
+  // reserve: 2 + 10 + 4 = 16; remaining split ~40% name, ~60% bar
+  const catFlex = Math.max(20, inner - 16);
+  const dashCatNameW = Math.max(12, Math.floor(catFlex * 0.38));
+  const dashBarW     = Math.max(8,  catFlex - dashCatNameW);
+  // Flex view: [sel+label=18] gap [amount=10] gap [pct=4] gap [bar] — 3 gaps
+  const dashFlexBarW = Math.max(8, inner - 38);
+  // Account view: [sel=2] gap [name] gap [income=10] gap [expenses=10] — 3 gaps
+  const dashAcctNameW = Math.max(12, inner - 28);
 
   useInput((input, key) => {
     if (key.tab) {
@@ -186,18 +199,18 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="dashboard" />
+        <NavHints current="dashboard" showHints={showHints} />
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Dashboard</Text>
-        <Text dimColor>
+        {showHints && <Text dimColor>
           {view === 'account'
             ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view`
             : view === 'categories'
             ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [Tab] view'
             : '← → period  ·  Enter txns  ·  [Tab] view'}
-        </Text>
+        </Text>}
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
@@ -207,13 +220,13 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
               {RANGE_LABELS[r]}
             </Text>
           ))}
-          <Text dimColor>[r]</Text>
+          {showHints && <Text dimColor>[r]</Text>}
         </Box>
         <Box gap={2}>
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
           <Text dimColor>
-            {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}  [Tab]
+            {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints ? '  [Tab]' : ''}
           </Text>
         </Box>
       </Box>
@@ -228,7 +241,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
             <>
               <Box gap={2} marginBottom={0}>
                 <Text dimColor>{''.padEnd(2)}</Text>
-                <Text dimColor>{'Account'.padEnd(26)}</Text>
+                <Text dimColor>{'Account'.padEnd(dashAcctNameW)}</Text>
                 <Text dimColor>{'Income'.padStart(10)}</Text>
                 <Text dimColor>{'Expenses'.padStart(10)}</Text>
               </Box>
@@ -239,7 +252,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
                   <Box key={acct.id} gap={2}>
                     <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
                     <Text color={isFiltered ? 'yellow' : isSelected ? 'cyan' : undefined} dimColor={!isSelected && !isFiltered}>
-                      {(acct.name.length > 26 ? acct.name.slice(0, 25) + '…' : acct.name).padEnd(26)}
+                      {(acct.name.length > dashAcctNameW ? acct.name.slice(0, dashAcctNameW - 1) + '…' : acct.name).padEnd(dashAcctNameW)}
                     </Text>
                     <Text color="green" dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>
                     <Text color="red" dimColor={acct.spending === 0}>{(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(10)}</Text>
@@ -293,11 +306,11 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
                       <Box key={`${row.category}-${i}`} gap={2}>
                         <Text color={isSelected ? 'cyan' : undefined}>
                           {isSelected ? '▶ ' : '  '}
-                          {row.category.padEnd(20)}
+                          {row.category.length > dashCatNameW ? row.category.slice(0, dashCatNameW - 1) + '…' : row.category.padEnd(dashCatNameW)}
                         </Text>
                         <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
                         <Text color="cyan" dimColor={!isSelected}>
-                          {bar(row.total, maxCategorySpend)}
+                          {bar(row.total, maxCategorySpend, dashBarW)}
                         </Text>
                       </Box>
                     );
@@ -317,7 +330,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
                       <Text color={color}>{'  '}{label.padEnd(16)}</Text>
                       <Text color="yellow">{fmt(amount).padStart(10)}</Text>
                       <Text dimColor>{pct(amount, totalExpenses).padStart(4)}</Text>
-                      <Text color={color}>{bar(amount, totalExpenses, 16)}</Text>
+                      <Text color={color}>{bar(amount, totalExpenses, dashFlexBarW)}</Text>
                     </Box>
                   );
                 })}

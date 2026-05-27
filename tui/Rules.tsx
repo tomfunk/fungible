@@ -7,6 +7,7 @@ import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, get
 import type { Screen, TxFilter } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
@@ -20,7 +21,7 @@ function getUncategorizedCount() {
   return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
 }
 
-export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
+export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -56,6 +57,20 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
 
   // Search
   const [search, setSearch] = useState('');
+
+  const termW = useTerminalWidth();
+  const inner = Math.max(60, termW) - 4;
+  // Category rules: 6 children → 5 gaps of 2; fixed: sel(2)+type(5)+amt(10)+pri(3) = 20; total reserve = 20+10 = 30
+  const rulesFlex = Math.max(20, inner - 30);
+  const rulePatW = Math.max(12, Math.floor(rulesFlex * 0.5));
+  const ruleCatW = Math.max(10, rulesFlex - rulePatW);
+  // Name rules: 5 children → 4 gaps of 2; fixed: sel(2)+type(5)+amt(12) = 19; total reserve = 19+8 = 27
+  const namesFlex = Math.max(20, inner - 27);
+  const namePatW  = Math.max(12, Math.floor(namesFlex * 0.5));
+  const nameReplW = Math.max(10, namesFlex - namePatW);
+  // Categories: [sel=2] gap [name] gap [flex=14] gap [hidden=6]
+  // reserve: 2+14+6 + 3gaps*2 = 28
+  const catNameW = Math.max(12, inner - 28);
 
   function load() {
     setRules(getAllRules());
@@ -338,7 +353,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="rules" />
+        <NavHints current="rules" showHints={showHints} />
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
@@ -348,11 +363,11 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
             </Text>
           ))}
         </Box>
-        <Text dimColor>
+        {showHints && <Text dimColor>
           {section === 'categories'
-            ? '[a] add  [r] rename  [d] delete  [h] hidden  [f] flexibility  ·  [Tab] switch'
+            ? '[a] add  [r] rename  [d] delete  [x] hidden  [f] flexibility  ·  [Tab] switch'
             : '[/] search  [a] add  [e] edit  [d] delete  ·  [Tab] switch'}
-        </Text>
+        </Text>}
       </Box>
 
       {mode === 'search' ? (
@@ -374,8 +389,8 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
         <>
           <Box gap={2} marginTop={1}>
             <Text dimColor>{'TYPE  '.padEnd(6)}</Text>
-            <Text dimColor>{'PATTERN'.padEnd(32)}</Text>
-            <Text dimColor>{'CATEGORY'.padEnd(20)}</Text>
+            <Text dimColor>{'PATTERN'.padEnd(rulePatW)}</Text>
+            <Text dimColor>{'CATEGORY'.padEnd(ruleCatW)}</Text>
             <Text dimColor>PRI</Text>
           </Box>
           {visible.map((rule) => {
@@ -392,10 +407,10 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
                 <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
                 <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                 <Text dimColor={!isSelected}>
-                  {rule.pattern.length > 28 ? rule.pattern.slice(0, 27) + '…' : rule.pattern.padEnd(28)}
+                  {rule.pattern.length > rulePatW ? rule.pattern.slice(0, rulePatW - 1) + '…' : rule.pattern.padEnd(rulePatW)}
                 </Text>
                 {amtLabel ? <Text color="magenta" dimColor={!isSelected}>{amtLabel.padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
-                <Text color="cyan" dimColor={!isSelected}>{rule.category.padEnd(20)}</Text>
+                <Text color="cyan" dimColor={!isSelected}>{rule.category.length > ruleCatW ? rule.category.slice(0, ruleCatW - 1) + '…' : rule.category.padEnd(ruleCatW)}</Text>
                 <Text dimColor>{rule.priority}</Text>
               </Box>
             );
@@ -412,7 +427,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
         <>
           <Box gap={2} marginTop={1}>
             <Text dimColor>{'TYPE  '.padEnd(6)}</Text>
-            <Text dimColor>{'PATTERN'.padEnd(28)}</Text>
+            <Text dimColor>{'PATTERN'.padEnd(namePatW)}</Text>
             <Text dimColor>{'AMOUNT'.padEnd(12)}</Text>
             <Text dimColor>REPLACEMENT</Text>
           </Box>
@@ -432,12 +447,12 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
                     <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
                     <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                     <Text dimColor={!isSelected}>
-                      {rule.pattern.length > 26 ? rule.pattern.slice(0, 25) + '…' : rule.pattern.padEnd(26)}
+                      {rule.pattern.length > namePatW ? rule.pattern.slice(0, namePatW - 1) + '…' : rule.pattern.padEnd(namePatW)}
                     </Text>
                     {amtLabel
                       ? <Text color="magenta" dimColor={!isSelected}>{amtLabel.padEnd(12)}</Text>
                       : <Text>{' '.repeat(12)}</Text>}
-                    <Text color="green" dimColor={!isSelected}>{rule.replacement}</Text>
+                    <Text color="green" dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
                   </Box>
                 );
               })}
@@ -449,7 +464,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
       {section === 'categories' && (
         <>
           <Box gap={2} marginTop={1} marginBottom={1}>
-            <Text dimColor>{'NAME'.padEnd(22)}</Text>
+            <Text dimColor>{'NAME'.padEnd(catNameW + 2)}</Text>
             <Text dimColor>{'FLEXIBILITY'.padEnd(16)}</Text>
             <Text dimColor>HIDDEN</Text>
           </Box>
@@ -461,7 +476,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
               return (
                 <Box key={cat.name} gap={2}>
                   <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat.name.padEnd(20)}</Text>
+                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat.name.length > catNameW ? cat.name.slice(0, catNameW - 1) + '…' : cat.name.padEnd(catNameW)}</Text>
                   {cat.flexibility
                     ? <Text color={flexColor} dimColor={!isSelected}>{cat.flexibility.padEnd(14)}</Text>
                     : <Text dimColor>{'—'.padEnd(14)}</Text>}

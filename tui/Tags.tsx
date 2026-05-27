@@ -5,10 +5,11 @@ import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../cor
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
-export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
+export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
@@ -30,6 +31,11 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
   const visibleTags = search
     ? tags.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
     : tags;
+
+  const termW = useTerminalWidth();
+  const inner = Math.max(60, termW) - 4;
+  // [sel=2] gap [name] gap [count text~18] — 2 gaps of 2
+  const tagNameW = Math.max(10, inner - 24);
 
   useInput((input, key) => {
     if (mode === 'search') {
@@ -141,14 +147,14 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="tags" />
+        <NavHints current="tags" showHints={showHints} />
       </Box>
 
       {mode === 'detail' && tag && tagSummary ? (
         <>
           <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
             <Text bold>Tags <Text dimColor>— # {tag.name}  ← {cursor + 1} / {tags.length} →</Text></Text>
-            <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>
+            {showHints && <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>}
           </Box>
 
           <Divider />
@@ -203,7 +209,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
         <>
           <Box justifyContent="space-between" marginTop={1}>
             <Text bold>Tags{search ? <Text color="yellow">  /{search}</Text> : null}</Text>
-            <Text dimColor>[/] search  ·  [a] add  [r] rename  [d] delete  ·  Enter detail  ·  [t] transactions</Text>
+            {showHints && <Text dimColor>[/] search  ·  [a] add  [r] rename  [d] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
           {mode === 'search' && (
             <Box marginTop={1}>
@@ -224,7 +230,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
                 <Box key={t.id} gap={2} marginTop={i === 0 ? 1 : 0}>
                   <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
                   <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
-                    {t.name.padEnd(28)}
+                    {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
                   </Text>
                   <Text dimColor>{t.count} transaction{t.count !== 1 ? 's' : ''}</Text>
                 </Box>

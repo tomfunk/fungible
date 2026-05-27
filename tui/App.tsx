@@ -25,6 +25,7 @@ export function App() {
   const [screen, setScreen]         = useState<Screen>('dashboard');
   const [txFilter, setTxFilter]     = useState<TxFilter>({});
   const [chatFocused, setChatFocused] = useState(false);
+  const [showHints, setShowHints]   = useState(false);
   const { exit } = useApp();
 
   function navigate(s: Screen, filter?: TxFilter) {
@@ -35,20 +36,21 @@ export function App() {
   useInput((input) => {
     if (chatFocused) return; // chat handles its own input
     if (input === 'q') exit();
+    if (input === 'h') setShowHints((v) => !v);
   });
 
   const screenIsActive = !chatFocused;
 
   const currentScreen = (() => {
     switch (screen) {
-      case 'dashboard':    return <Dashboard    onNavigate={navigate} isActive={screenIsActive} />;
-      case 'transactions': return <Transactions onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} />;
-      case 'trends':       return <Trends       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} />;
-      case 'networth':     return <NetWorth     onNavigate={navigate} isActive={screenIsActive} />;
-      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} />;
-      case 'rules':        return <Rules        onNavigate={navigate} isActive={screenIsActive} />;
-      case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} />;
-      case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} />;
+      case 'dashboard':    return <Dashboard    onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'transactions': return <Transactions onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
+      case 'trends':       return <Trends       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
+      case 'networth':     return <NetWorth     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'rules':        return <Rules        onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
     }
   })();
 

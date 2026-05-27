@@ -4,6 +4,7 @@ import { getAccountsWithBalances, type AccountBalance, type HistoryRow } from '.
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
 const BAR_WIDTH = 32;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -28,7 +29,7 @@ function groupByType(accs: AccountBalance[]): TypeBalance[] {
     .sort((a, b) => b.balance - a.balance);
 }
 
-export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => void; isActive?: boolean }) {
+export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const { accounts, history } = getAccountsWithBalances();
   const [view, setView] = React.useState<ViewMode>('accounts');
 
@@ -52,14 +53,17 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
   const assetTypes      = groupByType(assets);
   const liabilityTypes  = groupByType(liabilities);
 
-  const NAME_W = 28;
+  const termW = useTerminalWidth();
+  const inner = Math.max(60, termW) - 4;
   const AMT_W  = 14;
+  // [name] gap [amount=14] gap [subtype~12] — 2 gaps of 2
+  const NAME_W = Math.max(14, inner - AMT_W - 16);
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="networth" />
+        <NavHints current="networth" showHints={showHints} />
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">
@@ -67,7 +71,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
           <Text bold>Net Worth</Text>
           {current && <Text dimColor>  as of {dateLabel(current.date)}</Text>}
         </Box>
-        <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}</Text>
+        {showHints && <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}</Text>}
       </Box>
       <Divider />
 

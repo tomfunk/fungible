@@ -25,7 +25,7 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => void; isActive?: boolean }) {
+export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const [data] = useState<HealthData>(loadHealthData);
 
   const defaultSpend   = Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP);
@@ -99,12 +99,12 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
       {/* Nav */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="health" />
+        <NavHints current="health" showHints={showHints} />
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">
         <Text bold>Financial Health</Text>
-        <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>
+        {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
       </Box>
       <Divider />
 

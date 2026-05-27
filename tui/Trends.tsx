@@ -5,10 +5,8 @@ import { addDays, weekLabel, type TrendsRange } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
-const BAR_WIDTH = 28;
-const HALF_BAR = 14;
-const FLEX_BAR = 9;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const pad = (n: number) => String(n).padStart(2, '0');
 const Q_FROM = ['01', '04', '07', '10'];
@@ -272,10 +270,12 @@ export function Trends({
   onNavigate,
   initialFilter,
   isActive,
+  showHints,
 }: {
   onNavigate: (s: Screen, f?: TxFilter) => void;
   initialFilter?: TxFilter;
   isActive?: boolean;
+  showHints: boolean;
 }) {
   const [views] = useState<View[]>(buildViews);
   const [viewIdx, setViewIdx] = useState(() => {
@@ -339,16 +339,26 @@ export function Trends({
   const color = viewColor(view);
   const posLabel = `${viewIdx + 1} / ${views.length}`;
 
+  const termW = useTerminalWidth();
+  const inner = Math.max(70, termW) - 4;
+  const rowBase = 2 + labelWidth; // selector + label
+  // Regular: [rowBase] gap [total=13] gap [bar] — 2 gaps of 2
+  const BAR_WIDTH = Math.max(8, inner - rowBase - 13 - 4);
+  // Net: [rowBase] gap [net=13] gap [leftBar] gap [|=1] gap [rightBar] — 4 gaps of 1
+  const HALF_BAR = Math.max(6, Math.floor((inner - rowBase - 13 - 4) / 2));
+  // Flex: [rowBase] gap [total=13] gap [bar1] gap [bar2] gap [bar3] — 4 gaps of 2
+  const FLEX_BAR = Math.max(5, Math.floor((inner - rowBase - 13 - 8) / 3));
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="trends" />
+        <NavHints current="trends" showHints={showHints} />
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
-        <Text dimColor>← → view  ·  ↑↓ navigate  ·  [r] range  ·  Enter drill in</Text>
+        {showHints && <Text dimColor>← → view  ·  ↑↓ navigate  ·  [r] range  ·  Enter drill in</Text>}
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
@@ -358,7 +368,7 @@ export function Trends({
               {RANGE_LABELS[r]}
             </Text>
           ))}
-          <Text dimColor>[r]</Text>
+          {showHints && <Text dimColor>[r]</Text>}
         </Box>
         <Box gap={2}>
           <Text bold>{view.label}</Text>

@@ -7,6 +7,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
 type Tx = TxRow;
 
@@ -63,7 +64,7 @@ function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
   } catch { return 0; }
 }
 
-export function Transactions({ onNavigate, initialFilter, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean }) {
+export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
@@ -425,6 +426,13 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
     }
   }, { isActive: isActive !== false });
 
+  const termW = useTerminalWidth();
+  const inner = Math.max(60, termW) - 4;
+  // [sel+date=12] gap [desc] gap [amount=10] gap [cat] — 3 gaps of 2
+  const txFlex = Math.max(18, inner - 28);
+  const descW = Math.max(10, Math.floor(txFlex * 0.55));
+  const catW  = Math.max(8,  txFlex - descW);
+
   const PAGE = 20;
   const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), txs.length - PAGE));
   const visible = txs.slice(pageStart, pageStart + PAGE);
@@ -459,7 +467,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="transactions" />
+        <NavHints current="transactions" showHints={showHints} />
       </Box>
       <Box marginTop={1}>
         <Text bold>
@@ -467,11 +475,11 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
       </Box>
-      <Box justifyContent="flex-end">
+      {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {from ? '← →  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [d] delete
         </Text>
-      </Box>
+      </Box>}
 
       {mode === 'search' && (
         <Box marginTop={1}>
@@ -488,10 +496,10 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {'  DATE ' + (sort === 'date-desc' ? '↓' : sort === 'date-asc' ? '↑' : ' ') + '   '}
         </Text>
         <Text color={sort.startsWith('name') ? 'cyan' : undefined} dimColor={!sort.startsWith('name')}>
-          {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(28)}
+          {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(descW)}
         </Text>
         <Text color={sort.startsWith('amount') ? 'cyan' : undefined} dimColor={!sort.startsWith('amount')}>
-          {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(12)}
+          {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(10)}
         </Text>
         <Text color={sort.startsWith('category') ? 'cyan' : undefined} dimColor={!sort.startsWith('category')}>
           {'CATEGORY' + (sort === 'category-asc' ? ' ↑' : sort === 'category-desc' ? ' ↓' : '')}
@@ -508,7 +516,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
             <Text color={isSelected ? 'cyan' : undefined} dimColor={isIgnored && !isSelected}>
               {isSelected ? '▶ ' : '  '}{tx.date}
             </Text>
-            <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, 26)}</Text>
+            <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
             <Text color={isIgnored ? undefined : tx.amount < 0 ? 'green' : undefined} dimColor={isIgnored}>
               {fmt(tx.amount).padStart(10)}
             </Text>
@@ -516,7 +524,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
               color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? 'magenta' : undefined}
               dimColor={isIgnored || !isSelected}
             >
-              {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, 16)}
+              {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
             </Text>
             {hasTags && isSelected && (
               <Text color="cyan"># {tx.tag_names}</Text>

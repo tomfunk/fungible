@@ -10,6 +10,7 @@ import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount 
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { useTerminalWidth } from './useTerminalWidth.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ function fmtDate(d: string | null): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
+export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
 
@@ -112,6 +113,14 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
+
+  const termW = useTerminalWidth();
+  const inner = Math.max(60, termW) - 4;
+  // [sel=2] gap [name] gap [mask=7] gap [type=14] gap [inst] gap [synced~14]
+  // 5 gaps of 2 = 10; fixed: 2+7+14+14+10 = 47
+  const acctFlex = Math.max(20, inner - 47);
+  const acctNameW = Math.max(14, Math.floor(acctFlex * 0.6));
+  const acctInstW = Math.max(8,  acctFlex - acctNameW);
 
   function loadAccounts() {
     setLinkedAccounts(getLinkedAccounts());
@@ -533,7 +542,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="accounts" />
+        <NavHints current="accounts" showHints={showHints} />
       </Box>
 
       <Box marginTop={1}>
@@ -543,10 +552,10 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
           <Text bold color={mainView === 'dupes' ? 'white' : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
-          <Text dimColor>[Tab]</Text>
+          {showHints && <Text dimColor>[Tab]</Text>}
         </Box>
       </Box>
-      <Box justifyContent="flex-end">
+      {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
             ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
@@ -556,7 +565,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
             ? '↑↓ select  ·  [d] delete CSV copy  ·  [D] delete all'
             : ''}
         </Text>
-      </Box>
+      </Box>}
 
       <Box marginTop={1}><Divider /></Box>
 
@@ -573,19 +582,19 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
               {linkedAccounts.map((acct, i) => {
                 const isSelected = i === acctCursor;
                 const label = (acct.subtype ?? acct.type).padEnd(14);
-                const institution = acct.institution_name ? truncate(acct.institution_name, 16) : '';
+                const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
                 return (
                   <Box key={acct.id} gap={2}>
                     <Text color={isSelected ? 'cyan' : undefined}>
                       {isSelected ? '▶ ' : '  '}
                     </Text>
                     <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
-                      {truncate(acct.nickname ?? acct.name, 28).padEnd(28)}
+                      {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
                     {acct.nickname && <Text dimColor={!isSelected} color={isSelected ? 'yellow' : undefined}>✎</Text>}
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
-                    <Text dimColor>{institution.padEnd(16)}</Text>
+                    <Text dimColor>{institution.padEnd(acctInstW)}</Text>
                     <Text dimColor>
                       {acct.last_synced
                         ? <Text>synced <Text color={isSelected ? 'green' : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
