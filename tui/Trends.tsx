@@ -347,8 +347,8 @@ export function Trends({
   const rowBase = 2 + labelWidth; // selector + label
   // Regular: [rowBase] gap [total=13] gap [bar] — 2 gaps of 2
   const BAR_WIDTH = Math.max(8, inner - rowBase - 13 - 4);
-  // Net: [rowBase] gap [net=13] gap [leftBar] gap [|=1] gap [rightBar] — 4 gaps of 1
-  const HALF_BAR = Math.max(6, Math.floor((inner - rowBase - 13 - 4) / 2));
+  // Net: [rowBase] gap [net=13] gap [leftBar] gap [|=1] gap [rightBar] — 4 gaps of 1, |=1
+  const HALF_BAR = Math.max(6, Math.floor((inner - rowBase - 13 - 4 - 1) / 2));
   // Flex: [rowBase] gap [total=13] gap [bar1] gap [bar2] gap [bar3] — 4 gaps of 2
   const FLEX_BAR = Math.max(5, Math.floor((inner - rowBase - 13 - 8) / 3));
 
