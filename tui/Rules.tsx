@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
-import { categorize } from '../core/categorize.js';
-import { rebuildDisplayNames } from '../core/rename.js';
 import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, type Rule, type NameRule, type CategoryDetail } from '../core/queries.js';
+import {
+  getUncategorizedCount, deleteCategoryRule, deleteNameRule,
+  saveCategoryRule, saveNameRule, setCategoryFlexibility,
+  deleteCategory, renameCategory, createCategory,
+} from '../core/rules.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -15,10 +17,6 @@ type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 
 type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
-
-function getUncategorizedCount() {
-  return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
-}
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const [rules, setRules] = useState<Rule[]>([]);
@@ -82,16 +80,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   useEffect(() => { load(); }, []);
 
-  function deleteRule(id: number) {
-    db.prepare('DELETE FROM category_rules WHERE id = ?').run(id);
+  function handleDeleteRule(id: number) {
+    deleteCategoryRule(id);
     setStatusMsg('Rule deleted');
     setTimeout(() => setStatusMsg(''), 2000);
     load();
   }
 
-  function deleteNameRule(id: number) {
-    db.prepare('DELETE FROM name_rules WHERE id = ?').run(id);
-    rebuildDisplayNames();
+  function handleDeleteNameRule(id: number) {
+    deleteNameRule(id);
     setStatusMsg('Name rule deleted');
     setTimeout(() => setStatusMsg(''), 2000);
     load();
@@ -101,32 +98,12 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     const category = categories[catCursor];
     const minAmt = newMinAmount.trim() ? parseFloat(newMinAmount) : null;
     const maxAmt = newMaxAmount.trim() ? parseFloat(newMaxAmount) : null;
-    if (editingRuleId !== null) {
-      db.prepare('UPDATE category_rules SET match_type = ?, pattern = ?, category = ?, min_amount = ?, max_amount = ? WHERE id = ?')
-        .run(newType, newPattern, category, minAmt, maxAmt, editingRuleId);
-      setEditingRuleId(null);
-    } else {
-      const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
-        .get(newType, newPattern) as { id: number } | undefined;
-      if (existing) {
-        db.prepare('UPDATE category_rules SET category = ?, min_amount = ?, max_amount = ? WHERE id = ?').run(category, minAmt, maxAmt, existing.id);
-      } else {
-        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (10, ?, ?, ?, ?, ?)')
-          .run(newType, newPattern, category, minAmt, maxAmt);
-      }
-    }
-
-    // Apply to all transactions without a manual override
-    const rows = db.prepare(
-      'SELECT id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
-    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number; category: string }[];
-    const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
-    let count = 0;
-    for (const tx of rows) {
-      const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-      if (cat !== tx.category) { update.run(cat, tx.id); count++; }
-    }
-
+    const count = saveCategoryRule({
+      pattern: newPattern, matchType: newType, category,
+      minAmount: minAmt, maxAmount: maxAmt,
+      editingId: editingRuleId,
+    });
+    setEditingRuleId(null);
     setStatusMsg(`Rule saved · recategorized ${count} transactions`);
     setTimeout(() => setStatusMsg(''), 3000);
     setNewPattern('');
@@ -134,19 +111,16 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     load();
   }
 
-  function saveNameRule() {
+  function handleSaveNameRule() {
     const minAmt = newNameMinAmount.trim() ? parseFloat(newNameMinAmount) : null;
     const maxAmt = newNameMaxAmount.trim() ? parseFloat(newNameMaxAmount) : null;
-    if (editingNameRuleId !== null) {
-      db.prepare('UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ?, min_amount = ?, max_amount = ? WHERE id = ?')
-        .run(newNameType, newNamePattern, newReplacement, minAmt, maxAmt, editingNameRuleId);
-      setEditingNameRuleId(null);
-    } else {
-      db.prepare('INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)')
-        .run(newNameType, newNamePattern, newReplacement, minAmt, maxAmt);
-    }
-    rebuildDisplayNames();
-    setStatusMsg(`Name rule saved`);
+    saveNameRule({
+      pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
+      minAmount: minAmt, maxAmount: maxAmt,
+      editingId: editingNameRuleId,
+    });
+    setEditingNameRuleId(null);
+    setStatusMsg('Name rule saved');
     setTimeout(() => setStatusMsg(''), 3000);
     setNewNamePattern('');
     setNewReplacement('');
@@ -188,7 +162,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
         if (input === 'a') { setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setMode('add-pattern'); }
-        if (input === 'x' && filteredRules[cursor]) { deleteRule(filteredRules[cursor].id); }
+        if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
         if ((input === 'e' || key.return) && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);
@@ -203,7 +177,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
         if (input === 'a') { setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setMode('add-name-pattern'); }
-        if (input === 'x' && filteredNameRules[nameCursor]) { deleteNameRule(filteredNameRules[nameCursor].id); }
+        if (input === 'x' && filteredNameRules[nameCursor]) { handleDeleteNameRule(filteredNameRules[nameCursor].id); }
         if ((input === 'e' || key.return) && filteredNameRules[nameCursor]) {
           const r = filteredNameRules[nameCursor];
           setEditingNameRuleId(r.id);
@@ -231,7 +205,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           const cat = catDetails[catListCursor];
           const idx = FLEX_CYCLE.indexOf(cat.flexibility);
           const next = FLEX_CYCLE[(idx + 1) % FLEX_CYCLE.length];
-          db.prepare('UPDATE categories SET flexibility = ? WHERE name = ?').run(next, cat.name);
+          setCategoryFlexibility(cat.name, next);
           load();
           return;
         }
@@ -242,9 +216,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         }
         if (input === 'x' && categories[catListCursor]) {
           const name = categories[catListCursor];
-          db.prepare("UPDATE transactions SET category = 'Uncategorized', manual_category = NULL WHERE category = ?").run(name);
-          db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(name);
-          db.prepare('DELETE FROM categories WHERE name = ?').run(name);
+          deleteCategory(name);
           setStatusMsg(`Deleted "${name}"`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();
@@ -295,14 +267,14 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       if (key.backspace || key.delete) { setNewNameMaxAmount((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewNameMaxAmount((p) => p + input);
     } else if (mode === 'add-name-replacement') {
-      if (key.return) { if (newReplacement) saveNameRule(); return; }
+      if (key.return) { if (newReplacement) handleSaveNameRule(); return; }
       if (key.escape) { setMode('list'); return; }
       if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewReplacement((p) => p + input);
     } else if (mode === 'add-category-name') {
       if (key.escape) { setMode('list'); return; }
       if (key.return && newCategoryName.trim()) {
-        db.prepare('INSERT OR IGNORE INTO categories (name) VALUES (?)').run(newCategoryName.trim());
+        createCategory(newCategoryName.trim());
         setStatusMsg(`Added "${newCategoryName.trim()}"`);
         setTimeout(() => setStatusMsg(''), 2000);
         setNewCategoryName('');
@@ -318,12 +290,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         const oldName = categories[catListCursor];
         const newName = renameCatInput.trim();
         if (oldName && newName !== oldName) {
-          db.prepare('INSERT OR IGNORE INTO categories (name, flexibility) SELECT ?, flexibility FROM categories WHERE name = ?').run(newName, oldName);
-          db.prepare('UPDATE transactions SET category = ? WHERE category = ?').run(newName, oldName);
-          db.prepare('UPDATE transactions SET manual_category = ? WHERE manual_category = ?').run(newName, oldName);
-          db.prepare('UPDATE category_rules SET category = ? WHERE category = ?').run(newName, oldName);
-          db.prepare('UPDATE hidden_categories SET category = ? WHERE category = ?').run(newName, oldName);
-          db.prepare('DELETE FROM categories WHERE name = ?').run(oldName);
+          renameCategory(oldName, newName);
           setStatusMsg(`Renamed to "${newName}"`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();

@@ -4,7 +4,7 @@ export const RANGE_LABELS: Record<Range, string> = {
   week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year', alltime: 'All',
 };
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
 function toStr(d: Date) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }

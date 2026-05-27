@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { spawn } from 'node:child_process';
-import { db } from '../core/db.js';
-import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
-import { parseCSV, parseDate, generateTxId } from '../core/csv.js';
+import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import {
+  updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
+  createManualAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
+} from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -141,8 +143,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function saveEdit() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    db.prepare('UPDATE accounts SET type = ?, subtype = ? WHERE id = ?')
-      .run(editType, editSubtype.trim() || null, acct.id);
+    updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
     setAcctMode('list');
     setAcctMsg(`Updated ${acct.name}`);
     setTimeout(() => setAcctMsg(''), 2500);
@@ -168,21 +169,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function saveManualAsset() {
     const value = parseFloat(manualValue.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setManualValueError('Enter a valid positive number'); return; }
-    const id = `manual-${Date.now()}`;
-    const today = new Date().toISOString().slice(0, 10);
-    db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, manualName.trim(), 'other', 'manual');
-    db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
+    createManualAccount(manualName, value);
     setAddStep('manual-done');
     loadAccounts();
   }
 
-  function deleteAccount() {
+  function handleDeleteAccount() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    db.prepare('DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)').run(acct.id);
-    db.prepare('DELETE FROM transactions WHERE account_id = ?').run(acct.id);
-    db.prepare('DELETE FROM balance_history WHERE account_id = ?').run(acct.id);
-    db.prepare('DELETE FROM accounts WHERE id = ?').run(acct.id);
+    deleteAccount(acct.id);
     setAcctMode('list');
     setAcctCursor((c) => Math.max(0, c - 1));
     setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
@@ -194,7 +189,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
     const nickname = nicknameInput.trim() || null;
-    db.prepare('UPDATE accounts SET nickname = ? WHERE id = ?').run(nickname, acct.id);
+    updateAccountNickname(acct.id, nickname);
     setAcctMode('list');
     setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
     setTimeout(() => setAcctMsg(''), 2500);
@@ -206,8 +201,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (!acct) return;
     const value = parseFloat(updateValueInput.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setUpdateValueError('Enter a valid positive number'); return; }
-    const today = new Date().toISOString().slice(0, 10);
-    db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(acct.id, value, today);
+    updateAccountValue(acct.id, value);
     setAcctMode('list');
     setAcctMsg(`Updated value for ${acct.name}`);
     setTimeout(() => setAcctMsg(''), 2500);
@@ -265,31 +259,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function doImport() {
     const acct = csvAccounts[csvAccountCursor];
-    const insert = db.prepare(`
-      INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, 0)
-    `);
-    let imported = 0, skipped = 0;
-    for (const row of csvRows) {
-      const rawDate = row[dateCol!] ?? '';
-      const name = row[nameCol!] ?? '';
-      let amount: number;
-      if (amountMode === 'split') {
-        const debit = parseFloat(row[debitCol!] || '0') || 0;
-        const credit = parseFloat(row[creditCol!] || '0') || 0;
-        amount = debit > 0 ? debit : -credit;
-      } else {
-        const raw = parseFloat(row[amountCol!] || '0') || 0;
-        amount = positiveIsInflow ? -raw : raw;
-      }
-      if (!rawDate || !name || isNaN(amount)) { skipped++; continue; }
-      const date = parseDate(rawDate);
-      const category = categorize(name, null, null);
-      const id = generateTxId(acct.mask ?? acct.id, date, name, amount);
-      const changes = (insert.run(id, acct.id, date, name, amount, category) as any).changes;
-      if (changes > 0) imported++; else skipped++;
-    }
-    setImportResult({ imported, skipped });
+    const result = importCsvTransactions(csvRows, acct, {
+      amountMode, dateCol: dateCol!, nameCol: nameCol!,
+      amountCol, debitCol, creditCol, positiveIsInflow,
+    });
+    setImportResult(result);
     setAddStep('done');
   }
 
@@ -370,7 +344,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (acctMode === 'confirm-delete') {
         if (key.escape || input === 'n') { setAcctMode('list'); return; }
-        if (input === 'y') { deleteAccount(); return; }
+        if (input === 'y') { handleDeleteAccount(); return; }
         return;
       }
 
@@ -395,6 +369,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
       if (input === 'x' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
+
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
         setAddStep('link-plaid');
@@ -412,16 +387,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
       if (input === 'x' && dupes[dupeCursor]) {
-        db.prepare('DELETE FROM transactions WHERE id = ?').run(dupes[dupeCursor].csvId);
+        deleteDuplicate(dupes[dupeCursor].csvId);
         const next = getCsvPlaidDupeCandidates();
         setDupes(next);
         setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
         return;
       }
       if (input === 'X') {
-        const ids = dupes.map((p) => p.csvId);
-        const placeholders = ids.map(() => '?').join(',');
-        db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...ids);
+        deleteAllDuplicates(dupes.map((p) => p.csvId));
         setDupes([]);
         setDupeCursor(0);
         return;
