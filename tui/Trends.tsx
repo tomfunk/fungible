@@ -5,17 +5,17 @@ import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type P
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE } from './ui.js';
+import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL } from './ui.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
 function viewColor(view: View): string {
   if (view.mode === 'net')           return 'cyan';
-  if (view.mode === 'income')        return 'green';
-  if (view.mode === 'flexbreakdown') return 'white';
+  if (view.mode === 'income')        return C_POSITIVE;
+  if (view.mode === 'flexbreakdown') return C_NEUTRAL;
   if (view.mode === 'flex' && view.flex) return FLEX_COLORS[view.flex];
-  return 'red';
+  return C_NEGATIVE;
 }
 
 export function Trends({
