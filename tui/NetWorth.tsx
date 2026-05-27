@@ -89,7 +89,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   useInput((input, key) => {
     if (key.tab)      { setView((v) => v === 'accounts' ? 'types' : 'accounts'); return; }
-    if (key.escape || input === '4') { onNavigate('networth'); return; }
+    if (key.escape) { onNavigate('dashboard'); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
     if (input === 'r') {

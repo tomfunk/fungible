@@ -394,7 +394,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setAcctMode('update-value');
         return;
       }
-      if (input === 'd' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
+      if (input === 'x' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
         setAddStep('link-plaid');
@@ -411,14 +411,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('accounts'); return; }
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
-      if (input === 'd' && dupes[dupeCursor]) {
+      if (input === 'x' && dupes[dupeCursor]) {
         db.prepare('DELETE FROM transactions WHERE id = ?').run(dupes[dupeCursor].csvId);
         const next = getCsvPlaidDupeCandidates();
         setDupes(next);
         setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
         return;
       }
-      if (input === 'D') {
+      if (input === 'X') {
         const ids = dupes.map((p) => p.csvId);
         const placeholders = ids.map(() => '?').join(',');
         db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...ids);
@@ -556,11 +556,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
+            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
-            ? '↑↓ select  ·  [d] delete CSV copy  ·  [D] delete all'
+            ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
         </Text>
       </Box>}

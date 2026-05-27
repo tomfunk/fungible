@@ -40,7 +40,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const currentDial: Dial = DIALS[dialIdx];
 
   useInput((input, key) => {
-    if (key.escape || input === '6') { onNavigate('health'); return; }
+    if (key.escape) { onNavigate('dashboard'); return; }
     handleNavKey(input, 'health', onNavigate);
 
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + DIALS.length) % DIALS.length); return; }

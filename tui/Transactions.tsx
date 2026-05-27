@@ -347,7 +347,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     }
 
     if (mode === 'list') {
-      if (key.tab) { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
+      if (input === 's') { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
       // Pass active search to adjacent screens (1=dashboard, 3=trends)
       if (input === '1') { onNavigate('dashboard', search ? { search } : undefined); return; }
       if (input === '3') { onNavigate('trends', search ? { search } : undefined); return; }
@@ -398,8 +398,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         setMode('tag-all');
         return;
       }
-      if (input === 'x' && selected?.manual_category) clearOverride();
-      if (input === 'X' && txs.length > 0) {
+      if (input === 'c' && selected?.manual_category) clearOverride();
+      if (input === 'C' && txs.length > 0) {
         const rows = db.prepare('SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (' + txs.map(() => '?').join(',') + ') AND manual_category IS NOT NULL').all(...txs.map((t) => t.id)) as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
         const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?');
         for (const tx of rows) stmt.run(categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount), tx.id);
@@ -418,7 +418,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search, true);
         return;
       }
-      if (input === 'd' && selected?.id.startsWith('csv-')) {
+      if (input === 'x' && selected?.id.startsWith('csv-')) {
         db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ?').run(selected.id);
         db.prepare('DELETE FROM transactions WHERE id = ?').run(selected.id);
         load(search);
@@ -478,7 +478,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
-          {from ? '← →  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [d] delete
+          {from ? '← →  ·  ' : ''}[s] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [x] delete
         </Text>
       </Box>}
 

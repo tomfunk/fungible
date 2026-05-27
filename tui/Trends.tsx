@@ -334,8 +334,7 @@ export function Trends({
       return;
     }
     if (handleNavKey(input, 'trends', onNavigate)) return;
-    if (key.leftArrow)  { setViewIdx((i) => (i - 1 + filteredViews.length) % filteredViews.length); return; }
-    if (key.rightArrow) { setViewIdx((i) => (i + 1) % filteredViews.length); return; }
+    if (key.tab)        { setViewIdx((i) => (i + 1) % filteredViews.length); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
     if (input === 'r') {
@@ -395,7 +394,7 @@ export function Trends({
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
-        {showHints && <Text dimColor>← → view  ·  ↑↓ navigate  ·  [r] range  ·  Enter drill in</Text>}
+        {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter drill in</Text>}
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
@@ -409,7 +408,7 @@ export function Trends({
         </Box>
         <Box gap={2}>
           <Text bold>{view.label}</Text>
-          <Text dimColor>← {posLabel} →</Text>
+          <Text dimColor>[Tab] {posLabel}</Text>
         </Box>
       </Box>
       <Divider />

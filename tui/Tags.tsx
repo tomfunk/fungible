@@ -119,8 +119,8 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
     if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(visibleTags.length - 1, c + 1)); return; }
     if (input === 'a') { setNewName(''); setMode('add'); return; }
-    if (input === 'r' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
-    if (input === 'd' && visibleTags[cursor]) {
+    if (input === 'n' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
+    if (input === 'x' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
       db.prepare('DELETE FROM transaction_tags WHERE tag_id = ?').run(tag.id);
       db.prepare('DELETE FROM tags WHERE id = ?').run(tag.id);
@@ -209,7 +209,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
         <>
           <Box justifyContent="space-between" marginTop={1}>
             <Text bold>Tags{search ? <Text color="yellow">  /{search}</Text> : null}</Text>
-            {showHints && <Text dimColor>[/] search  ·  [a] add  [r] rename  [d] delete  ·  Enter detail  ·  [t] transactions</Text>}
+            {showHints && <Text dimColor>[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
           {mode === 'search' && (
             <Box marginTop={1}>

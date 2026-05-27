@@ -117,23 +117,23 @@ In **delta mode**, the bar chart is replaced by three delta columns — vs prev 
 |-----|--------|
 | `↑ ↓` | Navigate |
 | `← →` | Previous / next month (when date filter active) |
-| `Tab` | Cycle sort: Date ↓↑ → Description ↑↓ → Amount ↓↑ → Category ↑↓ |
+| `s` | Cycle sort: Date ↓↑ → Description ↑↓ → Amount ↓↑ → Category ↑↓ |
 | `/` | Search by name (regex); inherited from Dashboard if navigated with an active search |
 | `a` | Show all transactions |
 | `u` | Show uncategorized only |
 | `e` | Edit: rename display name or change category |
 | `g` | Tag panel: add/remove tags on selected transaction |
 | `G` | Tag all visible transactions at once (use `/` to filter first) |
-| `x` | Undo manual category override |
+| `c` | Undo manual category override |
 | `i` | Ignore / un-ignore selected transaction |
-| `d` | Delete selected transaction (CSV-imported only) |
+| `x` | Delete selected transaction (CSV-imported only) |
 | `Esc` | Clear active filter (peels off one at a time) |
 
 ### Trends `[3]`
 
 | Key | Action |
 |-----|--------|
-| `← →` | Cycle views: Expenses → Income → Net → [each category] |
+| `Tab` | Cycle views: Expenses → Income → Net → [each category] |
 | `↑ ↓` | Navigate periods |
 | `r` | Cycle aggregation range (Week / Month / Quarter / Year) |
 | `Enter` | Drill into transactions for selected period |
@@ -157,8 +157,8 @@ Shows assets (depository, investment, manual), liabilities (credit), and net wor
 | `Enter` | Open tag detail (income / expenses / category breakdown) |
 | `t` | View all transactions for selected tag |
 | `a` | Add new tag |
-| `r` | Rename selected tag |
-| `d` | Delete selected tag |
+| `n` | Rename selected tag |
+| `x` | Delete selected tag |
 
 In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
 
@@ -192,7 +192,7 @@ Three sections, cycle with `Tab`: **Category Rules**, **Name Rules**, **Categori
 | `/` | Search rules |
 | `a` | Add rule |
 | `e` / `Enter` | Edit selected rule |
-| `d` | Delete selected rule |
+| `x` | Delete selected rule |
 
 Category rules support substring and regex matching with optional min/max amount filters. Name rules support the same matching plus optional amount filters.
 
@@ -201,9 +201,9 @@ Category rules support substring and regex matching with optional min/max amount
 | Key | Action |
 |-----|--------|
 | `a` | Add new category |
-| `r` | Rename category (cascades to all transactions, rules, and hidden settings) |
-| `d` | Delete category (resets affected transactions to Uncategorized) |
-| `h` | Toggle hidden (hidden categories are excluded from totals) |
+| `n` | Rename category (cascades to all transactions, rules, and hidden settings) |
+| `x` | Delete category (resets affected transactions to Uncategorized) |
+| `v` | Toggle hidden (hidden categories are excluded from totals) |
 | `f` | Cycle flexibility tier: none → fixed → flexible → discretionary |
 
 ### Accounts `[8]`
@@ -217,11 +217,12 @@ Category rules support substring and regex matching with optional min/max amount
 | `v` | Update value (manual assets only) |
 | `r` | Repair Plaid link for selected account |
 | `s` | Force sync (bypasses 15-min cooldown) |
+| `x` | Delete selected account |
 | `l` | Link a new bank account via Plaid |
 
 **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 
-**Dupes** tab shows CSV transactions that match Plaid imports. `[d]` deletes the selected CSV duplicate; `[D]` deletes all.
+**Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
 
 ## Scripts
 

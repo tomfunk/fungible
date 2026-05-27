@@ -188,7 +188,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
         if (input === 'a') { setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setMode('add-pattern'); }
-        if (input === 'd' && filteredRules[cursor]) { deleteRule(filteredRules[cursor].id); }
+        if (input === 'x' && filteredRules[cursor]) { deleteRule(filteredRules[cursor].id); }
         if ((input === 'e' || key.return) && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);
@@ -203,7 +203,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
         if (input === 'a') { setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setMode('add-name-pattern'); }
-        if (input === 'd' && filteredNameRules[nameCursor]) { deleteNameRule(filteredNameRules[nameCursor].id); }
+        if (input === 'x' && filteredNameRules[nameCursor]) { deleteNameRule(filteredNameRules[nameCursor].id); }
         if ((input === 'e' || key.return) && filteredNameRules[nameCursor]) {
           const r = filteredNameRules[nameCursor];
           setEditingNameRuleId(r.id);
@@ -218,7 +218,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
         if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); return; }
-        if (input === 'x' && categories[catListCursor]) {
+        if (input === 'v' && categories[catListCursor]) {
           const cat = categories[catListCursor];
           const nowHidden = !hiddenSet.has(cat);
           toggleHiddenCategory(cat, hiddenSet);
@@ -235,12 +235,12 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           load();
           return;
         }
-        if (input === 'r' && categories[catListCursor]) {
+        if (input === 'n' && categories[catListCursor]) {
           setRenameCatInput(categories[catListCursor]);
           setMode('rename-category');
           return;
         }
-        if (input === 'd' && categories[catListCursor]) {
+        if (input === 'x' && categories[catListCursor]) {
           const name = categories[catListCursor];
           db.prepare("UPDATE transactions SET category = 'Uncategorized', manual_category = NULL WHERE category = ?").run(name);
           db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(name);
@@ -365,8 +365,8 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         </Box>
         {showHints && <Text dimColor>
           {section === 'categories'
-            ? '[a] add  [r] rename  [d] delete  [x] hidden  [f] flexibility  ·  [Tab] switch'
-            : '[/] search  [a] add  [e] edit  [d] delete  ·  [Tab] switch'}
+            ? '[a] add  [n] rename  [x] delete  [v] hidden  [f] flexibility  ·  [Tab] switch'
+            : '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch'}
         </Text>}
       </Box>
 
