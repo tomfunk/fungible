@@ -165,6 +165,219 @@ export function getAccountRows(from: string, to: string): AccountRow[] {
   `).all(from, to, from, to) as AccountRow[];
 }
 
+// ── Drift ──────────────────────────────────────────────────────────────────────
+
+export type DriftSlice = {
+  current: number;
+  lastPeriodDelta: number; // current − last period (positive = spent more)
+  lastYearDelta: number;   // current − same period last year
+  avg12mDelta: number;     // current − 12-period rolling average
+  avg12m: number;          // the rolling average (used for heat-map coloring)
+};
+
+export type CategoryDrift = { category: string } & DriftSlice;
+export type FlexDriftData  = Record<keyof FlexSummary, DriftSlice>;
+export type AccountDrift   = { id: string; name: string; subtype: string | null } & DriftSlice;
+
+type Window = { from: string; to: string };
+
+function queryCategoryTotals(from: string, to: string, accountId?: string): Map<string, number> {
+  const acctClause = accountId ? 'AND account_id = ?' : '';
+  const args: string[] = accountId ? [from, to, accountId] : [from, to];
+  const rows = db.prepare(`
+    SELECT category, SUM(amount) as total
+    FROM transactions
+    WHERE date >= ? AND date <= ? ${acctClause}
+      AND amount > 0 AND pending = 0 AND ignored = 0
+      AND category NOT IN (SELECT category FROM hidden_categories)
+    GROUP BY category HAVING SUM(amount) > 0
+  `).all(...args) as { category: string; total: number }[];
+  return new Map(rows.map((r) => [r.category, r.total]));
+}
+
+function queryFlexTotals(from: string, to: string, accountId?: string): FlexSummary {
+  const acctClause = accountId ? 'AND t.account_id = ?' : '';
+  const args: string[] = accountId ? [from, to, accountId] : [from, to];
+  const rows = db.prepare(`
+    SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(cat_totals.total) as total
+    FROM (
+      SELECT t.category, SUM(t.amount) as total
+      FROM transactions t
+      WHERE t.date >= ? AND t.date <= ? ${acctClause}
+        AND t.pending = 0 AND t.ignored = 0
+        AND t.category NOT IN (SELECT category FROM hidden_categories)
+      GROUP BY t.category HAVING SUM(t.amount) > 0
+    ) as cat_totals
+    LEFT JOIN categories c ON c.name = cat_totals.category
+    GROUP BY tier
+  `).all(...args) as { tier: string; total: number }[];
+  const result: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
+  for (const r of rows) {
+    if (r.tier === 'fixed') result.fixed = r.total;
+    else if (r.tier === 'flexible') result.flexible = r.total;
+    else if (r.tier === 'discretionary') result.discretionary = r.total;
+    else result.untagged = r.total;
+  }
+  return result;
+}
+
+function queryAccountSpending(from: string, to: string): Map<string, number> {
+  const rows = db.prepare(`
+    SELECT a.id,
+      COALESCE(SUM(CASE WHEN t.amount > 0 AND t.category != 'Transfer'
+                        AND t.pending = 0 AND t.ignored = 0 THEN t.amount ELSE 0 END), 0) as spending
+    FROM accounts a
+    LEFT JOIN transactions t ON t.account_id = a.id
+      AND t.date >= ? AND t.date <= ?
+    GROUP BY a.id
+  `).all(from, to) as { id: string; spending: number }[];
+  return new Map(rows.map((r) => [r.id, r.spending]));
+}
+
+function sliceFor(current: number, last: number, year: number, rolling: number[]): DriftSlice {
+  const avg12m = rolling.length > 0 ? rolling.reduce((s, v) => s + v, 0) / rolling.length : 0;
+  return {
+    current,
+    lastPeriodDelta: current - last,
+    lastYearDelta:   current - year,
+    avg12mDelta:     current - avg12m,
+    avg12m,
+  };
+}
+
+export function getCategoryDriftData(
+  currentWin: Window,
+  lastPeriodWin: Window,
+  lastYearWin: Window,
+  rolling12: Window[],
+  accountId?: string,
+): CategoryDrift[] {
+  const cur     = queryCategoryTotals(currentWin.from,    currentWin.to,    accountId);
+  const last    = queryCategoryTotals(lastPeriodWin.from, lastPeriodWin.to, accountId);
+  const yr      = queryCategoryTotals(lastYearWin.from,   lastYearWin.to,   accountId);
+  const roll12  = rolling12.map((w) => queryCategoryTotals(w.from, w.to, accountId));
+
+  return [...cur.entries()]
+    .map(([category, currentAmt]) => ({
+      category,
+      ...sliceFor(
+        currentAmt,
+        last.get(category) ?? 0,
+        yr.get(category)   ?? 0,
+        roll12.map((m) => m.get(category) ?? 0),
+      ),
+    }))
+    .sort((a, b) => b.current - a.current);
+}
+
+export function getFlexDriftData(
+  currentWin: Window,
+  lastPeriodWin: Window,
+  lastYearWin: Window,
+  rolling12: Window[],
+  accountId?: string,
+): FlexDriftData {
+  const cur    = queryFlexTotals(currentWin.from,    currentWin.to,    accountId);
+  const last   = queryFlexTotals(lastPeriodWin.from, lastPeriodWin.to, accountId);
+  const yr     = queryFlexTotals(lastYearWin.from,   lastYearWin.to,   accountId);
+  const roll12 = rolling12.map((w) => queryFlexTotals(w.from, w.to, accountId));
+
+  const tiers: (keyof FlexSummary)[] = ['fixed', 'flexible', 'discretionary', 'untagged'];
+  return Object.fromEntries(
+    tiers.map((tier) => [
+      tier,
+      sliceFor(cur[tier], last[tier], yr[tier], roll12.map((r) => r[tier])),
+    ]),
+  ) as FlexDriftData;
+}
+
+export function getAccountDriftData(
+  currentWin: Window,
+  lastPeriodWin: Window,
+  lastYearWin: Window,
+  rolling12: Window[],
+): AccountDrift[] {
+  const accounts = db.prepare(`
+    SELECT id, name, subtype FROM accounts
+    ORDER BY CASE type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, name
+  `).all() as { id: string; name: string; subtype: string | null }[];
+
+  const cur    = queryAccountSpending(currentWin.from,    currentWin.to);
+  const last   = queryAccountSpending(lastPeriodWin.from, lastPeriodWin.to);
+  const yr     = queryAccountSpending(lastYearWin.from,   lastYearWin.to);
+  const roll12 = rolling12.map((w) => queryAccountSpending(w.from, w.to));
+
+  return accounts.map((acct) => ({
+    ...acct,
+    ...sliceFor(
+      cur.get(acct.id)  ?? 0,
+      last.get(acct.id) ?? 0,
+      yr.get(acct.id)   ?? 0,
+      roll12.map((m) => m.get(acct.id) ?? 0),
+    ),
+  }));
+}
+
+// ── End Drift ──────────────────────────────────────────────────────────────────
+
+/**
+ * Filter all transactions in a date window by a regex search, then compute
+ * summary + flex totals from only the matching rows. Used to make the dashboard
+ * category/flex views respond to an active search filter.
+ */
+export function getSearchFilteredData(
+  from: string,
+  to: string,
+  search: string,
+  accountId?: string,
+): { summary: MonthlySummary; flexData: FlexSummary } {
+  const acctClause = accountId ? 'AND t.account_id = ?' : '';
+  const args: string[] = accountId ? [from, to, accountId] : [from, to];
+
+  const rows = db.prepare(`
+    SELECT COALESCE(t.display_name, t.name) as display, t.merchant_name, t.amount, t.category,
+      COALESCE(c.flexibility, 'untagged') as flex
+    FROM transactions t
+    LEFT JOIN categories c ON c.name = t.category
+    WHERE t.date >= ? AND t.date <= ? ${acctClause}
+      AND t.pending = 0 AND t.ignored = 0
+      AND t.category NOT IN (SELECT category FROM hidden_categories)
+  `).all(...args) as { display: string; merchant_name: string | null; amount: number; category: string; flex: string }[];
+
+  const re = buildSearchRe(search);
+  const matches = rows.filter(
+    (r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false),
+  );
+
+  // Net per category first (same convention as getRangeSummary/getFlexSummary)
+  const catMap = new Map<string, { total: number; flex: string }>();
+  for (const r of matches) {
+    const e = catMap.get(r.category);
+    if (!e) catMap.set(r.category, { total: r.amount, flex: r.flex });
+    else e.total += r.amount;
+  }
+
+  let income = 0, expenses = 0;
+  const byCategory: { category: string; total: number }[] = [];
+  const flexData: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
+
+  for (const [category, { total, flex }] of catMap) {
+    if (total < 0) {
+      income += Math.abs(total);
+    } else if (total > 0) {
+      expenses += total;
+      byCategory.push({ category, total });
+      if (flex === 'fixed') flexData.fixed += total;
+      else if (flex === 'flexible') flexData.flexible += total;
+      else if (flex === 'discretionary') flexData.discretionary += total;
+      else flexData.untagged += total;
+    }
+  }
+
+  byCategory.sort((a, b) => b.total - a.total);
+  return { summary: { income, expenses, net: income - expenses, byCategory }, flexData };
+}
+
 export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
 export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
 export type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
@@ -236,6 +449,15 @@ export type TxRow = {
   tag_names: string | null;
 };
 
+/** Build a case-insensitive RegExp from a search string; falls back to literal if invalid regex. */
+export function buildSearchRe(search: string): RegExp {
+  try {
+    return new RegExp(search, 'i');
+  } catch {
+    return new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  }
+}
+
 export function getTransactions(filters: {
   category?: string | null;
   from?: string | null;
@@ -254,10 +476,7 @@ export function getTransactions(filters: {
     conditions.push('t.date >= ? AND t.date <= ?');
     args.push(from, to);
   }
-  if (search) {
-    conditions.push('(t.name LIKE ? OR t.display_name LIKE ? OR t.merchant_name LIKE ?)');
-    args.push(`%${search}%`, `%${search}%`, `%${search}%`);
-  }
+  // search is applied client-side as regex (see below)
   if (tag) {
     conditions.push('EXISTS (SELECT 1 FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id AND tg.name = ?)');
     args.push(tag);
@@ -265,14 +484,50 @@ export function getTransactions(filters: {
   if (account) { conditions.push('t.account_id = ?'); args.push(account); }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
       (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
     FROM transactions t
     ${where}
     ORDER BY ${SORT_ORDER_BY[sort]}
-    LIMIT 200
+    LIMIT 5000
   `).all(...args) as TxRow[];
+
+  if (!search) return rows.slice(0, 200);
+
+  const re = buildSearchRe(search);
+  return rows
+    .filter((r) => re.test(r.display_name ?? r.name) || (r.merchant_name ? re.test(r.merchant_name) : false))
+    .slice(0, 200);
+}
+
+/**
+ * Count transactions matching a regex search within a date window.
+ * Returns { count, expenses } for showing live match stats on the dashboard.
+ */
+export function countSearchMatches(
+  from: string,
+  to: string,
+  search: string,
+  accountId?: string,
+): { count: number; expenses: number } {
+  if (!search) return { count: 0, expenses: 0 };
+  const acctClause = accountId ? 'AND account_id = ?' : '';
+  const args: string[] = accountId ? [from, to, accountId] : [from, to];
+  const rows = db.prepare(`
+    SELECT COALESCE(display_name, name) as display, merchant_name, amount
+    FROM transactions
+    WHERE date >= ? AND date <= ? ${acctClause}
+      AND pending = 0 AND ignored = 0
+  `).all(...args) as { display: string; merchant_name: string | null; amount: number }[];
+  const re = buildSearchRe(search);
+  const matches = rows.filter(
+    (r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false),
+  );
+  return {
+    count: matches.length,
+    expenses: matches.filter((r) => r.amount > 0).reduce((s, r) => s + r.amount, 0),
+  };
 }
 
 export type LinkedAccount = {

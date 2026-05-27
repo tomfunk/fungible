@@ -19,6 +19,7 @@ export type TxFilter = {
   tag?: string;
   account?: string;
   accountName?: string;
+  search?: string;
 };
 
 export function App() {
@@ -43,7 +44,7 @@ export function App() {
 
   const currentScreen = (() => {
     switch (screen) {
-      case 'dashboard':    return <Dashboard    onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'dashboard':    return <Dashboard    onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'transactions': return <Transactions onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'trends':       return <Trends       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'networth':     return <NetWorth     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;

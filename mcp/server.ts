@@ -263,6 +263,19 @@ server.tool(
   (input) => run('get_financial_health', input),
 );
 
+// ── get_drift ─────────────────────────────────────────────────────────────────
+
+server.tool(
+  'get_drift',
+  'Show spending deltas per category: current amount vs prior period, same period last year, and 12-month rolling average. Defaults to current month-to-date.',
+  {
+    year:  z.number().int().optional().describe('4-digit year (default: current year)'),
+    month: z.number().int().min(1).max(12).optional().describe('Month 1–12 (default: current month)'),
+    day:   z.number().int().min(1).max(31).optional().describe('Day through which to compare (default: today)'),
+  },
+  (input) => run('get_drift', input),
+);
+
 // ── get_trends ────────────────────────────────────────────────────────────────
 
 server.tool(

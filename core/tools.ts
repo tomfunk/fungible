@@ -7,7 +7,8 @@
  * embedded agent handles those before calling executeTool.
  */
 
-import { getRangeSummary, getMonthlySummary, getTagSummary } from './queries.js';
+import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData } from './queries.js';
+import { getDriftWindows } from './dateUtils.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { categorize } from './categorize.js';
@@ -78,6 +79,18 @@ export const TOOL_DEFS: ToolDef[] = [
       properties: {
         withdrawal_rate: { type: 'number', description: 'Safe withdrawal rate % (default 4)', minimum: 0.5, maximum: 10 },
         growth_rate:     { type: 'number', description: 'Expected annual growth rate % (default 7)', minimum: 0, maximum: 20 },
+      },
+    },
+  },
+  {
+    name: 'get_drift',
+    description: 'Show spending deltas for each category: current amount vs prior period, same period last year, and 12-month rolling average. Useful for spotting categories where spending is quietly creeping up. Defaults to the current month-to-date.',
+    parameters: {
+      type: 'object',
+      properties: {
+        year:  { type: 'integer', description: '4-digit year (default: current year)' },
+        month: { type: 'integer', description: 'Month 1–12 (default: current month)', minimum: 1, maximum: 12 },
+        day:   { type: 'integer', description: 'Day of month to compare through — use for partial-month MTD (default: today)', minimum: 1, maximum: 31 },
       },
     },
   },
@@ -408,6 +421,41 @@ export async function executeTool(
         `FIRE progress: ${(h.fireProgress * 100).toFixed(1)}%`,
         `Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)}`}`,
       ].join('\n');
+    }
+
+    case 'get_drift': {
+      const today = new Date();
+      const year  = input['year']  ? num('year')  : today.getFullYear();
+      const month = input['month'] ? num('month') : today.getMonth() + 1;
+      const day   = input['day']   ? num('day')   : today.getDate();
+      const anchor = new Date(year, month - 1, 1, 12);
+      const asOf   = new Date(year, month - 1, day, 12);
+      const windows = getDriftWindows('month', anchor, asOf);
+      if (!windows) return 'Drift is not available for this range.';
+      const { current, lastPeriod, lastYear, rolling12 } = windows;
+      const rows = getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
+      if (!rows.length) return `No expense data for ${year}-${String(month).padStart(2, '0')} through day ${day}.`;
+      const fmtAmt   = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+      const signedFmt = (n: number) => n === 0 ? '—' : `${n > 0 ? '+' : '-'}$${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+      const heat = (current: number, avg: number) => {
+        if (avg === 0) return current > 0 ? ' 🔴' : '';
+        const r = current / avg;
+        if (r <= 1.10) return ' 🟢';
+        if (r <= 1.30) return ' 🟡';
+        return ' 🔴';
+      };
+      const header = `Drift — ${year}-${String(month).padStart(2, '0')} through day ${day}\n` +
+        `${'Category'.padEnd(26)} ${'Current'.padStart(10)} ${'vs Last'.padStart(10)} ${'vs Yr'.padStart(10)} ${'vs 12m'.padStart(10)}`;
+      const divider = '─'.repeat(header.split('\n')[1].length);
+      const lines = rows.map((r) =>
+        `${r.category.length > 26 ? r.category.slice(0, 25) + '…' : r.category.padEnd(26)} ` +
+        `${fmtAmt(r.current).padStart(10)} ` +
+        `${signedFmt(r.lastPeriodDelta).padStart(10)} ` +
+        `${signedFmt(r.lastYearDelta).padStart(10)} ` +
+        `${signedFmt(r.avg12mDelta).padStart(10)}` +
+        heat(r.current, r.avg12m)
+      );
+      return [header.split('\n')[0], divider, header.split('\n')[1], divider, ...lines].join('\n');
     }
 
     case 'get_trends': {

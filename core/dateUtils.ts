@@ -113,6 +113,68 @@ export function generatePeriods(
   return result;
 }
 
+export type DriftWindows = {
+  current:    { from: string; to: string };
+  lastPeriod: { from: string; to: string };
+  lastYear:   { from: string; to: string };
+  rolling12:  Array<{ from: string; to: string }>; // 12 complete periods, newest first
+};
+
+/**
+ * Compute comparison windows for drift mode.
+ * All windows are capped to the same number of elapsed days as the current period
+ * so partial-month comparisons are fair (e.g., first 15 days vs first 15 days).
+ * Returns null for alltime (no meaningful comparison).
+ */
+export function getDriftWindows(range: Range, anchor: Date, today: Date): DriftWindows | null {
+  if (range === 'alltime') return null;
+
+  const { from, to } = getPeriodDates(range, anchor);
+  const todayStr   = toStr(today);
+  const effectiveTo = to > todayStr ? todayStr : to;
+
+  // Days elapsed in current period (0-based offset: May 1→May 27 = 26)
+  const elapsedDays = Math.round(
+    (new Date(effectiveTo + 'T12:00:00').getTime() - new Date(from + 'T12:00:00').getTime()) / 86400000,
+  );
+
+  // Build a window starting at startStr, extending elapsedDays forward, capped at maxEnd
+  function mkWindow(startStr: string, maxEnd: string): { from: string; to: string } {
+    const end = new Date(startStr + 'T12:00:00');
+    end.setDate(end.getDate() + elapsedDays);
+    const endStr = toStr(end);
+    return { from: startStr, to: endStr <= maxEnd ? endStr : maxEnd };
+  }
+
+  // Last period
+  const lastAnchor = navigatePeriod(range, anchor, -1);
+  const lastFull   = getPeriodDates(range, lastAnchor);
+  const lastPeriod = mkWindow(lastFull.from, lastFull.to);
+
+  // Same period last year — weeks use 52-week offset to preserve day-of-week
+  let lyAnchor: Date;
+  if (range === 'week') {
+    lyAnchor = new Date(anchor);
+    lyAnchor.setDate(lyAnchor.getDate() - 364);
+  } else {
+    lyAnchor = new Date(anchor);
+    lyAnchor.setFullYear(anchor.getFullYear() - 1);
+  }
+  const lyFull   = getPeriodDates(range, lyAnchor);
+  const lastYear = mkWindow(lyFull.from, lyFull.to);
+
+  // Rolling 12: last 12 complete periods before current
+  const rolling12: Array<{ from: string; to: string }> = [];
+  let rollAnchor = navigatePeriod(range, anchor, -1);
+  for (let i = 0; i < 12; i++) {
+    const p = getPeriodDates(range, rollAnchor);
+    rolling12.push(mkWindow(p.from, p.to));
+    rollAnchor = navigatePeriod(range, rollAnchor, -1);
+  }
+
+  return { current: { from, to: effectiveTo }, lastPeriod, lastYear, rolling12 };
+}
+
 export function formatPeriodLabel(range: Range, anchor: Date): string {
   switch (range) {
     case 'week': {
