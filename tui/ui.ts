@@ -22,7 +22,7 @@ export const C_DIM      = 'gray'    as const;  // inactive / unfocused elements 
 export const FLEX_COLORS: Record<'fixed' | 'flexible' | 'discretionary', string> = {
   fixed:         'red',        // mandatory, unavoidable
   flexible:      'yellow',     // somewhat controllable
-  discretionary: 'blueBright',  // fully optional
+  discretionary: 'cyan',        // fully optional
 };
 
 export function useTerminalWidth(): number {
