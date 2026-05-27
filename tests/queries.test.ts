@@ -22,13 +22,15 @@ const insertTx = (opts: {
   category?: string;
   pending?: number;
   ignored?: number;
+  accountId?: string;
 }) => {
   txId++;
   db.prepare(`
     INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
-    VALUES (?, 'acct1', ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     `tx${txId}`,
+    opts.accountId ?? 'acct1',
     opts.date ?? '2025-01-15',
     opts.name ?? 'Test Transaction',
     opts.amount,
@@ -246,6 +248,46 @@ describe('getFlexSummary', () => {
     insertTx({ date: '2024-12-15', amount: 9999, category: 'Rent' }); // out of range
     const s = getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.fixed).toBeCloseTo(1500);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getRangeSummary with accountId', () => {
+  it('filters to the given account', () => {
+    insertTx({ amount: 100, category: 'Shopping', accountId: 'acct1' });
+    insertTx({ amount: 200, category: 'Dining',   accountId: 'acct2' });
+    const s = getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
+    expect(s.expenses).toBeCloseTo(100);
+    expect(s.byCategory).toHaveLength(1);
+    expect(s.byCategory[0].category).toBe('Shopping');
+  });
+
+  it('returns zeros when account has no transactions in range', () => {
+    insertTx({ amount: 100, accountId: 'acct2' });
+    const s = getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
+    expect(s.expenses).toBe(0);
+    expect(s.income).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getFlexSummary with accountId', () => {
+  const insertCat = (name: string, flexibility: string) =>
+    db.prepare('INSERT INTO categories (name, flexibility) VALUES (?, ?)').run(name, flexibility);
+
+  it('filters to the given account', () => {
+    insertCat('Rent', 'fixed');
+    insertTx({ amount: 1500, category: 'Rent', accountId: 'acct1' });
+    insertTx({ amount: 999,  category: 'Rent', accountId: 'acct2' });
+    const s = getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
+    expect(s.fixed).toBeCloseTo(1500);
+  });
+
+  it('returns zeros when account has no transactions', () => {
+    insertCat('Rent', 'fixed');
+    insertTx({ amount: 1500, category: 'Rent', accountId: 'acct2' });
+    const s = getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
+    expect(s.fixed).toBe(0);
   });
 });
 

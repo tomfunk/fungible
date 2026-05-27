@@ -6,14 +6,27 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
-import { categorize } from '../core/categorize.js';
+import { categorize, applyCategoriesToAll } from '../core/categorize.js';
 
 const insertRule = db.prepare(
   'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
 );
 
+let txId = 0;
+function insertTx(name: string, manual_category?: string) {
+  txId++;
+  const id = `tx${txId}`;
+  db.prepare(`
+    INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored)
+    VALUES (?, 'a', '2025-01-01', ?, 10, 'Uncategorized', ?, 0, 0)
+  `).run(id, name, manual_category ?? null);
+  return id;
+}
+
 beforeEach(() => {
+  txId = 0;
   db.exec('DELETE FROM category_rules');
+  db.exec('DELETE FROM transactions');
 });
 
 describe('Plaid category fallback', () => {
@@ -168,5 +181,33 @@ describe('amount filtering', () => {
     insertRule.run(0, 'name', 'venmo', 'Transfer', null, null);
     // Amount doesn't match first rule → falls to second
     expect(categorize('VENMO PAYMENT', null, null, 200)).toBe('Transfer');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('applyCategoriesToAll', () => {
+  it('re-categorizes non-pinned transactions and returns count', () => {
+    insertRule.run(10, 'name', 'Spotify', 'Entertainment', null, null);
+    const id1 = insertTx('Spotify');
+    const id2 = insertTx('Netflix');
+    const count = applyCategoriesToAll();
+    expect(count).toBe(1); // only Spotify matched
+    const row = db.prepare('SELECT category FROM transactions WHERE id = ?').get(id1) as { category: string };
+    expect(row.category).toBe('Entertainment');
+    const row2 = db.prepare('SELECT category FROM transactions WHERE id = ?').get(id2) as { category: string };
+    expect(row2.category).toBe('Uncategorized'); // no rule matched
+  });
+
+  it('skips manually pinned transactions', () => {
+    insertRule.run(10, 'name', 'Spotify', 'Entertainment', null, null);
+    const id = insertTx('Spotify', 'Music'); // pinned
+    applyCategoriesToAll();
+    const row = db.prepare('SELECT category FROM transactions WHERE id = ?').get(id) as { category: string };
+    expect(row.category).toBe('Uncategorized'); // pinned, unchanged (manual_category is set)
+  });
+
+  it('returns 0 when no transactions match any rule', () => {
+    const count = applyCategoriesToAll();
+    expect(count).toBe(0);
   });
 });
