@@ -11,6 +11,7 @@ import {
   getFlexSummary,
   getHiddenCategories,
   getRecentTransactions,
+  getMerchantSummary,
   hasAccounts,
 } from '../core/queries.js';
 
@@ -18,6 +19,8 @@ let txId = 0;
 const insertTx = (opts: {
   date?: string;
   name?: string;
+  merchantName?: string | null;
+  displayName?: string | null;
   amount: number;
   category?: string;
   pending?: number;
@@ -26,13 +29,15 @@ const insertTx = (opts: {
 }) => {
   txId++;
   db.prepare(`
-    INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO transactions (id, account_id, date, name, merchant_name, display_name, amount, category, pending, ignored)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     `tx${txId}`,
     opts.accountId ?? 'acct1',
     opts.date ?? '2025-01-15',
     opts.name ?? 'Test Transaction',
+    opts.merchantName ?? null,
+    opts.displayName ?? null,
     opts.amount,
     opts.category ?? 'Shopping',
     opts.pending ?? 0,
@@ -267,6 +272,53 @@ describe('getRangeSummary with accountId', () => {
     const s = getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
     expect(s.expenses).toBe(0);
     expect(s.income).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getMerchantSummary', () => {
+  it('returns merchants ranked by net spend with counts and percentages', () => {
+    insertTx({ amount: 120, category: 'Food & Drink', name: 'Blue Bottle' });
+    insertTx({ amount: 30, category: 'Food & Drink', name: 'Blue Bottle' });
+    insertTx({ amount: 50, category: 'Food & Drink', name: 'Chipotle' });
+
+    const rows = getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].merchant).toBe('Blue Bottle');
+    expect(rows[0].total).toBeCloseTo(150);
+    expect(rows[0].count).toBe(2);
+    expect(rows[0].pct).toBeCloseTo(0.75);
+    expect(rows[1].merchant).toBe('Chipotle');
+    expect(rows[1].total).toBeCloseTo(50);
+    expect(rows[1].count).toBe(1);
+    expect(rows[1].pct).toBeCloseTo(0.25);
+  });
+
+  it('uses display_name when available and excludes non-positive net merchants', () => {
+    insertTx({ amount: 100, category: 'Travel', name: 'LYFT *TRIP', displayName: 'Lyft' });
+    insertTx({ amount: -40, category: 'Travel', name: 'LYFT *REFUND', displayName: 'Lyft' });
+    insertTx({ amount: 20, category: 'Travel', name: 'Refund-only merchant' });
+    insertTx({ amount: -30, category: 'Travel', name: 'Refund-only merchant' });
+
+    const rows = getMerchantSummary('Travel', '2025-01-01', '2025-01-31');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].merchant).toBe('Lyft');
+    expect(rows[0].total).toBeCloseTo(60);
+    expect(rows[0].pct).toBeCloseTo(1);
+  });
+
+  it('respects account filter and excludes hidden/pending/ignored rows', () => {
+    db.exec("INSERT INTO hidden_categories VALUES ('Transfer')");
+    insertTx({ amount: 90, category: 'Food', name: 'A', accountId: 'acct1' });
+    insertTx({ amount: 110, category: 'Food', name: 'B', accountId: 'acct2' });
+    insertTx({ amount: 200, category: 'Food', name: 'C', accountId: 'acct1', pending: 1 });
+    insertTx({ amount: 200, category: 'Food', name: 'D', accountId: 'acct1', ignored: 1 });
+    insertTx({ amount: 500, category: 'Transfer', name: 'E', accountId: 'acct1' });
+
+    const rows = getMerchantSummary('Food', '2025-01-01', '2025-01-31', 'acct1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].merchant).toBe('A');
+    expect(rows[0].total).toBeCloseTo(90);
   });
 });
 

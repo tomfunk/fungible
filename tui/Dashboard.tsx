@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows,
-  getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData,
+  getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
   type MonthlySummary, type FlexSummary, type AccountRow,
-  type CategoryDrift, type FlexDriftData, type AccountDrift,
+  type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow,
 } from '../core/queries.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
@@ -64,6 +64,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
   const [flexDrift, setFlexDrift] = useState<FlexDriftData  | null>(null);
   const [acctDrift, setAcctDrift] = useState<AccountDrift[] | null>(null);
+  const [merchantRows, setMerchantRows] = useState<MerchantSummaryRow[]>([]);
+  const [merchantCursor, setMerchantCursor] = useState(0);
+  const [merchantDrill, setMerchantDrill] = useState<{ category: string; from: string; to: string } | null>(null);
 
   // Search
   const [search,          setSearch]          = useState(initialFilter?.search ?? '');
@@ -94,6 +97,13 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       setFlexData(getFlexSummary(from, to));
       setUncategorized(getUncategorizedCount(from, to));
     }
+  }
+
+  function openMerchantDrill(category: string, from: string, to: string) {
+    const rows = getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined);
+    setMerchantRows(rows);
+    setMerchantCursor(0);
+    setMerchantDrill({ category, from, to });
   }
 
   useEffect(() => {
@@ -131,6 +141,12 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setFilteredFlex(ff);
   }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
+  useEffect(() => {
+    setMerchantDrill(null);
+    setMerchantRows([]);
+    setMerchantCursor(0);
+  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, search, driftMode, view]);
+
   const categories = summary?.byCategory ?? [];
 
   const termW = useTerminalWidth();
@@ -146,8 +162,35 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const dashFlexBarW  = Math.max(8, inner - 38);
   // Account: [sel=2] gap [name] gap [col1=10] gap [col2=10] — 3 gaps of 2
   const dashAcctNameW = Math.max(12, inner - 28);
+  // Merchants: [sel=2] gap [name] gap [amount=10] gap [count=6] gap [pct=6]
+  const merchantNameW = Math.max(12, inner - 30);
 
   useInput((input, key) => {
+    if (merchantDrill) {
+      if (key.escape) {
+        setMerchantDrill(null);
+        setMerchantRows([]);
+        setMerchantCursor(0);
+        return;
+      }
+      if (key.upArrow)   { setMerchantCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setMerchantCursor((c) => Math.min(merchantRows.length - 1, c + 1)); return; }
+      if (key.return) {
+        const row = merchantRows[merchantCursor];
+        if (row && merchantDrill) {
+          onNavigate('transactions', {
+            category: merchantDrill.category,
+            from: merchantDrill.from,
+            to: merchantDrill.to,
+            search: row.merchant,
+            ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}),
+          });
+        }
+        return;
+      }
+      return;
+    }
+
     // Search input mode — capture all keys
     if (searchMode) {
       if (key.escape) {
@@ -194,6 +237,14 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       const displayCats = displaySummary?.byCategory ?? [];
       if (key.upArrow)   { setCatCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setCatCursor((c) => Math.min(displayCats.length - 1, c + 1)); return; }
+      if (input === 'm') {
+        const cat = displayCats[catCursor];
+        if (cat) {
+          const { from, to } = getPeriodDates(range, anchor);
+          openMerchantDrill(cat.category, from, to);
+        }
+        return;
+      }
       if (key.return) {
         const cat = displayCats[catCursor];
         if (cat) {
@@ -286,10 +337,12 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Dashboard</Text>
         {showHints && <Text dimColor>
-          {view === 'account'
+          {merchantDrill
+            ? '↑↓ merchant  ·  Enter txns  ·  Esc back'
+            : view === 'account'
             ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta  ·  [/] search`
             : view === 'categories'
-            ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [Tab] view  ·  [d] delta  ·  [/] search'
+            ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [m] merchants  ·  [Tab] view  ·  [d] delta  ·  [/] search'
             : '← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta  ·  [/] search'}
         </Text>}
       </Box>
@@ -308,7 +361,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
           {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>
-            {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints ? '  [Tab]  [d]' : ''}
+            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints ? '  [Tab]  [d]' : ''}
           </Text>
         </Box>
       </Box>
@@ -413,8 +466,30 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
           {view === 'categories' ? (
             <Box flexDirection="column" marginTop={1}>
-              <Text bold dimColor>SPENDING BY CATEGORY</Text>
-              {driftMode && range === 'alltime' ? (
+              <Text bold dimColor>{merchantDrill ? `TOP MERCHANTS · ${merchantDrill.category}` : 'SPENDING BY CATEGORY'}</Text>
+              {merchantDrill ? (
+                <Box flexDirection="column" marginTop={1}>
+                  {merchantRows.length === 0 ? (
+                    <Text dimColor>No merchant spend for this category in this period.</Text>
+                  ) : (
+                    merchantRows.map((row, i) => {
+                      const isSelected = merchantCursor === i;
+                      return (
+                        <Box key={`${row.merchant}-${i}`} gap={2}>
+                          <Text color={isSelected ? C_ACCENT : undefined}>
+                            {isSelected ? '▶ ' : '  '}
+                            {truncate(row.merchant, merchantNameW).padEnd(merchantNameW)}
+                          </Text>
+                          <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
+                          <Text dimColor>{`${row.count}x`.padStart(6)}</Text>
+                          <Text dimColor>{`${Math.round(row.pct * 100)}%`.padStart(6)}</Text>
+                        </Box>
+                      );
+                    })
+                  )}
+                  {showHints && <Box marginTop={1}><Text dimColor>[Enter] transactions  ·  [Esc] back</Text></Box>}
+                </Box>
+              ) : driftMode && range === 'alltime' ? (
                 <Box marginTop={1}><Text dimColor>Delta not available for All Time range.</Text></Box>
               ) : driftMode ? (
                 <Box flexDirection="column" marginTop={1}>

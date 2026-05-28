@@ -12,6 +12,13 @@ export type MonthlySummary = {
   byCategory: CategorySummary[];
 };
 
+export type MerchantSummaryRow = {
+  merchant: string;
+  total: number;
+  count: number;
+  pct: number;
+};
+
 export type RecentTransaction = {
   id: string;
   date: string;
@@ -77,6 +84,38 @@ export function getTagSummary(tagName: string): MonthlySummary {
   const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: r.total }));
 
   return { income, expenses, net: income - expenses, byCategory };
+}
+
+export function getMerchantSummary(
+  category: string,
+  from: string,
+  to: string,
+  accountId?: string,
+): MerchantSummaryRow[] {
+  const acctClause = accountId ? 'AND account_id = ?' : '';
+  const args: string[] = accountId ? [from, to, category, accountId] : [from, to, category];
+  const rows = db.prepare(`
+    SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
+    FROM transactions
+    WHERE date >= ? AND date <= ?
+      AND category = ?
+      AND pending = 0 AND ignored = 0
+      AND category NOT IN (SELECT category FROM hidden_categories)
+      ${acctClause}
+    GROUP BY merchant
+    HAVING SUM(amount) > 0
+    ORDER BY total DESC, count DESC, merchant ASC
+  `).all(...args) as { merchant: string; total: number; count: number }[];
+
+  const categoryTotal = rows.reduce((sum, r) => sum + r.total, 0);
+  if (!categoryTotal) return [];
+
+  return rows.map((r) => ({
+    merchant: r.merchant,
+    total: r.total,
+    count: r.count,
+    pct: r.total / categoryTotal,
+  }));
 }
 
 export type FlexSummary = {
