@@ -18,6 +18,7 @@ import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { useSetTyping } from './TypingContext.js';
 
 type Tx = TxRow;
 
@@ -82,6 +83,13 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   useEffect(() => { load(); }, [category, from, to, search, tag, account, sort]);
+
+  const setTyping = useSetTyping();
+  useEffect(() => {
+    const isTextInput = mode === 'search' || mode === 'edit-rule' || mode === 'tag' || mode === 'tag-all'
+      || (mode === 'edit' && editField === 'name');
+    setTyping(isTextInput);
+  }, [mode, editField]);
 
   const selected = txs[cursor];
 

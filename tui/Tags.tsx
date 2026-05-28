@@ -6,6 +6,7 @@ import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
+import { useSetTyping } from './TypingContext.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -21,6 +22,9 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
 
   function load() { setTags(getAllTags()); }
   useEffect(() => { load(); }, []);
+
+  const setTyping = useSetTyping();
+  useEffect(() => { setTyping(mode === 'search' || mode === 'add' || mode === 'rename'); }, [mode]);
 
   function openDetail(tag: Tag) {
     setTagSummary(getTagSummary(tag.name));

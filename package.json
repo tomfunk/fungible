@@ -1,6 +1,7 @@
 {
   "name": "fungible",
   "version": "1.2.3",
+  "version": "1.2.2",
   "description": "Terminal UI for personal finance — Plaid sync, CSV import, AI assistant, and MCP server",
   "type": "module",
   "homepage": "https://github.com/tomfunk/fungible",
