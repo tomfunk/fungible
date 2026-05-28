@@ -7,7 +7,7 @@ import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
-  createManualAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
+  createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
@@ -37,7 +37,9 @@ type AddStep =
   | 'manual-name'
   | 'manual-value'
   | 'manual-confirm'
-  | 'manual-done';
+  | 'manual-done'
+  | 'new-acct-name'
+  | 'new-acct-type';
 
 const ACCOUNT_TYPES = ['depository', 'investment', 'credit', 'loan', 'other'] as const;
 
@@ -103,6 +105,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [manualValue, setManualValue] = useState('');
   const [manualValueError, setManualValueError] = useState('');
 
+  // New CSV account state (inline creation during CSV import)
+  const [newAcctName, setNewAcctName] = useState('');
+  const [newAcctType, setNewAcctType] = useState('credit');
+  const [newAcctSubtype, setNewAcctSubtype] = useState('credit card');
+  const [newAcctField, setNewAcctField] = useState<'type' | 'subtype'>('type');
+
   // Update-value mode state
   const [updateValueInput, setUpdateValueInput] = useState('');
   const [updateValueError, setUpdateValueError] = useState('');
@@ -164,6 +172,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setSyncStatus('done');
       setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 3000);
     });
+  }
+
+  function saveNewAcct() {
+    createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null);
+    const accts = getCsvAccounts();
+    setCsvAccounts(accts);
+    setCsvAccountCursor(accts.length - 1);
+    setAddStep('account');
   }
 
   function saveManualAsset() {
@@ -466,7 +482,38 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.escape) { setAddStep('landing'); return; }
       if (key.upArrow)   setCsvAccountCursor((c) => Math.max(0, c - 1));
       if (key.downArrow) setCsvAccountCursor((c) => Math.min(csvAccounts.length - 1, c + 1));
+      if (input === 'n') { setNewAcctName(''); setNewAcctType('credit'); setNewAcctSubtype('credit card'); setNewAcctField('type'); setAddStep('new-acct-name'); return; }
       if (key.return) setAddStep('confirm');
+      return;
+    }
+
+    if (addStep === 'new-acct-name') {
+      if (key.escape) { setAddStep('account'); return; }
+      if (key.return && newAcctName.trim()) { setNewAcctField('type'); setAddStep('new-acct-type'); return; }
+      if (key.backspace || key.delete) { setNewAcctName((v) => v.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setNewAcctName((v) => v + input); return; }
+      return;
+    }
+
+    if (addStep === 'new-acct-type') {
+      if (key.escape) { setAddStep('new-acct-name'); return; }
+      if (key.return) { saveNewAcct(); return; }
+      if (key.tab) { setNewAcctField((f) => f === 'type' ? 'subtype' : 'type'); return; }
+      if (newAcctField === 'type' && (key.leftArrow || key.rightArrow)) {
+        const idx = ACCOUNT_TYPES.indexOf(newAcctType as typeof ACCOUNT_TYPES[number]);
+        const next = ACCOUNT_TYPES[(idx + (key.leftArrow ? -1 : 1) + ACCOUNT_TYPES.length) % ACCOUNT_TYPES.length];
+        setNewAcctType(next);
+        setNewAcctSubtype(SUBTYPES[next]?.[0] ?? '');
+        return;
+      }
+      if (newAcctField === 'subtype') {
+        const subtypes = SUBTYPES[newAcctType] ?? [];
+        if (subtypes.length > 0 && (key.leftArrow || key.rightArrow)) {
+          const idx = subtypes.indexOf(newAcctSubtype);
+          setNewAcctSubtype(subtypes[(idx + (key.leftArrow ? -1 : 1) + subtypes.length) % subtypes.length]);
+        }
+        return;
+      }
       return;
     }
 
@@ -787,7 +834,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'account' && (
             <Box flexDirection="column" marginTop={1}>
               <Text bold>Which account do these transactions belong to?</Text>
-              <Text dimColor>↑↓ select · Enter confirm</Text>
+              <Text dimColor>↑↓ select · Enter confirm · [n] new account</Text>
               <Box flexDirection="column" marginTop={1}>
                 {csvAccounts.map((acct, i) => (
                   <Box key={acct.id} gap={2}>
@@ -798,6 +845,46 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   </Box>
                 ))}
               </Box>
+              {csvAccounts.length === 0 && <Text dimColor>No accounts yet — press [n] to create one.</Text>}
+            </Box>
+          )}
+
+          {addStep === 'new-acct-name' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>New Account — Name</Text>
+              <Text dimColor>Type a name for this account (e.g. "Venture X", "Freedom Unlimited")</Text>
+              <Box marginTop={1}>
+                <Text>Name: </Text>
+                <Text color={C_WARNING}>{newAcctName}</Text>
+                <Text color={C_ACCENT}>█</Text>
+              </Box>
+              <Text dimColor>Enter to continue · Esc back</Text>
+            </Box>
+          )}
+
+          {addStep === 'new-acct-type' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>New Account — Type</Text>
+              <Text dimColor>Account: <Text color={C_ACCENT}>{newAcctName}</Text></Text>
+              <Box flexDirection="column" marginTop={1} gap={1}>
+                <Box gap={2}>
+                  <Text color={newAcctField === 'type' ? C_ACCENT : C_NEUTRAL}>
+                    {newAcctField === 'type' ? '▶ ' : '  '}Type
+                  </Text>
+                  <Text color={newAcctField === 'type' ? C_ACCENT : undefined}>
+                    {'← '}{newAcctType}{'  →'}
+                  </Text>
+                </Box>
+                <Box gap={2}>
+                  <Text color={newAcctField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
+                    {newAcctField === 'subtype' ? '▶ ' : '  '}Subtype
+                  </Text>
+                  <Text color={newAcctField === 'subtype' ? C_ACCENT : C_WARNING}>
+                    {'← '}{newAcctSubtype || '—'}{'  →'}
+                  </Text>
+                </Box>
+              </Box>
+              <Text dimColor>Tab switch field · ← → change · Enter save · Esc back</Text>
             </Box>
           )}
 

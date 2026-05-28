@@ -16,6 +16,12 @@ export function updateAccountValue(id: string, value: number): void {
   db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
 }
 
+export function createCsvAccount(name: string, type: string, subtype: string | null): string {
+  const id = `csv-acct-${Date.now()}`;
+  db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, name.trim(), type, subtype);
+  return id;
+}
+
 export function createManualAccount(name: string, value: number): string {
   const id = `manual-${Date.now()}`;
   const today = new Date().toISOString().slice(0, 10);
