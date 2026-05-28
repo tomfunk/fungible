@@ -10,6 +10,7 @@ import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
+import { useSetTyping } from './TypingContext.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
@@ -54,6 +55,10 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   // Search
   const [search, setSearch] = useState('');
+
+  const setTyping = useSetTyping();
+  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'add-pattern', 'add-min-amount', 'add-max-amount', 'add-name-pattern', 'add-name-min-amount', 'add-name-max-amount', 'add-name-replacement', 'add-category-name', 'rename-category']);
+  useEffect(() => { setTyping(TEXT_INPUT_MODES_RULES.has(mode)); }, [mode]);
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;

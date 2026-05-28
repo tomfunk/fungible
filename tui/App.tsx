@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, useInput, useApp } from 'ink';
+import { TypingContext } from './TypingContext.js';
 import { Dashboard } from './Dashboard.js';
 import { Transactions } from './Transactions.js';
 import { Trends } from './Trends.js';
@@ -26,6 +27,7 @@ export function App() {
   const [screen, setScreen]         = useState<Screen>('dashboard');
   const [txFilter, setTxFilter]     = useState<TxFilter>({});
   const [chatFocused, setChatFocused] = useState(false);
+  const [screenTyping, setScreenTyping] = useState(false);
   const [showHints, setShowHints]   = useState(false);
   const { exit } = useApp();
 
@@ -35,7 +37,7 @@ export function App() {
   }
 
   useInput((input) => {
-    if (chatFocused) return; // chat handles its own input
+    if (chatFocused || screenTyping) return;
     if (input === 'q') exit();
     if (input === 'h') setShowHints((v) => !v);
   });
@@ -56,6 +58,7 @@ export function App() {
   })();
 
   return (
+    <TypingContext.Provider value={setScreenTyping}>
     <Box flexDirection="column" height="100%">
       <Box flexGrow={1}>
         {currentScreen}
@@ -67,5 +70,6 @@ export function App() {
         onNavigate={navigate}
       />
     </Box>
+    </TypingContext.Provider>
   );
 }

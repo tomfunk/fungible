@@ -15,6 +15,7 @@ import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
+import { useSetTyping } from './TypingContext.js';
 
 const BAR_WIDTH = 20;
 
@@ -110,6 +111,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setFlexDrift(getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId));
     setAcctDrift(getAccountDriftData(current, lastPeriod, lastYear, rolling12));
   }, [driftMode, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+
+  const setTyping = useSetTyping();
+  useEffect(() => { setTyping(searchMode); }, [searchMode]);
 
   useEffect(() => {
     const term = searchMode ? searchInput : search;

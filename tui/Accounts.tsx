@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { useSetTyping } from './TypingContext.js';
 import { spawn } from 'node:child_process';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
@@ -121,6 +122,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
+
+  const setTyping = useSetTyping();
+  const TEXT_INPUT_STEPS = new Set<AddStep>(['file', 'manual-name', 'manual-value', 'new-acct-name']);
+  const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'update-value']);
+  useEffect(() => {
+    setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
+  }, [addStep, acctMode]);
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
