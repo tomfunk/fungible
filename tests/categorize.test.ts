@@ -2,31 +2,35 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../core/db.js', async () => {
   const { makeTestDb } = await import('./helpers/makeTestDb.js');
-  return { db: makeTestDb() };
+  return { db: await makeTestDb() };
 });
 
 import { db } from '../core/db.js';
 import { categorize, applyCategoriesToAll } from '../core/categorize.js';
 
-const insertRule = (db as any).prepare(
-  'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
-);
+async function insertRule(priority: number, match_type: string, pattern: string, category: string, min_amount: number | null, max_amount: number | null) {
+  await db.execute({
+    sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)',
+    args: [priority, match_type, pattern, category, min_amount, max_amount],
+  });
+}
 
 let txId = 0;
-function insertTx(name: string, manual_category?: string) {
+async function insertTx(name: string, manual_category?: string) {
   txId++;
   const id = `tx${txId}`;
-  (db as any).prepare(`
-    INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored)
-    VALUES (?, 'a', '2025-01-01', ?, 10, 'Uncategorized', ?, 0, 0)
-  `).run(id, name, manual_category ?? null);
+  await db.execute({
+    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored)
+          VALUES (?, 'a', '2025-01-01', ?, 10, 'Uncategorized', ?, 0, 0)`,
+    args: [id, name, manual_category ?? null],
+  });
   return id;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   txId = 0;
-  (db as any).exec('DELETE FROM category_rules');
-  (db as any).exec('DELETE FROM transactions');
+  await db.execute('DELETE FROM category_rules');
+  await db.execute('DELETE FROM transactions');
 });
 
 describe('Plaid category fallback', () => {
@@ -66,37 +70,37 @@ describe('Plaid category fallback', () => {
 
 describe('name-match rules', () => {
   it('matches transaction name case-insensitively', async () => {
-    insertRule.run(0, 'name', 'starbucks', 'Food & Drink', null, null);
+    await insertRule(0, 'name', 'starbucks', 'Food & Drink', null, null);
     expect(await categorize('STARBUCKS #1234', null, null)).toBe('Food & Drink');
     expect(await categorize('Starbucks Coffee', null, null)).toBe('Food & Drink');
     expect(await categorize('starbucks downtown', null, null)).toBe('Food & Drink');
   });
 
   it('matches partial name (contains)', async () => {
-    insertRule.run(0, 'name', 'whole foods', 'Grocery', null, null);
+    await insertRule(0, 'name', 'whole foods', 'Grocery', null, null);
     expect(await categorize('WHOLEFDS #123 AUSTIN TX', null, null)).toBe('Uncategorized'); // not a substring
     expect(await categorize('Whole Foods Market #123', null, null)).toBe('Grocery');
   });
 
   it('matches against merchant name when different from transaction name', async () => {
-    insertRule.run(0, 'name', 'whole foods', 'Grocery', null, null);
+    await insertRule(0, 'name', 'whole foods', 'Grocery', null, null);
     expect(await categorize('WFM#0001 TX', 'Whole Foods Market', null)).toBe('Grocery');
   });
 
   it('does not match merchant name when same as transaction name', async () => {
-    insertRule.run(0, 'name', 'amazon', 'Shopping', null, null);
+    await insertRule(0, 'name', 'amazon', 'Shopping', null, null);
     expect(await categorize('amazon', 'amazon', null)).toBe('Shopping');
   });
 
   it('user rules beat Plaid fallback category', async () => {
-    insertRule.run(0, 'name', 'netflix', 'Subscriptions', null, null);
+    await insertRule(0, 'name', 'netflix', 'Subscriptions', null, null);
     expect(await categorize('Netflix.com', null, 'ENTERTAINMENT')).toBe('Subscriptions');
   });
 });
 
 describe('regex rules', () => {
   it('matches regex pattern case-insensitively', async () => {
-    insertRule.run(0, 'regex', 'netflix|hulu|spotify', 'Entertainment', null, null);
+    await insertRule(0, 'regex', 'netflix|hulu|spotify', 'Entertainment', null, null);
     expect(await categorize('NETFLIX.COM', null, null)).toBe('Entertainment');
     expect(await categorize('Hulu monthly', null, null)).toBe('Entertainment');
     expect(await categorize('SPOTIFY USA', null, null)).toBe('Entertainment');
@@ -104,7 +108,7 @@ describe('regex rules', () => {
   });
 
   it('matches regex against merchant name too', async () => {
-    insertRule.run(0, 'regex', '^amzn\\*', 'Shopping', null, null);
+    await insertRule(0, 'regex', '^amzn\\*', 'Shopping', null, null);
     expect(await categorize('AMZN*MKTP US', null, null)).toBe('Shopping');
     expect(await categorize('SQ *AMZN', 'AMZN*DIGITAL', null)).toBe('Shopping');
   });
@@ -112,70 +116,70 @@ describe('regex rules', () => {
 
 describe('priority ordering', () => {
   it('higher priority rule wins', async () => {
-    insertRule.run(5, 'name', 'amazon', 'Shopping', null, null);
-    insertRule.run(10, 'name', 'amazon', 'Services', null, null);
+    await insertRule(5, 'name', 'amazon', 'Shopping', null, null);
+    await insertRule(10, 'name', 'amazon', 'Services', null, null);
     expect(await categorize('Amazon.com', null, null)).toBe('Services');
   });
 
   it('lower priority rule applies when higher does not match', async () => {
-    insertRule.run(10, 'name', 'starbucks', 'Coffee', null, null);
-    insertRule.run(5, 'name', 'amazon', 'Shopping', null, null);
+    await insertRule(10, 'name', 'starbucks', 'Coffee', null, null);
+    await insertRule(5, 'name', 'amazon', 'Shopping', null, null);
     expect(await categorize('Amazon.com', null, null)).toBe('Shopping');
   });
 
   it('first rule (highest priority) wins among ties', async () => {
-    insertRule.run(0, 'name', 'venmo', 'Transfer', null, null);
-    insertRule.run(0, 'name', 'venmo', 'Phone Bill', null, null);
+    await insertRule(0, 'name', 'venmo', 'Transfer', null, null);
+    await insertRule(0, 'name', 'venmo', 'Phone Bill', null, null);
     expect(await categorize('VENMO PAYMENT', null, null)).toBe('Transfer');
   });
 });
 
 describe('amount filtering', () => {
   it('skips rule when amount is below min_amount', async () => {
-    insertRule.run(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
+    await insertRule(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
     expect(await categorize('VENMO PAYMENT', null, null, 10.00)).toBe('Uncategorized');
   });
 
   it('skips rule when amount is above max_amount', async () => {
-    insertRule.run(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
+    await insertRule(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
     expect(await categorize('VENMO PAYMENT', null, null, 100.00)).toBe('Uncategorized');
   });
 
   it('applies rule when amount is exactly at min_amount', async () => {
-    insertRule.run(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
+    await insertRule(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
     expect(await categorize('VENMO PAYMENT', null, null, 54.79)).toBe('Phone Bill');
   });
 
   it('applies rule when amount is in range', async () => {
-    insertRule.run(0, 'name', 'rent', 'Rent', 1000, 3000);
+    await insertRule(0, 'name', 'rent', 'Rent', 1000, 3000);
     expect(await categorize('ZELLE TO LANDLORD', null, null, 2000)).toBe('Uncategorized');
-    insertRule.run(0, 'name', 'zelle to landlord', 'Rent', 1000, 3000);
+    await insertRule(0, 'name', 'zelle to landlord', 'Rent', 1000, 3000);
     expect(await categorize('ZELLE TO LANDLORD', null, null, 2000)).toBe('Rent');
     expect(await categorize('ZELLE TO LANDLORD', null, null, 500)).toBe('Uncategorized');
   });
 
   it('skips amount check when amount is undefined (rule applies unconditionally)', async () => {
-    insertRule.run(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
+    await insertRule(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
     expect(await categorize('VENMO PAYMENT', null, null, undefined)).toBe('Phone Bill');
   });
 
   it('applies min_amount only rule', async () => {
-    insertRule.run(0, 'name', 'check', 'Large Check', 500, null);
+    await insertRule(0, 'name', 'check', 'Large Check', 500, null);
     expect(await categorize('CHECK #1234', null, null, 499)).toBe('Uncategorized');
     expect(await categorize('CHECK #1234', null, null, 500)).toBe('Large Check');
     expect(await categorize('CHECK #1234', null, null, 9999)).toBe('Large Check');
   });
 
   it('applies max_amount only rule', async () => {
-    insertRule.run(0, 'name', 'atm', 'Cash', null, 200);
+    await insertRule(0, 'name', 'atm', 'Cash', null, 200);
     expect(await categorize('ATM WITHDRAWAL', null, null, 201)).toBe('Uncategorized');
     expect(await categorize('ATM WITHDRAWAL', null, null, 200)).toBe('Cash');
     expect(await categorize('ATM WITHDRAWAL', null, null, 1)).toBe('Cash');
   });
 
   it('falls through to next rule when amount out of range', async () => {
-    insertRule.run(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
-    insertRule.run(0, 'name', 'venmo', 'Transfer', null, null);
+    await insertRule(0, 'name', 'venmo', 'Phone Bill', 54.79, 54.79);
+    await insertRule(0, 'name', 'venmo', 'Transfer', null, null);
     expect(await categorize('VENMO PAYMENT', null, null, 200)).toBe('Transfer');
   });
 });
@@ -183,22 +187,22 @@ describe('amount filtering', () => {
 // ──────────────────────────────────────────────────────────────────────
 describe('applyCategoriesToAll', () => {
   it('re-categorizes non-pinned transactions and returns count', async () => {
-    insertRule.run(10, 'name', 'Spotify', 'Entertainment', null, null);
-    const id1 = insertTx('Spotify');
-    const id2 = insertTx('Netflix');
+    await insertRule(10, 'name', 'Spotify', 'Entertainment', null, null);
+    const id1 = await insertTx('Spotify');
+    const id2 = await insertTx('Netflix');
     const count = await applyCategoriesToAll();
     expect(count).toBe(1);
-    const row = (db as any).prepare('SELECT category FROM transactions WHERE id = ?').get(id1) as { category: string };
+    const row = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [id1] })).rows[0] as unknown as { category: string };
     expect(row.category).toBe('Entertainment');
-    const row2 = (db as any).prepare('SELECT category FROM transactions WHERE id = ?').get(id2) as { category: string };
+    const row2 = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [id2] })).rows[0] as unknown as { category: string };
     expect(row2.category).toBe('Uncategorized');
   });
 
   it('skips manually pinned transactions', async () => {
-    insertRule.run(10, 'name', 'Spotify', 'Entertainment', null, null);
-    const id = insertTx('Spotify', 'Music');
+    await insertRule(10, 'name', 'Spotify', 'Entertainment', null, null);
+    const id = await insertTx('Spotify', 'Music');
     await applyCategoriesToAll();
-    const row = (db as any).prepare('SELECT category FROM transactions WHERE id = ?').get(id) as { category: string };
+    const row = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as { category: string };
     expect(row.category).toBe('Uncategorized');
   });
 

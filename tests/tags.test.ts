@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../core/db.js', async () => {
   const { makeTestDb } = await import('./helpers/makeTestDb.js');
-  return { db: makeTestDb() };
+  return { db: await makeTestDb() };
 });
 
 import { db } from '../core/db.js';
@@ -12,25 +12,28 @@ import {
 } from '../core/tags.js';
 
 let txId = 0;
-function insertTx() {
+async function insertTx() {
   txId++;
   const id = `tx${txId}`;
-  (db as any).prepare("INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES (?, 'a', '2025-01-01', 'T', 10, 'S', 0, 0)").run(id);
+  await db.execute({
+    sql: "INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES (?, 'a', '2025-01-01', 'T', 10, 'S', 0, 0)",
+    args: [id],
+  });
   return id;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   txId = 0;
-  (db as any).exec('DELETE FROM transaction_tags');
-  (db as any).exec('DELETE FROM tags');
-  (db as any).exec('DELETE FROM transactions');
+  await db.execute('DELETE FROM transaction_tags');
+  await db.execute('DELETE FROM tags');
+  await db.execute('DELETE FROM transactions');
 });
 
 // ──────────────────────────────────────────────────────────────────────
 describe('createTag', () => {
   it('creates a new tag', async () => {
     await createTag('food');
-    const rows = (db as any).prepare('SELECT name FROM tags').all() as { name: string }[];
+    const rows = (await db.execute('SELECT name FROM tags')).rows as unknown as { name: string }[];
     expect(rows).toHaveLength(1);
     expect(rows[0].name).toBe('food');
   });
@@ -38,7 +41,7 @@ describe('createTag', () => {
   it('is idempotent (INSERT OR IGNORE)', async () => {
     await createTag('food');
     await createTag('food');
-    const rows = (db as any).prepare('SELECT name FROM tags').all();
+    const rows = (await db.execute('SELECT name FROM tags')).rows;
     expect(rows).toHaveLength(1);
   });
 });
@@ -47,9 +50,9 @@ describe('createTag', () => {
 describe('renameTag', () => {
   it('renames a tag by id', async () => {
     await createTag('food');
-    const { id } = (db as any).prepare('SELECT id FROM tags WHERE name = ?').get('food') as { id: number };
+    const { id } = (await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: ['food'] })).rows[0] as unknown as { id: number };
     await renameTag(id, 'groceries');
-    const { name } = (db as any).prepare('SELECT name FROM tags WHERE id = ?').get(id) as { name: string };
+    const { name } = (await db.execute({ sql: 'SELECT name FROM tags WHERE id = ?', args: [id] })).rows[0] as unknown as { name: string };
     expect(name).toBe('groceries');
   });
 });
@@ -58,14 +61,14 @@ describe('renameTag', () => {
 describe('deleteTag', () => {
   it('removes the tag and all its transaction links', async () => {
     await createTag('food');
-    const { id } = (db as any).prepare('SELECT id FROM tags WHERE name = ?').get('food') as { id: number };
-    const txId = insertTx();
+    const { id } = (await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: ['food'] })).rows[0] as unknown as { id: number };
+    const txId = await insertTx();
     await addTagToTransaction(txId, id);
 
     await deleteTag(id);
 
-    expect((db as any).prepare('SELECT * FROM tags WHERE id = ?').get(id)).toBeUndefined();
-    expect((db as any).prepare('SELECT * FROM transaction_tags WHERE tag_id = ?').get(id)).toBeUndefined();
+    expect((await db.execute({ sql: 'SELECT * FROM tags WHERE id = ?', args: [id] })).rows[0]).toBeUndefined();
+    expect((await db.execute({ sql: 'SELECT * FROM transaction_tags WHERE tag_id = ?', args: [id] })).rows[0]).toBeUndefined();
   });
 });
 
@@ -74,7 +77,7 @@ describe('getOrCreateTag', () => {
   it('creates a tag and returns its id', async () => {
     const id = await getOrCreateTag('travel');
     expect(typeof id).toBe('number');
-    const row = (db as any).prepare('SELECT name FROM tags WHERE id = ?').get(id) as { name: string };
+    const row = (await db.execute({ sql: 'SELECT name FROM tags WHERE id = ?', args: [id] })).rows[0] as unknown as { name: string };
     expect(row.name).toBe('travel');
   });
 
@@ -82,7 +85,8 @@ describe('getOrCreateTag', () => {
     const id1 = await getOrCreateTag('travel');
     const id2 = await getOrCreateTag('travel');
     expect(id1).toBe(id2);
-    expect(((db as any).prepare('SELECT COUNT(*) as c FROM tags').get() as { c: number }).c).toBe(1);
+    const { c } = (await db.execute('SELECT COUNT(*) as c FROM tags')).rows[0] as unknown as { c: number };
+    expect(c).toBe(1);
   });
 });
 
@@ -104,7 +108,7 @@ describe('getTagOptions', () => {
 // ──────────────────────────────────────────────────────────────────────
 describe('getTransactionTagIds', () => {
   it('returns the set of tag ids for a transaction', async () => {
-    const tx = insertTx();
+    const tx = await insertTx();
     const id1 = await getOrCreateTag('food');
     const id2 = await getOrCreateTag('travel');
     await addTagToTransaction(tx, id1);
@@ -116,7 +120,7 @@ describe('getTransactionTagIds', () => {
   });
 
   it('returns empty set for untagged transaction', async () => {
-    const tx = insertTx();
+    const tx = await insertTx();
     expect((await getTransactionTagIds(tx)).size).toBe(0);
   });
 });
@@ -124,7 +128,7 @@ describe('getTransactionTagIds', () => {
 // ──────────────────────────────────────────────────────────────────────
 describe('addTagToTransaction / removeTagFromTransaction', () => {
   it('adds and removes a tag', async () => {
-    const tx = insertTx();
+    const tx = await insertTx();
     const tagId = await getOrCreateTag('food');
 
     await addTagToTransaction(tx, tagId);
@@ -135,7 +139,7 @@ describe('addTagToTransaction / removeTagFromTransaction', () => {
   });
 
   it('addTagToTransaction is idempotent', async () => {
-    const tx = insertTx();
+    const tx = await insertTx();
     const tagId = await getOrCreateTag('food');
     await addTagToTransaction(tx, tagId);
     await addTagToTransaction(tx, tagId);
@@ -146,9 +150,9 @@ describe('addTagToTransaction / removeTagFromTransaction', () => {
 // ──────────────────────────────────────────────────────────────────────
 describe('addTagToTransactions', () => {
   it('adds a tag to multiple transactions at once', async () => {
-    const tx1 = insertTx();
-    const tx2 = insertTx();
-    const tx3 = insertTx();
+    const tx1 = await insertTx();
+    const tx2 = await insertTx();
+    const tx3 = await insertTx();
     const tagId = await getOrCreateTag('bulk');
 
     await addTagToTransactions([tx1, tx2], tagId);

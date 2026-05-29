@@ -1,10 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-
-import { vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../core/db.js', async () => {
   const { makeTestDb } = await import('./helpers/makeTestDb.js');
-  return { db: makeTestDb() };
+  return { db: await makeTestDb() };
 });
 
 import { db } from '../core/db.js';
@@ -17,40 +15,44 @@ const d = (year: number, month: number, day: number) =>
   new Date(year, month - 1, day, 12, 0, 0);
 
 let txId = 0;
-const insertTx = (opts: {
+async function insertTx(opts: {
   date?: string;
   amount: number;
   category?: string;
   account_id?: string;
   pending?: number;
   ignored?: number;
-}) => {
+}) {
   txId++;
-  (db as any).prepare(`
-    INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    `tx${txId}`,
-    opts.account_id ?? 'acct1',
-    opts.date ?? '2025-01-15',
-    'Test',
-    opts.amount,
-    opts.category ?? 'Shopping',
-    opts.pending ?? 0,
-    opts.ignored ?? 0,
-  );
-};
+  await db.execute({
+    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      `tx${txId}`,
+      opts.account_id ?? 'acct1',
+      opts.date ?? '2025-01-15',
+      'Test',
+      opts.amount,
+      opts.category ?? 'Shopping',
+      opts.pending ?? 0,
+      opts.ignored ?? 0,
+    ],
+  });
+}
 
-const insertAcct = (id: string, type = 'depository') => {
-  (db as any).prepare('INSERT OR IGNORE INTO accounts (id, name, type) VALUES (?, ?, ?)').run(id, id, type);
-};
+async function insertAcct(id: string, type = 'depository') {
+  await db.execute({
+    sql: 'INSERT OR IGNORE INTO accounts (id, name, type) VALUES (?, ?, ?)',
+    args: [id, id, type],
+  });
+}
 
-beforeEach(() => {
+beforeEach(async () => {
   txId = 0;
-  (db as any).exec('DELETE FROM transactions');
-  (db as any).exec('DELETE FROM hidden_categories');
-  (db as any).exec('DELETE FROM categories');
-  (db as any).exec('DELETE FROM accounts');
+  await db.execute('DELETE FROM transactions');
+  await db.execute('DELETE FROM hidden_categories');
+  await db.execute('DELETE FROM categories');
+  await db.execute('DELETE FROM accounts');
 });
 
 // ── getDriftWindows ────────────────────────────────────────────────────────────
@@ -165,9 +167,9 @@ describe('getCategoryDriftData', () => {
   });
 
   it('computes deltas correctly against last period and last year', async () => {
-    insertTx({ date: '2026-05-15', amount: 200, category: 'Food' });
-    insertTx({ date: '2026-04-15', amount: 150, category: 'Food' });
-    insertTx({ date: '2025-05-15', amount: 100, category: 'Food' });
+    await insertTx({ date: '2026-05-15', amount: 200, category: 'Food' });
+    await insertTx({ date: '2026-04-15', amount: 150, category: 'Food' });
+    await insertTx({ date: '2025-05-15', amount: 100, category: 'Food' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     const food = result.find((r) => r.category === 'Food')!;
@@ -178,8 +180,8 @@ describe('getCategoryDriftData', () => {
   });
 
   it('delta is positive when current > comparison (more spending)', async () => {
-    insertTx({ date: '2026-05-15', amount: 300, category: 'Shopping' });
-    insertTx({ date: '2026-04-15', amount: 100, category: 'Shopping' });
+    await insertTx({ date: '2026-05-15', amount: 300, category: 'Shopping' });
+    await insertTx({ date: '2026-04-15', amount: 100, category: 'Shopping' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     const row = result.find((r) => r.category === 'Shopping')!;
@@ -187,8 +189,8 @@ describe('getCategoryDriftData', () => {
   });
 
   it('delta is negative when current < comparison (less spending)', async () => {
-    insertTx({ date: '2026-05-15', amount: 50, category: 'Dining' });
-    insertTx({ date: '2026-04-15', amount: 200, category: 'Dining' });
+    await insertTx({ date: '2026-05-15', amount: 50, category: 'Dining' });
+    await insertTx({ date: '2026-04-15', amount: 200, category: 'Dining' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     const row = result.find((r) => r.category === 'Dining')!;
@@ -196,7 +198,7 @@ describe('getCategoryDriftData', () => {
   });
 
   it('category with no last-period spending shows delta = current', async () => {
-    insertTx({ date: '2026-05-15', amount: 100, category: 'NewCat' });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'NewCat' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     const row = result.find((r) => r.category === 'NewCat')!;
@@ -207,9 +209,9 @@ describe('getCategoryDriftData', () => {
     const months = ['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11',
                     '2025-10','2025-09','2025-08','2025-07','2025-06','2025-05'];
     for (const ym of months) {
-      insertTx({ date: `${ym}-15`, amount: 120, category: 'Shopping' });
+      await insertTx({ date: `${ym}-15`, amount: 120, category: 'Shopping' });
     }
-    insertTx({ date: '2026-05-15', amount: 180, category: 'Shopping' });
+    await insertTx({ date: '2026-05-15', amount: 180, category: 'Shopping' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     const row = result.find((r) => r.category === 'Shopping')!;
@@ -218,7 +220,7 @@ describe('getCategoryDriftData', () => {
   });
 
   it('avg12m is 0 when no historical data', async () => {
-    insertTx({ date: '2026-05-15', amount: 100, category: 'BrandNew' });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'BrandNew' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     const row = result.find((r) => r.category === 'BrandNew')!;
@@ -227,9 +229,9 @@ describe('getCategoryDriftData', () => {
   });
 
   it('excludes hidden categories', async () => {
-    (db as any).exec("INSERT INTO hidden_categories VALUES ('Transfer')");
-    insertTx({ date: '2026-05-15', amount: 500, category: 'Transfer' });
-    insertTx({ date: '2026-05-15', amount: 100, category: 'Food' });
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await insertTx({ date: '2026-05-15', amount: 500, category: 'Transfer' });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     expect(result.find((r) => r.category === 'Transfer')).toBeUndefined();
@@ -237,17 +239,17 @@ describe('getCategoryDriftData', () => {
   });
 
   it('excludes pending and ignored transactions', async () => {
-    insertTx({ date: '2026-05-15', amount: 100, category: 'Food', pending: 1 });
-    insertTx({ date: '2026-05-15', amount: 100, category: 'Food', ignored: 1 });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food', pending: 1 });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food', ignored: 1 });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     expect(result).toHaveLength(0);
   });
 
   it('sorts results by current spend descending', async () => {
-    insertTx({ date: '2026-05-15', amount: 100, category: 'Food' });
-    insertTx({ date: '2026-05-15', amount: 300, category: 'Rent' });
-    insertTx({ date: '2026-05-15', amount: 50,  category: 'Gas' });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food' });
+    await insertTx({ date: '2026-05-15', amount: 300, category: 'Rent' });
+    await insertTx({ date: '2026-05-15', amount: 50,  category: 'Gas' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
     expect(result[0].category).toBe('Rent');
@@ -256,10 +258,10 @@ describe('getCategoryDriftData', () => {
   });
 
   it('filters by accountId when provided', async () => {
-    insertAcct('acct1');
-    insertAcct('acct2');
-    insertTx({ date: '2026-05-15', amount: 100, category: 'Food', account_id: 'acct1' });
-    insertTx({ date: '2026-05-15', amount: 200, category: 'Food', account_id: 'acct2' });
+    await insertAcct('acct1');
+    await insertAcct('acct2');
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food', account_id: 'acct1' });
+    await insertTx({ date: '2026-05-15', amount: 200, category: 'Food', account_id: 'acct2' });
 
     const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12, 'acct1');
     const row = result.find((r) => r.category === 'Food')!;
@@ -275,10 +277,13 @@ describe('getFlexDriftData', () => {
   const lastYear   = { from: '2025-05-01', to: '2025-05-27' };
   const rolling12  = Array.from({ length: 12 }, () => ({ from: '2025-01-01', to: '2025-01-27' }));
 
-  const insertCat = (name: string, flex: string | null) =>
-    (db as any).prepare('INSERT INTO categories (name, flexibility) VALUES (?, ?)').run(name, flex);
+  async function insertCat(name: string, flex: string | null) {
+    await db.execute({ sql: 'INSERT INTO categories (name, flexibility) VALUES (?, ?)', args: [name, flex] });
+  }
 
-  beforeEach(() => { (db as any).exec('DELETE FROM categories'); });
+  beforeEach(async () => {
+    await db.execute('DELETE FROM categories');
+  });
 
   it('returns zero slices for empty database', async () => {
     const data = await getFlexDriftData(current, lastPeriod, lastYear, rolling12);
@@ -289,9 +294,9 @@ describe('getFlexDriftData', () => {
   });
 
   it('buckets tiers and computes deltas', async () => {
-    insertCat('Rent', 'fixed');
-    insertTx({ date: '2026-05-15', amount: 1500, category: 'Rent' });
-    insertTx({ date: '2026-04-15', amount: 1500, category: 'Rent' });
+    await insertCat('Rent', 'fixed');
+    await insertTx({ date: '2026-05-15', amount: 1500, category: 'Rent' });
+    await insertTx({ date: '2026-04-15', amount: 1500, category: 'Rent' });
 
     const data = await getFlexDriftData(current, lastPeriod, lastYear, rolling12);
     expect(data.fixed.current).toBeCloseTo(1500);
@@ -299,9 +304,9 @@ describe('getFlexDriftData', () => {
   });
 
   it('computes avg12m across rolling periods', async () => {
-    insertCat('Dining', 'flexible');
-    insertTx({ date: '2025-01-15', amount: 100, category: 'Dining' });
-    insertTx({ date: '2026-05-15', amount: 200, category: 'Dining' });
+    await insertCat('Dining', 'flexible');
+    await insertTx({ date: '2025-01-15', amount: 100, category: 'Dining' });
+    await insertTx({ date: '2026-05-15', amount: 200, category: 'Dining' });
 
     const data = await getFlexDriftData(current, lastPeriod, lastYear, rolling12);
     expect(data.flexible.avg12m).toBeCloseTo(100);
@@ -323,9 +328,9 @@ describe('getAccountDriftData', () => {
   });
 
   it('computes per-account spending deltas', async () => {
-    insertAcct('acct1');
-    insertTx({ date: '2026-05-15', amount: 300, category: 'Food', account_id: 'acct1' });
-    insertTx({ date: '2026-04-15', amount: 200, category: 'Food', account_id: 'acct1' });
+    await insertAcct('acct1');
+    await insertTx({ date: '2026-05-15', amount: 300, category: 'Food', account_id: 'acct1' });
+    await insertTx({ date: '2026-04-15', amount: 200, category: 'Food', account_id: 'acct1' });
 
     const result = await getAccountDriftData(current, lastPeriod, lastYear, rolling12);
     const acct = result.find((r) => r.id === 'acct1')!;
@@ -334,9 +339,9 @@ describe('getAccountDriftData', () => {
   });
 
   it('excludes Transfer category from account spending', async () => {
-    insertAcct('acct1');
-    insertTx({ date: '2026-05-15', amount: 500, category: 'Transfer', account_id: 'acct1' });
-    insertTx({ date: '2026-05-15', amount: 100, category: 'Food',     account_id: 'acct1' });
+    await insertAcct('acct1');
+    await insertTx({ date: '2026-05-15', amount: 500, category: 'Transfer', account_id: 'acct1' });
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food',     account_id: 'acct1' });
 
     const result = await getAccountDriftData(current, lastPeriod, lastYear, rolling12);
     const acct = result.find((r) => r.id === 'acct1')!;
@@ -344,8 +349,8 @@ describe('getAccountDriftData', () => {
   });
 
   it('avg12m is 0 when no rolling history', async () => {
-    insertAcct('newacct');
-    insertTx({ date: '2026-05-15', amount: 200, category: 'Food', account_id: 'newacct' });
+    await insertAcct('newacct');
+    await insertTx({ date: '2026-05-15', amount: 200, category: 'Food', account_id: 'newacct' });
 
     const result = await getAccountDriftData(current, lastPeriod, lastYear, rolling12);
     const acct = result.find((r) => r.id === 'newacct')!;
