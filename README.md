@@ -309,7 +309,7 @@ Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_
   "mcpServers": {
     "fungible": {
       "command": "/opt/homebrew/bin/node",
-      "args": ["--experimental-sqlite", "--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
+      "args": ["--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
     }
   }
 }
@@ -321,7 +321,7 @@ Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_
   "mcpServers": {
     "fungible": {
       "command": "node",
-      "args": ["--experimental-sqlite", "--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
+      "args": ["--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
     }
   }
 }
