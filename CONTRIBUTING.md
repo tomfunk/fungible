@@ -59,14 +59,6 @@ docs/short-description
 chore/short-description
 ```
 
-### Adding a new MCP tool
-
-Tools are defined in three places — keep them in sync:
-
-1. `core/queries.ts` — the database query
-2. `core/tools.ts` — `TOOL_DEFS` entry + `executeTool` case
-3. `mcp/server.ts` — `server.tool(...)` registration with Zod schema
-
 ### Tests
 
 - Query-level logic should have test coverage in `tests/queries.test.ts` (or the relevant test file)
@@ -76,6 +68,10 @@ Tools are defined in three places — keep them in sync:
 ### Version bump
 
 Every PR that changes behavior (features, fixes, tool additions) must bump the version in `package.json`. Follow [semver](https://semver.org/): patch for fixes, minor for new features. The CI version bump check will fail if this is missing.
+
+## Opening an issue
+
+Before opening an issue, check if one already exists. When filing a bug, include your OS, Node version, and steps to reproduce. For feature requests, a short description of the use case is enough — no need for a full spec.
 
 ## Submitting a PR
 
