@@ -109,7 +109,12 @@ export async function initDb() {
     'ALTER TABLE accounts ADD COLUMN nickname TEXT',
   ];
   for (const sql of migrations) {
-    await db.execute(sql).catch(() => {});
+    try {
+      await db.execute(sql);
+    } catch (e) {
+      const msg = String(e);
+      if (!msg.includes('duplicate column name') && !msg.includes('already exists')) throw e;
+    }
   }
 
   // Seed default flexibility tiers (only where not already set)
