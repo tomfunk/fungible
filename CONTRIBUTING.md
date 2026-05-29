@@ -59,14 +59,6 @@ docs/short-description
 chore/short-description
 ```
 
-### Adding a new MCP tool
-
-Tools are defined in three places — keep them in sync:
-
-1. `core/queries.ts` — the database query
-2. `core/tools.ts` — `TOOL_DEFS` entry + `executeTool` case
-3. `mcp/server.ts` — `server.tool(...)` registration with Zod schema
-
 ### Tests
 
 - Query-level logic should have test coverage in `tests/queries.test.ts` (or the relevant test file)
