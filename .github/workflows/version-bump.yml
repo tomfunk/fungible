@@ -16,7 +16,7 @@ jobs:
       - name: Check version bump
         run: |
           CHANGED=$(git diff --name-only origin/main...HEAD)
-          NON_DOCS=$(echo "$CHANGED" | grep -v -E '^(docs/|.*\.md$)' || true)
+          NON_DOCS=$(echo "$CHANGED" | grep -v -E '^(docs/|\.github/|.*\.md$)' || true)
 
           if [ -z "$NON_DOCS" ]; then
             echo "📄 Docs-only change — skipping version bump check."
