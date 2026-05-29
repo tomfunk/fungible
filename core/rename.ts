@@ -9,32 +9,46 @@ type NameRule = {
   max_amount: number | null;
 };
 
-/** Returns the display name for a transaction, applying name_rules in order. */
-export function applyNameRules(name: string, amount?: number): string {
-  const rules = db.prepare(
+export async function loadNameRules(): Promise<NameRule[]> {
+  const result = await db.execute(
     'SELECT match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC'
-  ).all() as NameRule[];
+  );
+  return result.rows as unknown as NameRule[];
+}
 
+/** Pure sync name application using pre-loaded rules. */
+export function applyNameRulesWithRules(rules: NameRule[], name: string, amount?: number): string {
   for (const rule of rules) {
     if (!inAmountRange(amount, rule.min_amount, rule.max_amount)) continue;
     if (matchesPattern(rule.pattern, rule.match_type, [name.toLowerCase()])) return rule.replacement;
   }
-
   return name;
 }
 
-/** Re-apply all name rules to every transaction and update display_name. */
-export function rebuildDisplayNames() {
-  const rows = db.prepare(
-    'SELECT id, name, amount, display_name FROM transactions'
-  ).all() as { id: string; name: string; amount: number; display_name: string | null }[];
+/** Returns the display name for a transaction (loads rules from DB). */
+export async function applyNameRules(name: string, amount?: number): Promise<string> {
+  const rules = await loadNameRules();
+  return applyNameRulesWithRules(rules, name, amount);
+}
 
-  const update = db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?');
-  let count = 0;
+/** Re-apply all name rules to every transaction and update display_name. */
+export async function rebuildDisplayNames(): Promise<number> {
+  const rules = await loadNameRules();
+
+  const txRes = await db.execute('SELECT id, name, amount, display_name FROM transactions');
+  const rows = txRes.rows as unknown as {
+    id: string; name: string; amount: number; display_name: string | null;
+  }[];
+
+  const updates: { sql: string; args: (string | number | null)[] }[] = [];
   for (const tx of rows) {
-    const display = applyNameRules(tx.name, tx.amount);
+    const display = applyNameRulesWithRules(rules, tx.name, tx.amount);
     const newVal = display !== tx.name ? display : null;
-    if (newVal !== tx.display_name) { update.run(newVal, tx.id); count++; }
+    if (newVal !== tx.display_name) {
+      updates.push({ sql: 'UPDATE transactions SET display_name = ? WHERE id = ?', args: [newVal, tx.id] });
+    }
   }
-  return count;
+
+  if (updates.length > 0) await db.batch(updates, 'write');
+  return updates.length;
 }

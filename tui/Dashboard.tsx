@@ -59,7 +59,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [uncategorized, setUncategorized] = useState(0);
   const [catCursor, setCatCursor] = useState(0);
   const [view, setView] = useState<DashView>('categories');
-  const [bounds] = useState(getDataBounds);
+  const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
+  useEffect(() => { void getDataBounds().then(setBounds); }, []);
   const [driftMode, setDriftMode] = useState(false);
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
   const [flexDrift, setFlexDrift] = useState<FlexDriftData  | null>(null);
@@ -74,25 +75,22 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [filteredFlex,    setFilteredFlex]    = useState<FlexSummary    | null>(null);
 
   // Account filter
-  const [accountRows, setAccountRows] = useState<AccountRow[]>(() => {
-    const { from, to } = getPeriodDates('month', getPeriodStart('month', now));
-    return getAccountRows(from, to);
-  });
+  const [accountRows, setAccountRows] = useState<AccountRow[]>([]);
   const [acctCursor, setAcctCursor] = useState(0);
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
 
   function load(r: Range, a: Date, acct: AccountRow | null) {
     const { from, to } = getPeriodDates(r, a);
-    setAccountRows(getAccountRows(from, to));
+    void getAccountRows(from, to).then(setAccountRows);
     setAcctCursor(0);
     if (acct) {
-      setSummary(getRangeSummary(from, to, acct.id));
-      setFlexData(getFlexSummary(from, to, acct.id));
-      setUncategorized(getUncategorizedCount(from, to, acct.id));
+      void getRangeSummary(from, to, acct.id).then(setSummary);
+      void getFlexSummary(from, to, acct.id).then(setFlexData);
+      void getUncategorizedCount(from, to, acct.id).then(setUncategorized);
     } else {
-      setSummary(getRangeSummary(from, to));
-      setFlexData(getFlexSummary(from, to));
-      setUncategorized(getUncategorizedCount(from, to));
+      void getRangeSummary(from, to).then(setSummary);
+      void getFlexSummary(from, to).then(setFlexData);
+      void getUncategorizedCount(from, to).then(setUncategorized);
     }
   }
 
@@ -107,9 +105,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
     const acctId = selectedAccount?.id ?? undefined;
-    setCatDrift(getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId));
-    setFlexDrift(getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId));
-    setAcctDrift(getAccountDriftData(current, lastPeriod, lastYear, rolling12));
+    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setCatDrift);
+    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setFlexDrift);
+    void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(setAcctDrift);
   }, [driftMode, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   const setTyping = useSetTyping();
@@ -119,16 +117,17 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const term = searchMode ? searchInput : search;
     if (!term) { setSearchStats(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    setSearchStats(countSearchMatches(from, to, term, selectedAccount?.id ?? undefined));
+    void countSearchMatches(from, to, term, selectedAccount?.id ?? undefined).then(setSearchStats);
   }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   // When a search is committed, recompute category + flex data to only show matching transactions
   useEffect(() => {
     if (!search) { setFilteredSummary(null); setFilteredFlex(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    const { summary: fs, flexData: ff } = getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined);
-    setFilteredSummary(fs);
-    setFilteredFlex(ff);
+    void getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined).then(({ summary: fs, flexData: ff }) => {
+      setFilteredSummary(fs);
+      setFilteredFlex(ff);
+    });
   }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   const categories = summary?.byCategory ?? [];

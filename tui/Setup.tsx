@@ -159,9 +159,7 @@ export function Setup() {
 
     if (step === 'seed-choice') {
       if (input === 'y') {
-        const result = seedRules();
-        setSeedResult(result);
-        setStep('done');
+        void seedRules().then((result) => { setSeedResult(result); setStep('done'); });
         return;
       }
       if (input === 'n') { setStep('done'); return; }

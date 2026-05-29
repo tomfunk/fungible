@@ -20,14 +20,14 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
 
-  function load() { setTags(getAllTags()); }
+  function load() { void getAllTags().then(setTags); }
   useEffect(() => { load(); }, []);
 
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(mode === 'search' || mode === 'add' || mode === 'rename'); }, [mode]);
 
   function openDetail(tag: Tag) {
-    setTagSummary(getTagSummary(tag.name));
+    void getTagSummary(tag.name).then(setTagSummary);
     setCatCursor(0);
     setMode('detail');
   }
@@ -88,13 +88,13 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       if (key.leftArrow) {
         const next = Math.max(0, cursor - 1);
         setCursor(next);
-        if (visibleTags[next]) { setTagSummary(getTagSummary(visibleTags[next].name)); setCatCursor(0); }
+        if (visibleTags[next]) { void getTagSummary(visibleTags[next].name).then(setTagSummary); setCatCursor(0); }
         return;
       }
       if (key.rightArrow) {
         const next = Math.min(visibleTags.length - 1, cursor + 1);
         setCursor(next);
-        if (visibleTags[next]) { setTagSummary(getTagSummary(visibleTags[next].name)); setCatCursor(0); }
+        if (visibleTags[next]) { void getTagSummary(visibleTags[next].name).then(setTagSummary); setCatCursor(0); }
         return;
       }
       if (key.upArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }

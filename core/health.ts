@@ -10,68 +10,72 @@ export type HealthData = {
   netWorth: number;
 };
 
-export function loadHealthData(): HealthData {
-  const expRow = db.prepare(`
-    SELECT
-      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0  AS avg_expenses,
-      COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_income,
-      COALESCE(
-        -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
-         SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
-        0
-      ) / 12.0 AS avg_savings
-    FROM transactions
-    WHERE date >= date('now', '-12 months')
-      AND pending = 0 AND ignored = 0
-      AND category NOT IN (SELECT category FROM hidden_categories)
-      AND category != 'Transfer'
-  `).get() as { avg_expenses: number; avg_income: number; avg_savings: number };
-
-  const cashRow = db.prepare(`
-    SELECT COALESCE(SUM(bh.balance), 0) AS cash
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE a.type = 'depository'
+export async function loadHealthData(): Promise<HealthData> {
+  const [expRes, cashRes, liquidRes, debtRes, nwRes] = await Promise.all([
+    db.execute(`
+      SELECT
+        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0  AS avg_expenses,
+        COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_income,
+        COALESCE(
+          -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
+           SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
+          0
+        ) / 12.0 AS avg_savings
+      FROM transactions
+      WHERE date >= date('now', '-12 months')
+        AND pending = 0 AND ignored = 0
+        AND category NOT IN (SELECT category FROM hidden_categories)
+        AND category != 'Transfer'
+    `),
+    db.execute(`
+      SELECT COALESCE(SUM(bh.balance), 0) AS cash
+      FROM accounts a
+      JOIN balance_history bh ON bh.account_id = a.id
+      WHERE a.type = 'depository'
+        AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
+    `),
+    db.execute(`
+      SELECT COALESCE(SUM(bh.balance), 0) AS liquid
+      FROM accounts a
+      JOIN balance_history bh ON bh.account_id = a.id
+      WHERE (
+        a.type = 'depository'
+        OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, ''))
+            IN ('brokerage', 'cash isa', 'non-taxable brokerage account'))
+      )
       AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { cash: number };
+    `),
+    db.execute(`
+      SELECT COALESCE(SUM(bh.balance), 0) AS total_debt
+      FROM accounts a
+      JOIN balance_history bh ON bh.account_id = a.id
+      WHERE a.type = 'credit'
+        AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
+    `),
+    db.execute(`
+      SELECT
+        COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
+      FROM accounts a
+      JOIN balance_history bh ON bh.account_id = a.id
+      WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
+    `),
+  ]);
 
-  const liquidRow = db.prepare(`
-    SELECT COALESCE(SUM(bh.balance), 0) AS liquid
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE (
-      a.type = 'depository'
-      OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, ''))
-          IN ('brokerage', 'cash isa', 'non-taxable brokerage account'))
-    )
-    AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { liquid: number };
-
-  const debtRow = db.prepare(`
-    SELECT COALESCE(SUM(bh.balance), 0) AS total_debt
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE a.type = 'credit'
-      AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { total_debt: number };
-
-  const nwRow = db.prepare(`
-    SELECT
-      COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END), 0) -
-      COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { net_worth: number };
+  const expRow  = expRes.rows[0]  as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
+  const cashRow = cashRes.rows[0] as unknown as { cash: number };
+  const liqRow  = liquidRes.rows[0] as unknown as { liquid: number };
+  const debtRow = debtRes.rows[0] as unknown as { total_debt: number };
+  const nwRow   = nwRes.rows[0]   as unknown as { net_worth: number };
 
   return {
-    avgMonthlyExpenses: expRow.avg_expenses,
-    monthlyIncome: expRow.avg_income,
-    monthlySavings: expRow.avg_savings,
-    cash: cashRow.cash,
-    liquid: liquidRow.liquid,
-    totalDebt: debtRow.total_debt,
-    netWorth: nwRow.net_worth,
+    avgMonthlyExpenses: Number(expRow.avg_expenses),
+    monthlyIncome:      Number(expRow.avg_income),
+    monthlySavings:     Number(expRow.avg_savings),
+    cash:               Number(cashRow.cash),
+    liquid:             Number(liqRow.liquid),
+    totalDebt:          Number(debtRow.total_debt),
+    netWorth:           Number(nwRow.net_worth),
   };
 }
 
@@ -102,4 +106,3 @@ export function coastYears(
   const yr = Math.log(fireNumber / netWorth) / Math.log(1 + growthPct / 100);
   return yr > 200 ? null : yr;
 }
-

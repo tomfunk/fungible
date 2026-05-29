@@ -12,16 +12,16 @@ import { Setup } from './Setup.js';
 
 const isDemo = process.argv.includes('--demo');
 
+await initDb();
+
 if (process.argv.includes('--setup')) {
-  initDb();
   render(<Setup />);
 } else {
-  initDb();
   if (isDemo) {
     const { seedDemo } = await import('../scripts/seed-demo.js');
-    seedDemo();
+    await seedDemo();
   }
-  rebuildDisplayNames();
+  await rebuildDisplayNames();
   if (!isDemo) syncAll().catch(() => {});
   render(<App />);
 }

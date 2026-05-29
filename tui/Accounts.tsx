@@ -139,8 +139,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const acctInstW = Math.max(8,  acctFlex - acctNameW);
 
   function loadAccounts() {
-    setLinkedAccounts(getLinkedAccounts());
-    setDupes(getCsvPlaidDupeCandidates());
+    void getLinkedAccounts().then(setLinkedAccounts);
+    void getCsvPlaidDupeCandidates().then(setDupes);
   }
   useEffect(() => { loadAccounts(); }, []);
 
@@ -183,11 +183,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   }
 
   function saveNewAcct() {
-    createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null);
-    const accts = getCsvAccounts();
-    setCsvAccounts(accts);
-    setCsvAccountCursor(accts.length - 1);
-    setAddStep('account');
+    void createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null).then(() => {
+      void getCsvAccounts().then((accts) => {
+        setCsvAccounts(accts);
+        setCsvAccountCursor(accts.length - 1);
+        setAddStep('account');
+      });
+    });
   }
 
   function saveManualAsset() {
@@ -283,12 +285,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function doImport() {
     const acct = csvAccounts[csvAccountCursor];
-    const result = importCsvTransactions(csvRows, acct, {
+    void importCsvTransactions(csvRows, acct, {
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
+    }).then((result) => {
+      setImportResult(result);
+      setAddStep('done');
     });
-    setImportResult(result);
-    setAddStep('done');
   }
 
   function previewRow(row: string[]) {
@@ -411,10 +414,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
       if (input === 'x' && dupes[dupeCursor]) {
-        deleteDuplicate(dupes[dupeCursor].csvId);
-        const next = getCsvPlaidDupeCandidates();
-        setDupes(next);
-        setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+        void deleteDuplicate(dupes[dupeCursor].csvId).then(() => {
+          void getCsvPlaidDupeCandidates().then((next) => {
+            setDupes(next);
+            setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+          });
+        });
         return;
       }
       if (input === 'X') {
@@ -466,7 +471,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         else if (addStep === 'map-debit')  { setDebitCol(colCursor); setColCursor(0); setAddStep('map-credit'); }
         else if (addStep === 'map-credit') {
           setCreditCol(colCursor);
-          const accts = getCsvAccounts(); setCsvAccounts(accts); setAddStep('account');
+          void getCsvAccounts().then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
         }
       }
       return;
@@ -481,8 +486,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'direction') {
       if (key.escape) { setAddStep('landing'); return; }
-      if (input === 'i') { setPositiveIsInflow(true);  const a = getCsvAccounts(); setCsvAccounts(a); setAddStep('account'); }
-      if (input === 'o') { setPositiveIsInflow(false); const a = getCsvAccounts(); setCsvAccounts(a); setAddStep('account'); }
+      if (input === 'i') { setPositiveIsInflow(true);  void getCsvAccounts().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'o') { setPositiveIsInflow(false); void getCsvAccounts().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
       return;
     }
 

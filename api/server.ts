@@ -7,7 +7,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { initDb } from '../core/db.js';
 import { executeTool, TOOL_DEFS } from '../core/tools.js';
 
-initDb();
+await initDb();
 
 const PORT = parseInt(process.env.FUNGIBLE_API_PORT ?? '3456', 10);
 const API_KEY = process.env.FUNGIBLE_API_KEY;

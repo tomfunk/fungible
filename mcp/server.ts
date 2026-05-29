@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { initDb } from '../core/db.js';
 import { executeTool } from '../core/tools.js';
 
-initDb();
+await initDb();
 
 const server = new McpServer({
   name: 'fungible',

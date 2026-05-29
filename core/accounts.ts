@@ -1,40 +1,47 @@
 import { db } from './db.js';
-import { categorize } from './categorize.js';
+import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { parseDate, generateTxId } from './csv.js';
 import type { CsvAccount } from './queries.js';
 
-export function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): void {
-  db.prepare('UPDATE accounts SET type = ?, subtype = ? WHERE id = ?').run(type, subtype, id);
+export async function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): Promise<void> {
+  await db.execute({ sql: 'UPDATE accounts SET type = ?, subtype = ? WHERE id = ?', args: [type, subtype, id] });
 }
 
-export function updateAccountNickname(id: string, nickname: string | null): void {
-  db.prepare('UPDATE accounts SET nickname = ? WHERE id = ?').run(nickname, id);
+export async function updateAccountNickname(id: string, nickname: string | null): Promise<void> {
+  await db.execute({ sql: 'UPDATE accounts SET nickname = ? WHERE id = ?', args: [nickname, id] });
 }
 
-export function updateAccountValue(id: string, value: number): void {
+export async function updateAccountValue(id: string, value: number): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
-  db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
+  await db.execute({
+    sql: 'INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)',
+    args: [id, value, today],
+  });
 }
 
-export function createCsvAccount(name: string, type: string, subtype: string | null): string {
+export async function createCsvAccount(name: string, type: string, subtype: string | null): Promise<string> {
   const id = `csv-acct-${Date.now()}`;
-  db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, name.trim(), type, subtype);
+  await db.execute({ sql: 'INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)', args: [id, name.trim(), type, subtype] });
   return id;
 }
 
-export function createManualAccount(name: string, value: number): string {
+export async function createManualAccount(name: string, value: number): Promise<string> {
   const id = `manual-${Date.now()}`;
   const today = new Date().toISOString().slice(0, 10);
-  db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, name.trim(), 'other', 'manual');
-  db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
+  await db.batch([
+    { sql: 'INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)', args: [id, name.trim(), 'other', 'manual'] },
+    { sql: 'INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)', args: [id, value, today] },
+  ], 'write');
   return id;
 }
 
-export function deleteAccount(id: string): void {
-  db.prepare('DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)').run(id);
-  db.prepare('DELETE FROM transactions WHERE account_id = ?').run(id);
-  db.prepare('DELETE FROM balance_history WHERE account_id = ?').run(id);
-  db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+export async function deleteAccount(id: string): Promise<void> {
+  await db.batch([
+    { sql: 'DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)', args: [id] },
+    { sql: 'DELETE FROM transactions WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM balance_history WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM accounts WHERE id = ?', args: [id] },
+  ], 'write');
 }
 
 export type ImportConfig = {
@@ -47,16 +54,14 @@ export type ImportConfig = {
   positiveIsInflow: boolean;
 };
 
-export function importCsvTransactions(
+export async function importCsvTransactions(
   csvRows: string[][],
   account: CsvAccount,
   cfg: ImportConfig,
-): { imported: number; skipped: number } {
+): Promise<{ imported: number; skipped: number }> {
   const { amountMode, dateCol, nameCol, amountCol, debitCol, creditCol, positiveIsInflow } = cfg;
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending)
-    VALUES (?, ?, ?, ?, ?, ?, NULL, 0)
-  `);
+  const rules = await loadCategoryRules();
+
   let imported = 0, skipped = 0;
   for (const row of csvRows) {
     const rawDate = row[dateCol] ?? '';
@@ -72,20 +77,23 @@ export function importCsvTransactions(
     }
     if (!rawDate || !name || isNaN(amount)) { skipped++; continue; }
     const date = parseDate(rawDate);
-    const category = categorize(name, null, null);
+    const category = categorizeWithRules(rules, name, null, null);
     const id = generateTxId(account.mask ?? account.id, date, name, amount);
-    const changes = (insert.run(id, account.id, date, name, amount, category) as any).changes;
-    if (changes > 0) imported++; else skipped++;
+    const result = await db.execute({
+      sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, NULL, 0)',
+      args: [id, account.id, date, name, amount, category],
+    });
+    if (result.rowsAffected > 0) imported++; else skipped++;
   }
   return { imported, skipped };
 }
 
-export function deleteDuplicate(csvId: string): void {
-  db.prepare('DELETE FROM transactions WHERE id = ?').run(csvId);
+export async function deleteDuplicate(csvId: string): Promise<void> {
+  await db.execute({ sql: 'DELETE FROM transactions WHERE id = ?', args: [csvId] });
 }
 
-export function deleteAllDuplicates(csvIds: string[]): void {
+export async function deleteAllDuplicates(csvIds: string[]): Promise<void> {
   if (csvIds.length === 0) return;
   const placeholders = csvIds.map(() => '?').join(',');
-  db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...csvIds);
+  await db.execute({ sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: csvIds });
 }

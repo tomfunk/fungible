@@ -29,26 +29,37 @@ export function Trends({
   isActive?: boolean;
   showHints: boolean;
 }) {
-  const [views] = useState<View[]>(buildTrendViews);
+  const [views, setViews] = useState<View[]>([
+    { mode: 'expenses',      category: null, flex: null,            label: 'Expenses'      },
+    { mode: 'income',        category: null, flex: null,            label: 'Income'        },
+    { mode: 'net',           category: null, flex: null,            label: 'Net'           },
+    { mode: 'flexbreakdown', category: null, flex: null,            label: 'Flexibility'   },
+    { mode: 'flex',          category: null, flex: 'fixed',         label: 'Fixed'         },
+    { mode: 'flex',          category: null, flex: 'flexible',      label: 'Flexible'      },
+    { mode: 'flex',          category: null, flex: 'discretionary', label: 'Discretionary' },
+  ]);
   const [viewIdx, setViewIdx] = useState(() => {
     const cat = initialFilter?.category ?? null;
     if (!cat) return 0;
-    const idx = views.findIndex((v) => v.category === cat);
-    return idx >= 0 ? idx : 0;
+    return 0; // will be updated once views load
   });
   const [range, setRange] = useState<TrendsRange>('month');
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
 
+  useEffect(() => { void buildTrendViews().then(setViews); }, []);
+
   const view = views[viewIdx] ?? views[0];
-  const isNet = view.mode === 'net';
-  const isFlexBreakdown = view.mode === 'flexbreakdown';
+  const isNet = view?.mode === 'net';
+  const isFlexBreakdown = view?.mode === 'flexbreakdown';
 
   useEffect(() => {
-    const data = getPeriodTotals(view, range);
-    setRows(data);
-    setCursor(Math.max(0, data.length - 1));
-  }, [viewIdx, range]);
+    if (!view) return;
+    void getPeriodTotals(view, range).then((data) => {
+      setRows(data);
+      setCursor(Math.max(0, data.length - 1));
+    });
+  }, [viewIdx, range, views]);
 
   useInput((input, key) => {
     if (key.escape) { onNavigate('dashboard'); return; }

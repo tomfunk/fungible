@@ -6,8 +6,6 @@ import { initDb, db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { deduplicateCsvVsPlaid } from '../core/dedup.js';
 
-initDb();
-
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function parseDate(raw: string): string {
@@ -29,17 +27,17 @@ function txId(accountMask: string, date: string, description: string, amount: nu
   return `csv-${hash}`;
 }
 
-function ensureAccount(mask: string, name: string, type: string, subtype: string): string {
-  const existing = db
-    .prepare('SELECT id FROM accounts WHERE mask = ?')
-    .get(mask) as { id: string } | undefined;
+async function ensureAccount(mask: string, name: string, type: string, subtype: string): Promise<string> {
+  const result = await db.execute({ sql: 'SELECT id FROM accounts WHERE mask = ?', args: [mask] });
+  const existing = result.rows[0] as unknown as { id: string } | undefined;
   if (existing) return existing.id;
 
   const id = `csv-acct-${mask}`;
-  db.prepare(`
-    INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask)
-    VALUES (?, ?, ?, ?, 'Capital One', ?)
-  `).run(id, name, type, subtype, mask);
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask)
+          VALUES (?, ?, ?, ?, 'Capital One', ?)`,
+    args: [id, name, type, subtype, mask],
+  });
   return id;
 }
 
@@ -79,20 +77,11 @@ function mapCapOneCategory(raw: string): string | null {
   return CAP_ONE_CATEGORY_MAP[raw.trim()] ?? null;
 }
 
-const insertTx = db.prepare(`
-  INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending)
-  VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-`);
-
-const updateCategory = db.prepare(`
-  UPDATE transactions SET category = ?, raw_category = ? WHERE id = ?
-`);
-
 // ── parsers ───────────────────────────────────────────────────────────────────
 
-function parseCheckingOrSavings(filePath: string): number {
+async function parseCheckingOrSavings(filePath: string): Promise<number> {
   const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n').slice(1);
-  let count = 0;
+  const inserts: { sql: string; args: (string | number | null)[] }[] = [];
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -100,35 +89,29 @@ function parseCheckingOrSavings(filePath: string): number {
     const mask = acctNum.trim();
     const date = parseDate(rawDate.trim());
     const name = description.trim();
-    // Plaid convention: positive = money out, negative = money in
     const absAmount = parseFloat(rawAmount.trim());
     const amount = txType.trim().toLowerCase() === 'credit' ? -absAmount : absAmount;
 
-    const accountId = ensureAccount(mask, guessAccountName(filePath, mask), 'depository', guessSubtype(filePath));
-    const category = categorize(name, null, null);
+    const accountId = await ensureAccount(mask, guessAccountName(filePath, mask), 'depository', guessSubtype(filePath));
+    const category = await categorize(name, null, null);
     const id = txId(mask, date, name, amount);
 
-    insertTx.run(id, accountId, date, name, amount, category);
-    count++;
+    inserts.push({
+      sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+      args: [id, accountId, date, name, amount, category, null],
+    });
   }
 
-  return count;
+  if (inserts.length > 0) await db.batch(inserts, 'write');
+  return inserts.length;
 }
 
-function parseCreditCard(filePath: string): number {
+async function parseCreditCard(filePath: string): Promise<number> {
   const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n').slice(1);
   let count = 0;
 
   for (const line of lines) {
     if (!line.trim()) continue;
-    // Transaction Date,Posted Date,Card No.,Description,Category,Debit,Credit
-    const parts = line.split(',');
-    const date = parseDate(parts[0].trim());
-    const mask = parts[2].trim();
-    const name = parts[3].trim();
-    const debit = parseFloat(parts[4].trim() || '0') || 0;   // wait — actually col 5 is Debit
-    // Re-parse carefully (description might contain commas... unlikely but possible)
-    // Format is fixed 7 columns: Date,PostedDate,CardNo,Description,Category,Debit,Credit
     const cols = line.match(/^([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]*),([^,]*)$/);
     if (!cols) continue;
 
@@ -138,17 +121,24 @@ function parseCreditCard(filePath: string): number {
     const rawCapOneCategory = cols[5].trim();
     const txDebit = parseFloat(cols[6].trim() || '0') || 0;
     const txCredit = parseFloat(cols[7].trim() || '0') || 0;
-    // Plaid convention: positive = expense, negative = income/payment
     const amount = txDebit > 0 ? txDebit : -txCredit;
 
-    const accountId = ensureAccount(cardMask, `Credit Card ${cardMask}`, 'credit', 'credit card');
+    const accountId = await ensureAccount(cardMask, `Credit Card ${cardMask}`, 'credit', 'credit card');
     const mapped = mapCapOneCategory(rawCapOneCategory);
-    const category = mapped ?? categorize(txName, null, null);
+    const category = mapped ?? await categorize(txName, null, null);
     const id = txId(cardMask, txDate, txName, amount);
 
-    const changes = (insertTx.run(id, accountId, txDate, txName, amount, category, rawCapOneCategory) as any).changes;
+    const result = await db.execute({
+      sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+      args: [id, accountId, txDate, txName, amount, category, rawCapOneCategory],
+    });
     // if row already existed (Plaid dupe), update its category if it was uncategorized
-    if (changes === 0 && mapped) updateCategory.run(category, rawCapOneCategory, id);
+    if (result.rowsAffected === 0 && mapped) {
+      await db.execute({
+        sql: 'UPDATE transactions SET category = ?, raw_category = ? WHERE id = ?',
+        args: [category, rawCapOneCategory, id],
+      });
+    }
     count++;
   }
 
@@ -170,21 +160,33 @@ function guessSubtype(filePath: string): string {
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-const dir = process.argv[2] ?? process.cwd();
-const files = fs.readdirSync(dir).filter((f) => f.endsWith('.csv'));
+async function main() {
+  await initDb();
 
-let total = 0;
+  const dir = process.argv[2] ?? process.cwd();
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.csv'));
 
-for (const file of files) {
-  const filePath = path.join(dir, file);
-  const isCreditCard = file.includes('transaction_download');
-  const count = isCreditCard ? parseCreditCard(filePath) : parseCheckingOrSavings(filePath);
-  console.log(`  ${file}: ${count} rows`);
-  total += count;
+  let total = 0;
+
+  for (const file of files) {
+    const filePath = path.join(dir, file);
+    const isCreditCard = file.includes('transaction_download');
+    const count = isCreditCard ? await parseCreditCard(filePath) : await parseCheckingOrSavings(filePath);
+    console.log(`  ${file}: ${count} rows`);
+    total += count;
+  }
+
+  const removed = await deduplicateCsvVsPlaid();
+
+  const countResult = await db.execute('SELECT COUNT(*) as c FROM transactions');
+  const totalCount = (countResult.rows[0] as unknown as { c: number }).c;
+
+  console.log(`\nImported up to ${total} rows`);
+  if (removed > 0) console.log(`Removed ${removed} CSV rows that duplicated Plaid data`);
+  console.log(`Total: ${totalCount}`);
 }
 
-const removed = deduplicateCsvVsPlaid();
-
-console.log(`\nImported up to ${total} rows`);
-if (removed > 0) console.log(`Removed ${removed} CSV rows that duplicated Plaid data`);
-console.log(`Total: ${(db.prepare('SELECT COUNT(*) as c FROM transactions').get() as { c: number }).c}`);
+main().catch((e) => {
+  console.error('Error:', e.message);
+  process.exit(1);
+});

@@ -1,78 +1,141 @@
 import { db } from './db.js';
-import { categorize, applyCategoriesToAll } from './categorize.js';
+import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
+import { applyCategoriesToAll } from './categorize.js';
 
 // ── Single-transaction mutations ───────────────────────────────────────────────
 
-export function setTransactionCategory(id: string, category: string): void {
-  db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?').run(category, category, id);
+export async function setTransactionCategory(id: string, category: string): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?',
+    args: [category, category, id],
+  });
 }
 
-export function clearTransactionOverride(id: string): void {
-  const tx = db.prepare('SELECT name, merchant_name, raw_category, amount FROM transactions WHERE id = ?')
-    .get(id) as { name: string; merchant_name: string | null; raw_category: string | null; amount: number } | undefined;
-  if (!tx) return;
-  const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-  db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?').run(cat, id);
+export async function clearTransactionOverride(id: string): Promise<void> {
+  const result = await db.execute({
+    sql: 'SELECT name, merchant_name, raw_category, amount FROM transactions WHERE id = ?',
+    args: [id],
+  });
+  if (result.rows.length === 0) return;
+  const tx = result.rows[0] as unknown as {
+    name: string; merchant_name: string | null; raw_category: string | null; amount: number;
+  };
+  const rules = await loadCategoryRules();
+  const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+  await db.execute({
+    sql: 'UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?',
+    args: [cat, id],
+  });
 }
 
-export function setTransactionIgnored(id: string, ignored: boolean): void {
-  db.prepare('UPDATE transactions SET ignored = ? WHERE id = ?').run(ignored ? 1 : 0, id);
+export async function setTransactionIgnored(id: string, ignored: boolean): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
+    args: [ignored ? 1 : 0, id],
+  });
 }
 
-export function setTransactionDisplayName(id: string, name: string): void {
-  db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?').run(name, id);
+export async function setTransactionDisplayName(id: string, name: string): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE transactions SET display_name = ? WHERE id = ?',
+    args: [name, id],
+  });
 }
 
-export function deleteTransaction(id: string): void {
-  db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ?').run(id);
-  db.prepare('DELETE FROM transactions WHERE id = ?').run(id);
+export async function deleteTransaction(id: string): Promise<void> {
+  await db.batch([
+    { sql: 'DELETE FROM transaction_tags WHERE transaction_id = ?', args: [id] },
+    { sql: 'DELETE FROM transactions WHERE id = ?', args: [id] },
+  ], 'write');
 }
 
 // ── Rule upserts ───────────────────────────────────────────────────────────────
 
-/** Upsert a category rule and re-categorize all non-pinned transactions. Returns count updated. */
-export function upsertCategoryRule(pattern: string, matchType: 'name' | 'regex', category: string): number {
-  const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
-    .get(matchType, pattern) as { id: number } | undefined;
-  if (existing) {
-    db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(category, existing.id);
+export async function upsertCategoryRule(
+  pattern: string,
+  matchType: 'name' | 'regex',
+  category: string,
+): Promise<number> {
+  const existing = await db.execute({
+    sql: 'SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?',
+    args: [matchType, pattern],
+  });
+  if (existing.rows.length > 0) {
+    const id = (existing.rows[0] as unknown as { id: number }).id;
+    await db.execute({ sql: 'UPDATE category_rules SET category = ? WHERE id = ?', args: [category, id] });
   } else {
-    db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)')
-      .run(matchType, pattern, category);
+    await db.execute({
+      sql: 'INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)',
+      args: [matchType, pattern, category],
+    });
   }
   return applyCategoriesToAll();
 }
 
-/** Upsert a name rule and rebuild all display names. */
-export function upsertNameRule(pattern: string, matchType: 'name' | 'regex', replacement: string): void {
-  const existing = db.prepare('SELECT id FROM name_rules WHERE match_type = ? AND pattern = ?')
-    .get(matchType, pattern) as { id: number } | undefined;
-  if (existing) {
-    db.prepare('UPDATE name_rules SET replacement = ? WHERE id = ?').run(replacement, existing.id);
+export async function upsertNameRule(
+  pattern: string,
+  matchType: 'name' | 'regex',
+  replacement: string,
+): Promise<void> {
+  const existing = await db.execute({
+    sql: 'SELECT id FROM name_rules WHERE match_type = ? AND pattern = ?',
+    args: [matchType, pattern],
+  });
+  if (existing.rows.length > 0) {
+    const id = (existing.rows[0] as unknown as { id: number }).id;
+    await db.execute({ sql: 'UPDATE name_rules SET replacement = ? WHERE id = ?', args: [replacement, id] });
   } else {
-    db.prepare('INSERT INTO name_rules (match_type, pattern, replacement) VALUES (?, ?, ?)')
-      .run(matchType, pattern, replacement);
+    await db.execute({
+      sql: 'INSERT INTO name_rules (match_type, pattern, replacement) VALUES (?, ?, ?)',
+      args: [matchType, pattern, replacement],
+    });
   }
-  rebuildDisplayNames();
+  await rebuildDisplayNames();
 }
 
 // ── Bulk mutations ─────────────────────────────────────────────────────────────
 
-export function setTransactionCategoryBulk(ids: string[], category: string): void {
-  const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?');
-  for (const id of ids) stmt.run(category, category, id);
+export async function setTransactionCategoryBulk(ids: string[], category: string): Promise<void> {
+  if (ids.length === 0) return;
+  await db.batch(
+    ids.map((id) => ({
+      sql: 'UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?',
+      args: [category, category, id],
+    })),
+    'write',
+  );
 }
 
-export function clearOverridesBulk(ids: string[]): void {
-  const rows = db.prepare(
-    `SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${ids.map(() => '?').join(',')}) AND manual_category IS NOT NULL`
-  ).all(...ids) as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
-  const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?');
-  for (const tx of rows) stmt.run(categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount), tx.id);
+export async function clearOverridesBulk(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  const txRes = await db.execute({
+    sql: `SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL`,
+    args: ids,
+  });
+  const rows = txRes.rows as unknown as {
+    id: string; name: string; merchant_name: string | null;
+    raw_category: string | null; amount: number;
+  }[];
+  if (rows.length === 0) return;
+  const rules = await loadCategoryRules();
+  await db.batch(
+    rows.map((tx) => ({
+      sql: 'UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?',
+      args: [categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount), tx.id],
+    })),
+    'write',
+  );
 }
 
-export function setIgnoredBulk(ids: string[], ignored: boolean): void {
-  const stmt = db.prepare('UPDATE transactions SET ignored = ? WHERE id = ?');
-  for (const id of ids) stmt.run(ignored ? 1 : 0, id);
+export async function setIgnoredBulk(ids: string[], ignored: boolean): Promise<void> {
+  if (ids.length === 0) return;
+  await db.batch(
+    ids.map((id) => ({
+      sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
+      args: [ignored ? 1 : 0, id],
+    })),
+    'write',
+  );
 }

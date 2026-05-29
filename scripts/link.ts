@@ -5,8 +5,6 @@ import { initDb, db } from '../core/db.js';
 import { createLinkToken, exchangePublicToken } from '../core/plaid.js';
 import { encryptToken } from '../core/crypto.js';
 
-initDb();
-
 const PORT = 4747;
 
 function linkPage(linkToken: string) {
@@ -103,6 +101,7 @@ function successPage() {
 }
 
 async function main() {
+  await initDb();
   console.log('Creating Plaid link token...');
   const linkToken = await createLinkToken('local-user');
 
@@ -123,11 +122,12 @@ async function main() {
 
           const institutionName = institution?.name ?? null;
 
-          db.prepare(`
-            INSERT INTO plaid_items (item_id, access_token, institution_name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name
-          `).run(itemId, encryptToken(accessToken), institutionName);
+          await db.execute({
+            sql: `INSERT INTO plaid_items (item_id, access_token, institution_name)
+                  VALUES (?, ?, ?)
+                  ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name`,
+            args: [itemId, encryptToken(accessToken), institutionName],
+          });
 
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(successPage());

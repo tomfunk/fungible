@@ -11,7 +11,7 @@ import { countPatternMatches } from '../core/rule-utils.js';
 let txId = 0;
 function insertTx(name: string, merchant_name?: string) {
   txId++;
-  db.prepare(`
+  (db as any).prepare(`
     INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, pending, ignored)
     VALUES (?, 'a', '2025-01-01', ?, ?, 10, 'Shopping', 0, 0)
   `).run(`tx${txId}`, name, merchant_name ?? null);
@@ -19,46 +19,46 @@ function insertTx(name: string, merchant_name?: string) {
 
 beforeEach(() => {
   txId = 0;
-  db.exec('DELETE FROM transactions');
+  (db as any).exec('DELETE FROM transactions');
 });
 
 describe('countPatternMatches', () => {
-  it('returns 0 for empty pattern', () => {
+  it('returns 0 for empty pattern', async () => {
     insertTx('Spotify');
-    expect(countPatternMatches('', 'name')).toBe(0);
+    expect(await countPatternMatches('', 'name')).toBe(0);
   });
 
-  it('counts substring matches (name type)', () => {
+  it('counts substring matches (name type)', async () => {
     insertTx('Spotify Monthly');
     insertTx('Spotify Annual');
     insertTx('Netflix');
-    expect(countPatternMatches('Spotify', 'name')).toBe(2);
+    expect(await countPatternMatches('Spotify', 'name')).toBe(2);
   });
 
-  it('matches against merchant_name too', () => {
+  it('matches against merchant_name too', async () => {
     insertTx('AMZN Mktp', 'Amazon');
-    expect(countPatternMatches('Amazon', 'name')).toBe(1);
+    expect(await countPatternMatches('Amazon', 'name')).toBe(1);
   });
 
-  it('is case-insensitive for name matches', () => {
+  it('is case-insensitive for name matches', async () => {
     insertTx('SPOTIFY');
-    expect(countPatternMatches('spotify', 'name')).toBe(1);
+    expect(await countPatternMatches('spotify', 'name')).toBe(1);
   });
 
-  it('counts regex matches', () => {
+  it('counts regex matches', async () => {
     insertTx('Spotify Monthly');
     insertTx('Spotify Annual');
     insertTx('Netflix');
-    expect(countPatternMatches('^Spotify', 'regex')).toBe(2);
-    expect(countPatternMatches('^Netflix', 'regex')).toBe(1);
+    expect(await countPatternMatches('^Spotify', 'regex')).toBe(2);
+    expect(await countPatternMatches('^Netflix', 'regex')).toBe(1);
   });
 
-  it('returns 0 for invalid regex without throwing', () => {
-    expect(countPatternMatches('[invalid', 'regex')).toBe(0);
+  it('returns 0 for invalid regex without throwing', async () => {
+    expect(await countPatternMatches('[invalid', 'regex')).toBe(0);
   });
 
-  it('returns 0 when no transactions match', () => {
+  it('returns 0 when no transactions match', async () => {
     insertTx('Netflix');
-    expect(countPatternMatches('Spotify', 'name')).toBe(0);
+    expect(await countPatternMatches('Spotify', 'name')).toBe(0);
   });
 });

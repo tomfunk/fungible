@@ -75,12 +75,12 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const catNameW = Math.max(12, inner - 28);
 
   function load() {
-    setRules(getAllRules());
-    setNameRules(getAllNameRules());
-    setUncategorized(getUncategorizedCount());
-    setHiddenSet(getHiddenCategorySet());
-    setCategories(getAllCategories());
-    setCatDetails(getCategoryDetails());
+    void getAllRules().then(setRules);
+    void getAllNameRules().then(setNameRules);
+    void getUncategorizedCount().then(setUncategorized);
+    void getHiddenCategorySet().then(setHiddenSet);
+    void getAllCategories().then(setCategories);
+    void getCategoryDetails().then(setCatDetails);
   }
 
   useEffect(() => { load(); }, []);
@@ -201,7 +201,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           const cat = categories[catListCursor];
           const nowHidden = !hiddenSet.has(cat);
           toggleHiddenCategory(cat, hiddenSet);
-          setHiddenSet(getHiddenCategorySet());
+          void getHiddenCategorySet().then(setHiddenSet);
           setStatusMsg(`${cat} is now ${nowHidden ? 'hidden' : 'visible'}`);
           setTimeout(() => setStatusMsg(''), 2000);
           return;

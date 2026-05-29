@@ -330,10 +330,10 @@ export async function executeTool(
       const year = num('year'); const month = num('month');
       let summary; let label: string;
       if (from && to) {
-        summary = getRangeSummary(from, to);
+        summary = await getRangeSummary(from, to);
         label = `${from} – ${to}`;
       } else if (year && month) {
-        summary = getMonthlySummary(year, month);
+        summary = await getMonthlySummary(year, month);
         label = `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`;
       } else {
         return 'Provide either (year + month) or (from + to).';
@@ -370,28 +370,40 @@ export async function executeTool(
       }
       const where = 'WHERE ' + conditions.join(' AND ');
       const limit = input['limit'] ? num('limit') : 50;
-      const rows = db.prepare(`
-        SELECT t.id, t.date, COALESCE(t.display_name, t.name) as name, t.amount,
-               t.category, t.manual_category, t.ignored, COALESCE(a.nickname, a.name) as account
-        FROM transactions t LEFT JOIN accounts a ON t.account_id = a.id
-        ${where} ORDER BY t.date DESC LIMIT ?
-      `).all(...args, limit) as { id: string; date: string; name: string; amount: number; category: string; manual_category: string | null; ignored: number; account: string }[];
+      const result = await db.execute({
+        sql: `
+          SELECT t.id, t.date, COALESCE(t.display_name, t.name) as name, t.amount,
+                 t.category, t.manual_category, t.ignored, COALESCE(a.nickname, a.name) as account
+          FROM transactions t LEFT JOIN accounts a ON t.account_id = a.id
+          ${where} ORDER BY t.date DESC LIMIT ?
+        `,
+        args: [...args, limit],
+      });
+      const rows = result.rows as unknown as {
+        id: string; date: string; name: string; amount: number;
+        category: string; manual_category: string | null; ignored: number; account: string;
+      }[];
       if (!rows.length) return 'No transactions found.';
       return rows.map((r) => {
         const sign  = r.amount < 0 ? '+' : '-';
         const flags = (r.manual_category ? '◆' : ' ') + (r.ignored ? '~' : ' ');
-        return `${r.date}  ${flags}  ${r.name.slice(0, 36).padEnd(36)}  ${sign}$${Math.abs(r.amount).toFixed(2).padStart(9)}  ${r.category}  [${r.id}]`;
+        return `${r.date}  ${flags}  ${r.name.slice(0, 36).padEnd(36)}  ${sign}$${Math.abs(Number(r.amount)).toFixed(2).padStart(9)}  ${r.category}  [${r.id}]`;
       }).join('\n');
     }
 
     case 'list_accounts': {
-      const rows = db.prepare('SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name FROM accounts').all() as { name: string; type: string; subtype: string; mask: string | null; institution_name: string | null }[];
+      const result = await db.execute(
+        'SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name FROM accounts'
+      );
+      const rows = result.rows as unknown as {
+        name: string; type: string; subtype: string; mask: string | null; institution_name: string | null;
+      }[];
       if (!rows.length) return 'No accounts connected.';
       return rows.map((a) => `${a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`).join('\n');
     }
 
     case 'get_balances': {
-      const b = getBalances();
+      const b = await getBalances();
       if (!b.accounts.length) return 'No balance data available. Sync accounts first.';
       return [
         'Assets:',
@@ -407,7 +419,7 @@ export async function executeTool(
     }
 
     case 'get_financial_health': {
-      const h = getFinancialHealth(
+      const h = await getFinancialHealth(
         input['withdrawal_rate'] ? num('withdrawal_rate') : 4,
         input['growth_rate']     ? num('growth_rate')     : 7,
       );
@@ -434,7 +446,7 @@ export async function executeTool(
       const windows = getDriftWindows('month', anchor, asOf);
       if (!windows) return 'Drift is not available for this range.';
       const { current, lastPeriod, lastYear, rolling12 } = windows;
-      const rows = getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
+      const rows = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
       if (!rows.length) return `No expense data for ${year}-${String(month).padStart(2, '0')} through day ${day}.`;
       const fmtAmt   = (n: number) => fmt(n, 0);
       const signedFmt = (n: number) => n === 0 ? '—' : fmtSigned(n, 0);
@@ -460,7 +472,7 @@ export async function executeTool(
     }
 
     case 'get_trends': {
-      const rows = getSpendingTrends(input['months'] ? num('months') : 12, input['category'] ? str('category') : undefined);
+      const rows = await getSpendingTrends(input['months'] ? num('months') : 12, input['category'] ? str('category') : undefined);
       if (!rows.length) return 'No data.';
       const hasCat = Boolean(input['category']);
       const header = hasCat
@@ -474,9 +486,13 @@ export async function executeTool(
     }
 
     case 'list_rules': {
-      const rules = db.prepare(
+      const result = await db.execute(
         'SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC'
-      ).all() as { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null }[];
+      );
+      const rules = result.rows as unknown as {
+        id: number; priority: number; match_type: string; pattern: string;
+        category: string; min_amount: number | null; max_amount: number | null;
+      }[];
       if (!rules.length) return 'No rules defined.';
       return rules.map((r) => {
         const amt = r.min_amount != null && r.max_amount != null
@@ -488,9 +504,13 @@ export async function executeTool(
     }
 
     case 'list_name_rules': {
-      const rules = db.prepare(
+      const result = await db.execute(
         'SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC'
-      ).all() as { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null }[];
+      );
+      const rules = result.rows as unknown as {
+        id: number; match_type: string; pattern: string;
+        replacement: string; min_amount: number | null; max_amount: number | null;
+      }[];
       if (!rules.length) return 'No name rules defined.';
       return rules.map((r) => {
         const amt = r.min_amount != null ? ` [≥$${r.min_amount}]` : r.max_amount != null ? ` [≤$${r.max_amount}]` : '';
@@ -499,21 +519,25 @@ export async function executeTool(
     }
 
     case 'list_hidden_categories': {
-      const rows = db.prepare('SELECT category FROM hidden_categories ORDER BY category').all() as { category: string }[];
+      const result = await db.execute('SELECT category FROM hidden_categories ORDER BY category');
+      const rows = result.rows as unknown as { category: string }[];
       return rows.length ? rows.map((r) => r.category).join('\n') : 'No hidden categories.';
     }
 
     case 'list_tags': {
-      const rows = db.prepare(`
+      const result = await db.execute(`
         SELECT t.name, COUNT(tt.transaction_id) as count
         FROM tags t LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
         GROUP BY t.id ORDER BY t.name
-      `).all() as { name: string; count: number }[];
-      return rows.length ? rows.map((r) => `${r.name.padEnd(30)} ${r.count} txn${r.count !== 1 ? 's' : ''}`).join('\n') : 'No tags defined.';
+      `);
+      const rows = result.rows as unknown as { name: string; count: number }[];
+      return rows.length
+        ? rows.map((r) => `${r.name.padEnd(30)} ${r.count} txn${r.count !== 1 ? 's' : ''}`).join('\n')
+        : 'No tags defined.';
     }
 
     case 'tag_summary': {
-      const summary = getTagSummary(str('tag'));
+      const summary = await getTagSummary(str('tag'));
       return [
         `#${str('tag')}`,
         `Income: $${summary.income.toFixed(2)}  Expenses: $${summary.expenses.toFixed(2)}  Net: ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(2)}`,
@@ -526,12 +550,19 @@ export async function executeTool(
     }
 
     case 'uncategorized_summary': {
-      const rows = db.prepare(`
-        SELECT name, COUNT(*) as count FROM transactions
-        WHERE category = 'Uncategorized' AND ignored = 0
-        GROUP BY name ORDER BY count DESC LIMIT ?
-      `).all(input['limit'] ? num('limit') : 30) as { name: string; count: number }[];
-      return rows.length ? rows.map((r) => `${String(r.count).padStart(4)}x  ${r.name}`).join('\n') : 'No uncategorized transactions.';
+      const limit = input['limit'] ? num('limit') : 30;
+      const result = await db.execute({
+        sql: `
+          SELECT name, COUNT(*) as count FROM transactions
+          WHERE category = 'Uncategorized' AND ignored = 0
+          GROUP BY name ORDER BY count DESC LIMIT ?
+        `,
+        args: [limit],
+      });
+      const rows = result.rows as unknown as { name: string; count: number }[];
+      return rows.length
+        ? rows.map((r) => `${String(r.count).padStart(4)}x  ${r.name}`).join('\n')
+        : 'No uncategorized transactions.';
     }
 
     case 'get_finance_guide': {
@@ -546,79 +577,89 @@ export async function executeTool(
     // ── Write tools ───────────────────────────────────────────────────────────
 
     case 'edit_transaction': {
-      const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
+      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
-      setTransactionCategory(str('id'), str('category'));
+      await setTransactionCategory(str('id'), str('category'));
       return `Set "${tx.name}" → ${str('category')} (pinned)`;
     }
 
     case 'clear_edit': {
-      const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
+      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
-      clearTransactionOverride(str('id'));
-      const reverted = (db.prepare('SELECT category FROM transactions WHERE id = ?').get(str('id')) as { category: string }).category;
+      await clearTransactionOverride(str('id'));
+      const revertedResult = await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [str('id')] });
+      const reverted = (revertedResult.rows[0] as unknown as { category: string }).category;
       return `Cleared override on "${tx.name}" — reverted to ${reverted}`;
     }
 
     case 'ignore_transaction': {
-      const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
+      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
-      setTransactionIgnored(str('id'), bool('ignore'));
+      await setTransactionIgnored(str('id'), bool('ignore'));
       return `"${tx.name}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
     }
 
     case 'add_rule': {
       if (str('match_type') === 'regex') validateRegex(str('pattern'));
-      db.prepare(
-        'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(input['priority'] ? num('priority') : 10, str('match_type'), str('pattern'), str('category'), opt('min_amount'), opt('max_amount'));
-      const count = applyCategoriesToAll();
+      await db.execute({
+        sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [input['priority'] ? num('priority') : 10, str('match_type'), str('pattern'), str('category'), opt('min_amount'), opt('max_amount')],
+      });
+      const count = await applyCategoriesToAll();
       return `Rule added: "${str('pattern')}" → ${str('category')}\nRecategorized ${count} transactions.`;
     }
 
     case 'delete_rule': {
-      const rule = db.prepare('SELECT pattern, category FROM category_rules WHERE id = ?').get(num('id')) as { pattern: string; category: string } | undefined;
+      const ruleResult = await db.execute({ sql: 'SELECT pattern, category FROM category_rules WHERE id = ?', args: [num('id')] });
+      const rule = ruleResult.rows[0] as unknown as { pattern: string; category: string } | undefined;
       if (!rule) return `No rule with id ${num('id')}.`;
-      db.prepare('DELETE FROM category_rules WHERE id = ?').run(num('id'));
+      await db.execute({ sql: 'DELETE FROM category_rules WHERE id = ?', args: [num('id')] });
       return `Deleted rule: "${rule.pattern}" → ${rule.category}`;
     }
 
     case 'add_name_rule': {
       if (str('match_type') === 'regex') validateRegex(str('pattern'));
-      db.prepare(
-        'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)'
-      ).run(str('match_type'), str('pattern'), str('replacement'), opt('min_amount'), opt('max_amount'));
-      const count = rebuildDisplayNames();
+      await db.execute({
+        sql: 'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)',
+        args: [str('match_type'), str('pattern'), str('replacement'), opt('min_amount'), opt('max_amount')],
+      });
+      const count = await rebuildDisplayNames();
       return `Name rule added: "${str('pattern')}" → "${str('replacement')}"\nUpdated ${count} transactions.`;
     }
 
     case 'delete_name_rule': {
-      const rule = db.prepare('SELECT pattern, replacement FROM name_rules WHERE id = ?').get(num('id')) as { pattern: string; replacement: string } | undefined;
+      const ruleResult = await db.execute({ sql: 'SELECT pattern, replacement FROM name_rules WHERE id = ?', args: [num('id')] });
+      const rule = ruleResult.rows[0] as unknown as { pattern: string; replacement: string } | undefined;
       if (!rule) return `No name rule with id ${num('id')}.`;
-      db.prepare('DELETE FROM name_rules WHERE id = ?').run(num('id'));
+      await db.execute({ sql: 'DELETE FROM name_rules WHERE id = ?', args: [num('id')] });
       return `Deleted name rule: "${rule.pattern}" → "${rule.replacement}"`;
     }
 
     case 'tag_transaction': {
-      const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(str('id')) as { name: string } | undefined;
+      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
       if (!tx) return `No transaction with id ${str('id')}.`;
       if (bool('add')) {
-        const tagId = getOrCreateTag(str('tag'));
-        addTagToTransaction(str('id'), tagId);
+        const tagId = await getOrCreateTag(str('tag'));
+        await addTagToTransaction(str('id'), tagId);
         return `Tagged "${tx.name}" with #${str('tag')}`;
       } else {
-        const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(str('tag')) as { id: number } | undefined;
-        if (tagRow) removeTagFromTransaction(str('id'), tagRow.id);
+        const tagRowResult = await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [str('tag')] });
+        const tagRow = tagRowResult.rows[0] as unknown as { id: number } | undefined;
+        if (tagRow) await removeTagFromTransaction(str('id'), tagRow.id);
         return `Removed #${str('tag')} from "${tx.name}"`;
       }
     }
 
     case 'toggle_hidden_category': {
       if (bool('hide')) {
-        db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)').run(str('category'));
+        await db.execute({ sql: 'INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)', args: [str('category')] });
         return `"${str('category')}" is now hidden from totals.`;
       } else {
-        db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(str('category'));
+        await db.execute({ sql: 'DELETE FROM hidden_categories WHERE category = ?', args: [str('category')] });
         return `"${str('category')}" is now visible.`;
       }
     }

@@ -1,16 +1,33 @@
 import { DatabaseSync } from 'node:sqlite';
 
-/** Creates an in-memory SQLite database with the full fungible schema. */
-export function makeTestDb(): DatabaseSync {
-  const db = new DatabaseSync(':memory:');
-  db.exec(`
+type DbRow = Record<string, unknown>;
+type ExecResult = { rows: DbRow[]; rowsAffected: number };
+type Statement = { sql: string; args?: unknown[] };
+
+/**
+ * Hybrid test database:
+ * - `execute` / `batch` match the @libsql/client async interface used by core code
+ * - `prepare` / `exec` are synchronous pass-throughs for concise test setup
+ */
+export type TestDb = {
+  execute(sqlOrObj: string | Statement): Promise<ExecResult>;
+  batch(statements: Statement[], mode?: string): Promise<ExecResult[]>;
+  prepare: DatabaseSync['prepare'];
+  exec(sql: string): void;
+};
+
+export function makeTestDb(): TestDb {
+  const sqlite = new DatabaseSync(':memory:');
+
+  sqlite.exec(`
     CREATE TABLE accounts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       subtype TEXT,
       institution_name TEXT,
-      mask TEXT
+      mask TEXT,
+      nickname TEXT
     );
 
     CREATE TABLE transactions (
@@ -73,6 +90,38 @@ export function makeTestDb(): DatabaseSync {
       institution_name TEXT,
       last_synced_at INTEGER
     );
+
+    CREATE TABLE balance_history (
+      account_id TEXT NOT NULL,
+      balance REAL NOT NULL,
+      date TEXT NOT NULL,
+      PRIMARY KEY (account_id, date)
+    );
   `);
-  return db;
+
+  function run(sql: string, args: unknown[] = []): ExecResult {
+    const stmt = sqlite.prepare(sql);
+    const trimmed = sql.trimStart().toLowerCase();
+    const isRead = trimmed.startsWith('select') || trimmed.startsWith('with') || trimmed.startsWith('pragma');
+    if (isRead) {
+      const rows = stmt.all(...(args as Parameters<typeof stmt.all>)) as DbRow[];
+      return { rows, rowsAffected: 0 };
+    } else {
+      const info = stmt.run(...(args as Parameters<typeof stmt.run>)) as { changes: number };
+      return { rows: [], rowsAffected: info.changes ?? 0 };
+    }
+  }
+
+  return {
+    async execute(sqlOrObj) {
+      const sql = typeof sqlOrObj === 'string' ? sqlOrObj : sqlOrObj.sql;
+      const args = typeof sqlOrObj === 'string' ? [] : (sqlOrObj.args ?? []);
+      return run(sql, args);
+    },
+    async batch(statements) {
+      return statements.map(({ sql, args = [] }) => run(sql, args));
+    },
+    prepare: (sql: string) => sqlite.prepare(sql),
+    exec: (sql: string) => sqlite.exec(sql),
+  };
 }

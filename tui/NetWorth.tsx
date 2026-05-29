@@ -75,10 +75,15 @@ function bucketHistory(history: HistoryRow[], range: NWRange): BucketRow[] {
 }
 
 export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
-  const { accounts, history } = getAccountsWithBalances();
+  const [accounts, setAccounts] = useState<AccountBalance[]>([]);
+  const [history,  setHistory]  = useState<HistoryRow[]>([]);
   const [view,   setView]   = useState<ViewMode>('accounts');
   const [range,  setRange]  = useState<NWRange>('month');
   const [cursor, setCursor] = useState(0);
+
+  useEffect(() => {
+    void getAccountsWithBalances().then(({ accounts: a, history: h }) => { setAccounts(a); setHistory(h); });
+  }, []);
 
   const rows = bucketHistory(history, range);
 
