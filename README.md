@@ -76,6 +76,31 @@ npm run dev -- --setup
 
 Data and config are stored at `~/.fungible/`. Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your bank accounts. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
 
+## Turso sync (optional)
+
+By default, fungible stores everything in a local SQLite file at `~/.fungible/fungible.db`. It is fully self-contained — no cloud account needed.
+
+If you want **automatic backup and cross-device sync**, you can point fungible at your own [Turso](https://turso.tech) database. Turso is a cloud SQLite service with a generous free tier. fungible stays local-first: all reads and writes go to the local file, and Turso mirrors it silently in the background.
+
+**Setup (one time):**
+
+1. Sign up at [turso.tech](https://turso.tech) and install the CLI: `brew install tursodatabase/tap/turso`
+2. Create a database: `turso db create fungible`
+3. Get the URL: `turso db show fungible --url`
+4. Generate a token: `turso db tokens create fungible`
+5. Add both to `~/.fungible/.env`:
+
+```
+FUNGIBLE_TURSO_URL=libsql://fungible-<your-name>.turso.io
+FUNGIBLE_TURSO_TOKEN=<token>
+```
+
+Or run `fungible --setup` and answer yes when asked about Turso.
+
+**Cross-device:** on a second machine, install fungible, add the same two env vars, and run it. It will pull your full database from Turso on first launch. From then on, both machines stay in sync automatically.
+
+**No lock-in:** removing the env vars reverts to local-only mode. Your local `fungible.db` is always a complete, readable SQLite file.
+
 ## Screens
 
 | Key | Screen |

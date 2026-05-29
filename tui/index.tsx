@@ -4,7 +4,7 @@ import { DATA_DIR } from '../core/paths.js';
 config({ path: join(DATA_DIR, '.env'), quiet: true });
 import React from 'react';
 import { render } from 'ink';
-import { initDb } from '../core/db.js';
+import { initDb, syncDb } from '../core/db.js';
 import { syncAll } from '../core/sync.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import { App } from './App.js';
@@ -13,6 +13,7 @@ import { Setup } from './Setup.js';
 const isDemo = process.argv.includes('--demo');
 
 await initDb();
+await syncDb().catch(() => {}); // pull latest from Turso if configured
 
 if (process.argv.includes('--setup')) {
   render(<Setup />);

@@ -5,10 +5,11 @@ config({ path: join(DATA_DIR, '.env') });
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { initDb } from '../core/db.js';
+import { initDb, syncDb } from '../core/db.js';
 import { executeTool } from '../core/tools.js';
 
 await initDb();
+await syncDb().catch(() => {});
 
 const server = new McpServer({
   name: 'fungible',

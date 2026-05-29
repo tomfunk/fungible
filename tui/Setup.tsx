@@ -15,6 +15,9 @@ type Step =
   | 'plaid-env'
   | 'link-choice'
   | 'linking'
+  | 'turso-choice'
+  | 'turso-url'
+  | 'turso-token'
   | 'seed-choice'
   | 'done';
 
@@ -59,11 +62,17 @@ export function Setup() {
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [linkMsg, setLinkMsg] = useState('');
 
+  // Turso fields
+  const [tursoUrl, setTursoUrl] = useState(existing['FUNGIBLE_TURSO_URL'] ?? '');
+  const [tursoToken, setTursoToken] = useState(existing['FUNGIBLE_TURSO_TOKEN'] ?? '');
+
   // Seed status
   const [seedResult, setSeedResult] = useState<{ rules: number; recategorized: number } | null>(null);
 
   const alreadyConfigured =
     !!existing['PLAID_CLIENT_ID'] && !!existing['PLAID_SECRET'] && !!existing['PLAID_ENV'];
+  const tursoAlreadyConfigured =
+    !!existing['FUNGIBLE_TURSO_URL'] && !!existing['FUNGIBLE_TURSO_TOKEN'];
 
   function savePlaidCreds() {
     writeEnv({
@@ -75,6 +84,15 @@ export function Setup() {
     process.env['PLAID_CLIENT_ID'] = clientId.trim();
     process.env['PLAID_SECRET'] = secret.trim();
     process.env['PLAID_ENV'] = PLAID_ENVS[plaidEnvIdx];
+  }
+
+  function saveTursoCreds() {
+    writeEnv({
+      FUNGIBLE_TURSO_URL: tursoUrl.trim(),
+      FUNGIBLE_TURSO_TOKEN: tursoToken.trim(),
+    });
+    process.env['FUNGIBLE_TURSO_URL'] = tursoUrl.trim();
+    process.env['FUNGIBLE_TURSO_TOKEN'] = tursoToken.trim();
   }
 
   function startLink() {
@@ -116,7 +134,7 @@ export function Setup() {
 
     if (step === 'plaid-choice') {
       if (input === 'y') { setStep('plaid-client-id'); return; }
-      if (input === 'n') { setStep('seed-choice'); return; }
+      if (input === 'n') { setStep('turso-choice'); return; }
       return;
     }
 
@@ -146,14 +164,36 @@ export function Setup() {
 
     if (step === 'link-choice') {
       if (input === 'y') { setStep('linking'); startLink(); return; }
-      if (input === 'n') { setStep('seed-choice'); return; }
+      if (input === 'n') { setStep('turso-choice'); return; }
       return;
     }
 
     if (step === 'linking') {
       if ((linkStatus === 'done' || linkStatus === 'error') && key.return) {
-        setStep('seed-choice');
+        setStep('turso-choice');
       }
+      return;
+    }
+
+    if (step === 'turso-choice') {
+      if (input === 'y') { setStep('turso-url'); return; }
+      if (input === 'n') { setStep('seed-choice'); return; }
+      return;
+    }
+
+    if (step === 'turso-url') {
+      if (key.escape) { setStep('turso-choice'); return; }
+      if (key.return && tursoUrl.trim()) { setStep('turso-token'); return; }
+      if (key.backspace || key.delete) { setTursoUrl((v) => v.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setTursoUrl((v) => v + input); return; }
+      return;
+    }
+
+    if (step === 'turso-token') {
+      if (key.escape) { setStep('turso-url'); return; }
+      if (key.return && tursoToken.trim()) { saveTursoCreds(); setStep('seed-choice'); return; }
+      if (key.backspace || key.delete) { setTursoToken((v) => v.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setTursoToken((v) => v + input); return; }
       return;
     }
 
@@ -186,6 +226,7 @@ export function Setup() {
             <Text dimColor>This wizard will help you:</Text>
             <Text dimColor>  · Configure Plaid credentials (to sync bank accounts)</Text>
             <Text dimColor>  · Link your first bank account</Text>
+            <Text dimColor>  · Set up Turso sync for backup / cross-device (optional)</Text>
             <Text dimColor>  · Seed starter category rules</Text>
           </Box>
           {alreadyConfigured && (
@@ -276,6 +317,55 @@ export function Setup() {
           {(linkStatus === 'done' || linkStatus === 'error') && (
             <Text dimColor>Press Enter to continue.</Text>
           )}
+        </Box>
+      )}
+
+      {step === 'turso-choice' && (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Turso sync  <Text dimColor>(optional)</Text></Text>
+          <Text dimColor>
+            Turso is a cloud SQLite service that can back up and sync your data across
+            devices. fungible stays fully local — Turso just mirrors the same database.
+          </Text>
+          <Text dimColor>
+            Sign up free at turso.tech, create a database, and paste the URL and token here.
+          </Text>
+          {tursoAlreadyConfigured && (
+            <Box marginTop={1}>
+              <Text color={C_POSITIVE}>Turso already configured in .env</Text>
+            </Box>
+          )}
+          <Box marginTop={1}>
+            <Text>Set up Turso?  </Text>
+            <Text color={C_ACCENT}>[y] Yes  </Text>
+            <Text color={C_ACCENT}>[n] Skip</Text>
+          </Box>
+        </Box>
+      )}
+
+      {step === 'turso-url' && (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Turso database URL</Text>
+          <Text dimColor>Looks like: libsql://your-db-name.turso.io</Text>
+          <Box marginTop={1}>
+            <Text>URL: </Text>
+            <Text color={C_WARNING}>{tursoUrl}</Text>
+            <Text color={C_ACCENT}>█</Text>
+          </Box>
+          <Text dimColor>Enter to continue · Esc back</Text>
+        </Box>
+      )}
+
+      {step === 'turso-token' && (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Turso auth token</Text>
+          <Text dimColor>Found in your Turso dashboard under the database → Generate Token</Text>
+          <Box marginTop={1}>
+            <Text>Token: </Text>
+            <Text color={C_WARNING}>{'*'.repeat(Math.min(tursoToken.length, 20))}{tursoToken.length > 20 ? '…' : ''}</Text>
+            <Text color={C_ACCENT}>█</Text>
+          </Box>
+          <Text dimColor>Enter to save · Esc back</Text>
         </Box>
       )}
 

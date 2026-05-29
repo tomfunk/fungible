@@ -8,18 +8,25 @@ const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+export function isTursoConfigured(): boolean {
+  return !!(process.env.FUNGIBLE_TURSO_URL && process.env.FUNGIBLE_TURSO_TOKEN);
+}
+
 function createDb(): Client {
   const syncUrl   = process.env.FUNGIBLE_TURSO_URL;
   const authToken = process.env.FUNGIBLE_TURSO_TOKEN;
   if (syncUrl && authToken) {
-    // Paid tier: embedded replica syncs with Turso
     return createClient({ url: `file:${DB_PATH}`, syncUrl, authToken });
   }
-  // Free tier: local file only
   return createClient({ url: `file:${DB_PATH}` });
 }
 
 export const db: Client = createDb();
+
+/** Pull latest changes from Turso. No-op when Turso is not configured. */
+export async function syncDb(): Promise<void> {
+  if (isTursoConfigured()) await db.sync();
+}
 
 export async function initDb() {
   // Create all tables (idempotent)
