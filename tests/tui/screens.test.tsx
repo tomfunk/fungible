@@ -29,7 +29,7 @@ function frame(r: ReturnType<typeof render>): string {
   return (r.lastFrame() ?? '').replace(ANSI_RE, '');
 }
 
-async function waitFor(assertion: () => void, timeout = 2000): Promise<void> {
+async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
   const deadline = Date.now() + timeout;
   let lastErr: unknown;
   while (Date.now() < deadline) {
@@ -148,8 +148,7 @@ describe('Dashboard', () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
     r.stdin.write('/');
-    // Search bar should appear with the cursor indicator
-    await waitFor(() => expect(frame(r)).toContain('/'));
+    await waitFor(() => expect(frame(r)).toContain('▊'));
   });
 
   it('d key toggles delta mode label', async () => {
@@ -238,10 +237,7 @@ describe('Transactions', () => {
     const r = txns();
     await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('/');
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('/');
-    });
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
   });
 
   it('s key cycles sort order label', async () => {
