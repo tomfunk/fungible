@@ -282,13 +282,47 @@ Available tools: same set as the MCP server below.
 
 Exposes your financial data to Claude via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-Two modes:
-- **stdio** (`fungible mcp`) — Claude Desktop spawns this as a child process. Use this in your Claude config.
-- **HTTP** — starts automatically on port 3741 whenever the TUI is running. Connect any MCP client to `http://localhost:3741/mcp`.
+**Two connection modes:**
 
-```bash
-fungible mcp
-# or: npm run mcp
+- **stdio** — Claude Desktop spawns `fungible mcp` as a child process. Always works, even when the TUI isn't open. When the TUI is running, writes notify it automatically so the UI refreshes. Use this if you're not sure which to pick.
+
+- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open.
+
+Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+**stdio — Homebrew:**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
+    }
+  }
+}
+```
+
+**stdio — from source:**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "command": "node",
+      "args": ["--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
+    }
+  }
+}
+```
+
+**HTTP (TUI must be running):**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "url": "http://localhost:3741/mcp"
+    }
+  }
+}
 ```
 
 Available tools:
@@ -319,29 +353,3 @@ Available tools:
 | `get_drift` | Per-category spending deltas vs prior period, last year, and 12-month avg |
 | `get_trends` | Month-by-month spending trends for the last N months |
 | `get_finance_guide` | Opinionated personal finance guidance by topic |
-
-Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-**If installed via Homebrew:**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
-    }
-  }
-}
-```
-
-**If running from source:**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "command": "node",
-      "args": ["--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
-    }
-  }
-}
-```

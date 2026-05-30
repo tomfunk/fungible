@@ -9,6 +9,11 @@ import { createMcpServer } from './create-server.js';
 
 await initDb();
 backupDb().catch(() => {});
-const server = createMcpServer();
+const apiPort = parseInt(process.env.FUNGIBLE_API_PORT ?? '3456', 10);
+const server = createMcpServer({
+  afterWrite: () => {
+    fetch(`http://localhost:${apiPort}/notify`, { method: 'POST' }).catch(() => {});
+  },
+});
 const transport = new StdioServerTransport();
 await server.connect(transport);

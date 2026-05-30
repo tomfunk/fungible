@@ -8,6 +8,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { initDb } from '../core/db.js';
 import { backupDb } from '../core/backup.js';
 import { executeTool, TOOL_DEFS } from '../core/tools.js';
+import { notifyChange } from '../core/refresh.js';
 
 const DEFAULT_PORT = parseInt(process.env.FUNGIBLE_API_PORT ?? '3456', 10);
 const API_KEY = process.env.FUNGIBLE_API_KEY;
@@ -37,6 +38,11 @@ export function startApiServer(port = DEFAULT_PORT, opts: { quiet?: boolean } = 
     if (API_KEY) {
       const auth = req.headers['authorization'];
       if (auth !== `Bearer ${API_KEY}`) return send(res, 401, { error: 'Unauthorized' });
+    }
+
+    if (req.method === 'POST' && req.url === '/notify') {
+      notifyChange();
+      return send(res, 200, { ok: true });
     }
 
     const match = req.method === 'POST' && req.url?.match(/^\/tools\/([^/?]+)$/);

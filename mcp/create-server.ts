@@ -1,13 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { executeTool } from '../core/tools.js';
+import { executeTool, WRITE_TOOLS } from '../core/tools.js';
 
-async function run(name: string, input: Record<string, unknown>) {
-  const text = await executeTool(name, input);
-  return { content: [{ type: 'text' as const, text }] };
-}
-
-export function createMcpServer(): McpServer {
+export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServer {
+  async function run(name: string, input: Record<string, unknown>) {
+    const text = await executeTool(name, input);
+    if (opts.afterWrite && WRITE_TOOLS.has(name)) opts.afterWrite();
+    return { content: [{ type: 'text' as const, text }] };
+  }
   const server = new McpServer({ name: 'fungible', version: '1.0.0' });
 
   // ── spending_summary ────────────────────────────────────────────────────────
