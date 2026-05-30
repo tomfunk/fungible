@@ -64,6 +64,12 @@ export function startApiServer(port = DEFAULT_PORT, opts: { quiet?: boolean } = 
     }
   });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[fungible-api] port ${port} in use — REST API server not started`);
+    }
+  });
+
   server.listen(port, () => {
     if (!opts.quiet) console.log(`[fungible-api] Listening on http://localhost:${port}`);
   });

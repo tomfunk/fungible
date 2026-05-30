@@ -292,5 +292,31 @@ export function createMcpServer(): McpServer {
     (input) => run('get_finance_guide', input),
   );
 
+  // ── get_net_worth_history ───────────────────────────────────────────────────
+
+  server.tool(
+    'get_net_worth_history',
+    'Net worth over time grouped by day, week, month, quarter, or year.',
+    {
+      granularity: z.enum(['day', 'week', 'month', 'quarter', 'year']).default('month').describe('Time grouping (default: month)'),
+    },
+    (input) => run('get_net_worth_history', input),
+  );
+
+  // ── calculate_tvm ───────────────────────────────────────────────────────────
+
+  server.tool(
+    'calculate_tvm',
+    'Time Value of Money solver. Provide any 4 of the 5 variables (pv, fv, pmt, n, rate) and it solves for the missing one. Rate is the periodic rate in decimal (e.g. 0.005 for 0.5%/mo). Sign convention: outflows negative, inflows positive.',
+    {
+      pv:   z.number().optional().describe('Present value — positive if cash received, negative if paid out'),
+      fv:   z.number().optional().describe('Future value — positive if cash received, negative if paid out'),
+      pmt:  z.number().optional().describe('Periodic payment — negative if paying, positive if receiving'),
+      n:    z.number().optional().describe('Number of periods'),
+      rate: z.number().optional().describe('Rate per period in decimal (e.g. 0.005 = 0.5%/period)'),
+    },
+    (input) => run('calculate_tvm', input),
+  );
+
   return server;
 }

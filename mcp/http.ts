@@ -19,5 +19,11 @@ export function startMcpHttpServer(port: number): void {
     await transport.handleRequest(req, res, body);
   });
 
+  httpServer.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[fungible-mcp] port ${port} in use — HTTP MCP server not started`);
+    }
+  });
+
   httpServer.listen(port);
 }
