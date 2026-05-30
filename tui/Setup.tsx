@@ -83,7 +83,7 @@ export function Setup() {
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
-      '--experimental-sqlite', '--no-warnings',
+      '--no-warnings',
       '--import', 'tsx/esm',
       script,
     ], { cwd: new URL('..', import.meta.url).pathname });

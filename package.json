@@ -20,6 +20,7 @@
     "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest"
   },
   "license": "MIT",
+  "engines": { "node": ">=22" },
   "bin": {
     "fungible": "bin/fungible"
   },

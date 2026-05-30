@@ -22,6 +22,6 @@ done
 TSX_ESM=$(node --no-warnings -e \
   "const r=require('module').createRequire('$PACKAGE_DIR/package.json');process.stdout.write(r.resolve('tsx/esm'))")
 
-exec node --experimental-sqlite --no-warnings \
+exec node --no-warnings \
   --import "$TSX_ESM" \
   "$PACKAGE_DIR/tui/index.tsx" "$@"
