@@ -421,8 +421,56 @@ export async function getCsvAccounts(): Promise<CsvAccount[]> {
   return result.rows as unknown as CsvAccount[];
 }
 
-export type AccountBalance = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number };
-export type HistoryRow     = { date: string; assets: number; liabilities: number; net: number };
+export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number };
+export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };
+export type NetWorthPeriod    = { period: string; assets: number; liabilities: number; net_worth: number };
+export type NetWorthGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
+
+export async function getNetWorthHistory(granularity: NetWorthGranularity = 'month'): Promise<NetWorthPeriod[]> {
+  const periodExpr: Record<NetWorthGranularity, string> = {
+    day:     `strftime('%Y-%m-%d', date)`,
+    week:    `strftime('%Y-W%W', date)`,
+    month:   `strftime('%Y-%m', date)`,
+    quarter: `strftime('%Y', date) || '-Q' || ((CAST(strftime('%m', date) AS INTEGER) + 2) / 3)`,
+    year:    `strftime('%Y', date)`,
+  };
+  const expr = periodExpr[granularity];
+  const result = await db.execute(`
+    WITH period_last AS (
+      SELECT
+        ${expr} AS period,
+        account_id,
+        balance,
+        ROW_NUMBER() OVER (PARTITION BY ${expr}, account_id ORDER BY date DESC) AS rn
+      FROM balance_history
+    )
+    SELECT
+      pl.period,
+      SUM(CASE
+        WHEN a.type IN ('depository', 'investment') THEN pl.balance
+        WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
+        ELSE 0
+      END) AS assets,
+      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS liabilities,
+      SUM(CASE
+        WHEN a.type IN ('depository', 'investment') THEN pl.balance
+        WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
+        WHEN a.type = 'credit' THEN -pl.balance
+        ELSE 0
+      END) AS net_worth
+    FROM period_last pl
+    JOIN accounts a ON a.id = pl.account_id
+    WHERE pl.rn = 1
+    GROUP BY pl.period
+    ORDER BY pl.period ASC
+  `);
+  return (result.rows as unknown as { period: string; assets: number; liabilities: number; net_worth: number }[]).map((r) => ({
+    period:      r.period,
+    assets:      Number(r.assets),
+    liabilities: Number(r.liabilities),
+    net_worth:   Number(r.net_worth),
+  }));
+}
 
 export async function getAccountsWithBalances(): Promise<{ accounts: AccountBalance[]; history: HistoryRow[] }> {
   const [acctResult, histResult] = await Promise.all([

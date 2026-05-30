@@ -7,7 +7,8 @@
  * embedded agent handles those before calling executeTool.
  */
 
-import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData } from './queries.js';
+import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
+import { solveTVM } from './calculator.js';
 import { getDriftWindows } from './dateUtils.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
@@ -160,6 +161,34 @@ export const TOOL_DEFS: ToolDef[] = [
           description: 'Topic to retrieve',
           enum: ['priorities', 'emergency-fund', 'debt', 'employer-match', 'hsa', 'ira', '401k', 'investing', 'budgeting', 'fire', 'housing', 'car', 'insurance'],
         },
+      },
+    },
+  },
+  {
+    name: 'get_net_worth_history',
+    description: 'Net worth over time, grouped by day, week, month, quarter, or year. Returns assets, liabilities, and net worth for each period.',
+    parameters: {
+      type: 'object',
+      properties: {
+        granularity: {
+          type: 'string',
+          description: 'Time grouping: day, week, month (default), quarter, or year',
+          enum: ['day', 'week', 'month', 'quarter', 'year'],
+        },
+      },
+    },
+  },
+  {
+    name: 'calculate_tvm',
+    description: 'Time Value of Money solver. Provide any 4 of 5 variables (pv, fv, pmt, n, rate) and it solves for the missing one. Rate is the periodic rate (e.g. monthly rate = annual% / 1200). Sign convention: outflows negative, inflows positive.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pv:   { type: 'number', description: 'Present value. Positive = cash received, negative = cash paid out.' },
+        fv:   { type: 'number', description: 'Future value. Positive = cash received, negative = cash paid out.' },
+        pmt:  { type: 'number', description: 'Periodic payment. Negative if you are paying, positive if receiving.' },
+        n:    { type: 'number', description: 'Number of periods (e.g. months for a monthly-rate problem).' },
+        rate: { type: 'number', description: 'Interest/growth rate per period (decimal, e.g. 0.005 for 0.5%/month = 6%/year).' },
       },
     },
   },
@@ -572,6 +601,45 @@ export async function executeTool(
       }
       const section = getFinanceGuide(str('topic') as GuideTopic);
       return Array.isArray(section) ? section.map(formatGuideSection).join('\n\n---\n\n') : formatGuideSection(section);
+    }
+
+    case 'get_net_worth_history': {
+      const granularity = (input['granularity'] ?? 'month') as NetWorthGranularity;
+      const rows = await getNetWorthHistory(granularity);
+      if (!rows.length) return 'No balance history available. Sync accounts first.';
+      const header = `${'Period'.padEnd(12)}  ${'Assets'.padStart(14)}  ${'Liabilities'.padStart(14)}  ${'Net Worth'.padStart(14)}`;
+      const divider = '─'.repeat(header.length);
+      const lines = rows.map((r) =>
+        `${r.period.padEnd(12)}  ${fmt(r.assets, 0).padStart(14)}  ${fmt(r.liabilities, 0).padStart(14)}  ${fmt(r.net_worth, 0).padStart(14)}`
+      );
+      return [header, divider, ...lines].join('\n');
+    }
+
+    // ── Calculator tools ──────────────────────────────────────────────────────
+
+    case 'calculate_tvm': {
+      const tvmInput = {
+        pv:   input['pv']   !== undefined ? num('pv')   : undefined,
+        fv:   input['fv']   !== undefined ? num('fv')   : undefined,
+        pmt:  input['pmt']  !== undefined ? num('pmt')  : undefined,
+        n:    input['n']    !== undefined ? num('n')    : undefined,
+        rate: input['rate'] !== undefined ? num('rate') : undefined,
+      };
+      try {
+        const r = solveTVM(tvmInput);
+        const fmtVal = (v: number | undefined) => v === undefined ? '?' : v % 1 === 0 ? v.toString() : v.toFixed(6);
+        const pctRate = r.rate !== undefined ? `${(r.rate * 100).toFixed(4)}%/period` : '?';
+        return [
+          `TVM Result — solved for: ${r.solved.toUpperCase()} = ${fmtVal(r.value)}`,
+          `  PV:   ${fmtVal(r.pv)}`,
+          `  FV:   ${fmtVal(r.fv)}`,
+          `  PMT:  ${fmtVal(r.pmt)}`,
+          `  N:    ${fmtVal(r.n)}`,
+          `  Rate: ${pctRate}`,
+        ].join('\n');
+      } catch (e) {
+        return `Error: ${(e as Error).message}`;
+      }
     }
 
     // ── Write tools ───────────────────────────────────────────────────────────
