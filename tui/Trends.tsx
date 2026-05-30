@@ -41,7 +41,10 @@ export function Trends({
     { mode: 'flex',          category: null, flex: 'discretionary', label: 'Discretionary' },
   ]);
   const [viewIdx, setViewIdx] = useState(0);
-  const [range, setRange] = useState<TrendsRange>((initialFilter?.range as TrendsRange | undefined) ?? 'month');
+  const [range, setRange] = useState<TrendsRange>(() => {
+    const r = initialFilter?.range;
+    return (r && (TRENDS_RANGES as string[]).includes(r)) ? r as TrendsRange : 'month';
+  });
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
 

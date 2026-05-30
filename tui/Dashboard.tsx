@@ -54,10 +54,13 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
   const refreshKey = useRefreshKey();
   const now = new Date();
-  const [range, setRange] = useState<Range>((initialFilter?.range as Range | undefined) ?? 'month');
+  const [range, setRange] = useState<Range>(() => {
+    const r = initialFilter?.range;
+    return (r && (RANGES as string[]).includes(r)) ? r as Range : 'month';
+  });
   const [anchor, setAnchor] = useState<Date>(() => {
-    const r = (initialFilter?.range as Range | undefined) ?? 'month';
-    if (initialFilter?.anchor) {
+    const r: Range = (initialFilter?.range && (RANGES as string[]).includes(initialFilter.range)) ? initialFilter.range as Range : 'month';
+    if (initialFilter?.anchor && /^\d{4}-\d{2}-\d{2}$/.test(initialFilter.anchor)) {
       const [y, m, d] = initialFilter.anchor.split('-').map(Number);
       return getPeriodStart(r, new Date(y, m - 1, d));
     }
