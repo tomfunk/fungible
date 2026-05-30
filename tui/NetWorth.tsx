@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getAccountsWithBalances, type AccountBalance, type HistoryRow } from '../core/queries.js';
+import { getAccountsWithBalances, getNetWorthHistory, type AccountBalance, type NetWorthPeriod } from '../core/queries.js';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -15,12 +15,6 @@ const NW_RANGES: NWRange[] = ['week', 'month', 'quarter', 'year'];
 const NW_RANGE_LABELS: Record<NWRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
 type TypeBalance = { label: string; balance: number };
-type BucketRow = { label: string; date: string; assets: number; liabilities: number; net: number };
-
-function dateLabel(d: string) {
-  const dt = new Date(d + 'T12:00:00');
-  return `${MONTHS[dt.getMonth()]} ${dt.getDate()} ${dt.getFullYear()}`;
-}
 
 function groupByType(accs: AccountBalance[]): TypeBalance[] {
   const map = new Map<string, number>();
@@ -34,63 +28,38 @@ function groupByType(accs: AccountBalance[]): TypeBalance[] {
     .sort((a, b) => b.balance - a.balance);
 }
 
-function bucketHistory(history: HistoryRow[], range: NWRange): BucketRow[] {
-  const buckets = new Map<string, HistoryRow[]>();
-  for (const row of history) {
-    const dt = new Date(row.date + 'T12:00:00');
-    const y = dt.getFullYear();
-    const m = dt.getMonth() + 1;
-    let key: string;
-    if (range === 'year') {
-      key = `${y}`;
-    } else if (range === 'quarter') {
-      key = `${y}-Q${Math.ceil(m / 3)}`;
-    } else if (range === 'month') {
-      key = `${y}-${String(m).padStart(2, '0')}`;
-    } else {
-      // week: bucket by Monday
-      const day = dt.getDay();
-      const mon = new Date(dt);
-      mon.setDate(dt.getDate() - ((day + 6) % 7));
-      key = mon.toISOString().slice(0, 10);
-    }
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key)!.push(row);
+function periodLabel(period: string, range: NWRange): string {
+  if (range === 'year') return period;
+  if (range === 'quarter') {
+    const [y, q] = period.split('-');
+    return `${q} ${y}`;
   }
-
-  return [...buckets.entries()]
-    .map(([, rows]) => {
-      const last = rows[rows.length - 1];
-      const dt = new Date(last.date + 'T12:00:00');
-      const y = dt.getFullYear();
-      const m = dt.getMonth() + 1;
-      let label: string;
-      if (range === 'year')         label = `${y}`;
-      else if (range === 'quarter') label = `Q${Math.ceil(m / 3)} ${y}`;
-      else if (range === 'month')   label = `${MONTHS[m - 1]} ${y}`;
-      else                          label = dateLabel(last.date);
-      return { label, date: last.date, assets: last.assets, liabilities: last.liabilities, net: last.net };
-    })
-    .sort((a, b) => a.date.localeCompare(b.date));
+  if (range === 'month') {
+    const [y, m] = period.split('-');
+    return `${MONTHS[parseInt(m) - 1]} ${y}`;
+  }
+  // week: '2024-W22' → 'W22 2024'
+  const [y, w] = period.split('-');
+  return `${w} ${y}`;
 }
 
 export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const [accounts, setAccounts] = useState<AccountBalance[]>([]);
-  const [history,  setHistory]  = useState<HistoryRow[]>([]);
+  const [rows,     setRows]     = useState<NetWorthPeriod[]>([]);
   const [view,   setView]   = useState<ViewMode>('accounts');
   const [range,  setRange]  = useState<NWRange>('month');
   const [cursor, setCursor] = useState(0);
 
   useEffect(() => {
-    void getAccountsWithBalances().then(({ accounts: a, history: h }) => { setAccounts(a); setHistory(h); });
+    void getAccountsWithBalances().then(({ accounts: a }) => setAccounts(a));
   }, []);
 
-  const rows = bucketHistory(history, range);
-
-  // Reset cursor to last row when range changes
   useEffect(() => {
-    setCursor(Math.max(0, rows.length - 1));
-  }, [range, rows.length]);
+    void getNetWorthHistory(range).then((r) => {
+      setRows(r);
+      setCursor(Math.max(0, r.length - 1));
+    });
+  }, [range]);
 
   useInput((input, key) => {
     if (key.tab)      { setView((v) => v === 'accounts' ? 'types' : 'accounts'); return; }
@@ -111,9 +80,8 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const totalLiabilities = liabilities.reduce((s, a) => s + a.balance, 0);
   const netWorth         = totalAssets - totalLiabilities;
 
-  const current    = history[history.length - 1];
-  const maxNet     = Math.max(...rows.map((r) => Math.abs(r.net)), 1);
-  const hasHistory = history.length > 0;
+  const maxNet     = Math.max(...rows.map((r) => Math.abs(r.net_worth)), 1);
+  const hasHistory = rows.length > 0;
 
   const assetTypes     = groupByType(assets);
   const liabilityTypes = groupByType(liabilities);
@@ -135,10 +103,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">
-        <Box>
-          <Text bold>Net Worth</Text>
-          {current && <Text dimColor>  as of {dateLabel(current.date)}</Text>}
-        </Box>
+        <Text bold>Net Worth</Text>
         {showHints && <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}  ·  [r] range  ·  ↑↓ scroll</Text>}
       </Box>
       <Divider />
@@ -223,15 +188,15 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 {visible.map((row, i) => {
                   const isSelected = pageStart + i === cursor;
                   return (
-                    <Box key={row.date} gap={2}>
+                    <Box key={row.period} gap={2}>
                       <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
-                        {row.label.padEnd(labelW)}
+                        {periodLabel(row.period, range).padEnd(labelW)}
                       </Text>
-                      <Text color={row.net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>
-                        {fmtSigned(row.net).padStart(14)}
+                      <Text color={row.net_worth >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>
+                        {fmtSigned(row.net_worth).padStart(14)}
                       </Text>
-                      <Text color={row.net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor>
-                        {bar(row.net, maxNet, BAR_WIDTH)}
+                      <Text color={row.net_worth >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor>
+                        {bar(row.net_worth, maxNet, BAR_WIDTH)}
                       </Text>
                     </Box>
                   );

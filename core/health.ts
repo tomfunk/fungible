@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { calcN } from './calculator.js';
 
 export type HealthData = {
   avgMonthlyExpenses: number;
@@ -88,12 +89,12 @@ export function yearsToFire(
   if (target <= 0) return 0;
   if (netWorth >= target) return 0;
   const r = Math.pow(1 + annualGrowthPct / 100, 1 / 12) - 1;
-  let wealth = netWorth;
-  for (let month = 1; month <= 1200; month++) {
-    wealth = wealth * (1 + r) + monthlySavings;
-    if (wealth >= target) return month / 12;
+  try {
+    const months = calcN(-netWorth, target, -monthlySavings, r);
+    return isFinite(months) && months > 0 && months <= 1200 ? months / 12 : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export function coastYears(
@@ -103,6 +104,10 @@ export function coastYears(
 ): number | null {
   if (netWorth <= 0 || fireNumber <= 0) return null;
   if (netWorth >= fireNumber) return 0;
-  const yr = Math.log(fireNumber / netWorth) / Math.log(1 + growthPct / 100);
-  return yr > 200 ? null : yr;
+  try {
+    const yr = calcN(-netWorth, fireNumber, 0, growthPct / 100);
+    return isFinite(yr) && yr > 0 && yr <= 200 ? yr : null;
+  } catch {
+    return null;
+  }
 }
