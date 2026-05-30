@@ -6,9 +6,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { initDb } from '../core/db.js';
+import { backupDb } from '../core/backup.js';
 import { executeTool } from '../core/tools.js';
 
 await initDb();
+backupDb().catch(() => {});
 
 const server = new McpServer({
   name: 'fungible',

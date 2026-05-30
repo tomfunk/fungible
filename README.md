@@ -39,6 +39,7 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 - **Regex search** — `/` on Dashboard or Transactions filters by name using a regular expression; search is shared when navigating between Dashboard, Transactions, and Trends
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
 - **HTTP API** — REST-style API server for scripting and automation
+- **Daily backups** — database is backed up to `~/.fungible/backups/` on startup once per day; defaults to 7 days retention, configurable via `FUNGIBLE_BACKUP_DAYS`
 
 ## Try it (no account needed)
 
