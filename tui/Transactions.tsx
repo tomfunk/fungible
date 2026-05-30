@@ -18,6 +18,7 @@ import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
 type Tx = TxRow;
@@ -46,6 +47,7 @@ function truncate(s: string, n: number) {
 
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
@@ -84,7 +86,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
-  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort]);
+  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {

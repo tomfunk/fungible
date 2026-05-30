@@ -16,6 +16,7 @@ import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
 import { useSetTyping } from './TypingContext.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 const BAR_WIDTH = 20;
 
@@ -51,6 +52,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
 ];
 
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const now = new Date();
   const [range, setRange] = useState<Range>('month');
   const [anchor, setAnchor] = useState<Date>(() => getPeriodStart('month', now));
@@ -97,7 +99,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   useEffect(() => {
     load(range, anchor, selectedAccount);
     setCatCursor(0);
-  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, refreshKey]);
 
   useEffect(() => {
     if (!driftMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }

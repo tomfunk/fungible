@@ -10,6 +10,7 @@ import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
@@ -20,6 +21,7 @@ type Section = 'rules' | 'names' | 'categories';
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -83,7 +85,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     void getCategoryDetails().then(setCatDetails);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [refreshKey]);
 
   function handleDeleteRule(id: number) {
     deleteCategoryRule(id);

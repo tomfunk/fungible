@@ -7,10 +7,12 @@ import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 import { useSetTyping } from './TypingContext.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
 export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [tags, setTags] = useState<Tag[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
@@ -21,7 +23,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
   const [catCursor, setCatCursor] = useState(0);
 
   function load() { void getAllTags().then(setTags); }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(mode === 'search' || mode === 'add' || mode === 'rename'); }, [mode]);

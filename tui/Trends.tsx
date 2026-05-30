@@ -6,6 +6,7 @@ import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
@@ -29,6 +30,7 @@ export function Trends({
   isActive?: boolean;
   showHints: boolean;
 }) {
+  const refreshKey = useRefreshKey();
   const [views, setViews] = useState<View[]>([
     { mode: 'expenses',      category: null, flex: null,            label: 'Expenses'      },
     { mode: 'income',        category: null, flex: null,            label: 'Income'        },
@@ -59,7 +61,7 @@ export function Trends({
       setRows(data);
       setCursor(Math.max(0, data.length - 1));
     });
-  }, [viewIdx, range, views]);
+  }, [viewIdx, range, views, refreshKey]);
 
   useInput((input, key) => {
     if (key.escape) { onNavigate('dashboard'); return; }

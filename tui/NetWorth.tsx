@@ -5,6 +5,7 @@ import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 const BAR_WIDTH = 32;
 const PAGE = 20;
@@ -44,6 +45,7 @@ function periodLabel(period: string, range: NWRange): string {
 }
 
 export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [accounts, setAccounts] = useState<AccountBalance[]>([]);
   const [rows,     setRows]     = useState<NetWorthPeriod[]>([]);
   const [view,   setView]   = useState<ViewMode>('accounts');
@@ -52,14 +54,14 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   useEffect(() => {
     void getAccountsWithBalances().then(({ accounts: a }) => setAccounts(a));
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     void getNetWorthHistory(range).then((r) => {
       setRows(r);
       setCursor(Math.max(0, r.length - 1));
     });
-  }, [range]);
+  }, [range, refreshKey]);
 
   useInput((input, key) => {
     if (key.tab)      { setView((v) => v === 'accounts' ? 'types' : 'accounts'); return; }

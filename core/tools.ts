@@ -7,6 +7,7 @@
  * embedded agent handles those before calling executeTool.
  */
 
+import { notifyChange } from './refresh.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows } from './dateUtils.js';
@@ -341,7 +342,7 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
  * Execute a tool by name and return a plain-text result string.
  * Does not handle `show` (agent-only), confirmation, or MCP wrapping.
  */
-export async function executeTool(
+async function executeToolImpl(
   name: string,
   input: Record<string, unknown>,
 ): Promise<string> {
@@ -742,4 +743,10 @@ export async function executeTool(
     default:
       return `Unknown tool: ${name}`;
   }
+}
+
+export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+  const result = await executeToolImpl(name, input);
+  if (WRITE_TOOLS.has(name)) notifyChange();
+  return result;
 }

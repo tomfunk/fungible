@@ -5,6 +5,7 @@ import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 function savingsRateColor(rate: number): string {
   if (rate < 0)  return C_NEGATIVE;
@@ -42,6 +43,7 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, totalDebt: 0, netWorth: 0 };
 
 export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [data, setData] = useState<HealthData>(DEFAULT_HEALTH);
 
   const [dialIdx, setDialIdx]           = useState(0);
@@ -54,7 +56,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       setMonthlySpend(Math.max(SPEND_STEP, Math.round(d.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP));
       setMonthlySavings(Math.round(d.monthlySavings / SPEND_STEP) * SPEND_STEP);
     });
-  }, []);
+  }, [refreshKey]);
   const [withdrawal, setWithdrawal]     = useState(DEFAULT_WITHDRAWAL);
   const [growth, setGrowth]             = useState(DEFAULT_GROWTH);
 

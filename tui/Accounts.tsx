@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
+import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
@@ -63,6 +64,7 @@ function fmtDate(d: string | null): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
 
@@ -142,7 +144,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     void getLinkedAccounts().then(setLinkedAccounts);
     void getCsvPlaidDupeCandidates().then(setDupes);
   }
-  useEffect(() => { loadAccounts(); }, []);
+  useEffect(() => { loadAccounts(); }, [refreshKey]);
 
   function openEdit(acct: LinkedAccount) {
     const type = acct.type;
