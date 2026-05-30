@@ -20,15 +20,11 @@ export async function backupDb(): Promise<void> {
     await fs.promises.copyFile(DB_PATH, backupPath);
   }
 
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - keepDays);
-  const cutoff = cutoffDate.toISOString().slice(0, 10);
+  const files = fs.readdirSync(BACKUP_DIR)
+    .filter(f => /^fungible\.\d{4}-\d{2}-\d{2}\.bak$/.test(f))
+    .sort();
 
-  for (const file of fs.readdirSync(BACKUP_DIR)) {
-    const match = file.match(/^fungible\.(\d{4}-\d{2}-\d{2})\.bak$/);
-    if (!match) continue;
-    if (match[1] < cutoff) {
-      fs.unlinkSync(path.join(BACKUP_DIR, file));
-    }
+  for (const file of files.slice(0, -keepDays)) {
+    fs.unlinkSync(path.join(BACKUP_DIR, file));
   }
 }
