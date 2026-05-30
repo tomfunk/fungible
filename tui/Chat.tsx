@@ -101,6 +101,9 @@ export function Chat({
           if (filter?.tag)         txFilter.tag         = filter.tag;
           if (filter?.account)     txFilter.account     = filter.account;
           if (filter?.accountName) txFilter.accountName = filter.accountName;
+          if (filter?.search)      txFilter.search      = filter.search;
+          if (filter?.range)       txFilter.range       = filter.range;
+          if (filter?.anchor)      txFilter.anchor      = filter.anchor;
           onNavigate(screen as Screen, Object.keys(txFilter).length ? txFilter : undefined);
         },
       });

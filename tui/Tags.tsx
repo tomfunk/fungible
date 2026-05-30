@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
@@ -11,7 +11,7 @@ import { useRefreshKey } from './RefreshContext.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
-export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean; initialFilter?: TxFilter }) {
   const refreshKey = useRefreshKey();
   const [tags, setTags] = useState<Tag[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -23,7 +23,21 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
   const [catCursor, setCatCursor] = useState(0);
 
   function load() { void getAllTags().then(setTags); }
-  useEffect(() => { load(); }, [refreshKey]);
+
+  const initialNavDone = useRef(false);
+  useEffect(() => {
+    void getAllTags().then((loaded) => {
+      setTags(loaded);
+      if (!initialNavDone.current) {
+        initialNavDone.current = true;
+        const target = initialFilter?.tag;
+        if (target) {
+          const idx = loaded.findIndex((t) => t.name.toLowerCase() === target.toLowerCase());
+          if (idx >= 0) { setCursor(idx); openDetail(loaded[idx]); }
+        }
+      }
+    });
+  }, [refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(mode === 'search' || mode === 'add' || mode === 'rename'); }, [mode]);

@@ -20,7 +20,9 @@
     "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest"
   },
   "license": "MIT",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "fungible": "bin/fungible"
   },
@@ -39,6 +41,7 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
+    "ink-testing-library": "^4.0.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.4"
   }

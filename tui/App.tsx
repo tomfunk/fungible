@@ -22,6 +22,8 @@ export type TxFilter = {
   account?: string;
   accountName?: string;
   search?: string;
+  range?: string;   // 'week' | 'month' | 'quarter' | 'year' | 'alltime'
+  anchor?: string;  // YYYY-MM-DD — which specific period to land on
 };
 
 export function App() {
@@ -51,7 +53,7 @@ export function App() {
       case 'transactions': return <Transactions onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'trends':       return <Trends       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'networth':     return <NetWorth     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
-      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'rules':        return <Rules        onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
