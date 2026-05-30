@@ -77,6 +77,18 @@ npm run dev -- --setup
 
 Data and config are stored at `~/.fungible/`. Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your bank accounts. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
 
+## Running
+
+| Command | What starts |
+|---------|-------------|
+| `fungible` | TUI + MCP server (HTTP, port 3741) + REST API (port 3456) |
+| `fungible mcp` | stdio MCP server only — use this in your Claude Desktop config |
+| `fungible api` | REST API server only |
+
+When you run the TUI, the MCP server and REST API start automatically in the background on their default ports. They share the same database connection as the TUI, so any changes made through them are reflected the next time you navigate in the UI.
+
+The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`) override the defaults.
+
 ## Screens
 
 | Key | Screen |
@@ -240,10 +252,11 @@ npm run seed-rules
 
 ## HTTP API
 
-Exposes the same tools as the MCP server over HTTP — useful for scripting and automation.
+Exposes the same tools as the MCP server over HTTP — useful for scripting and automation. Starts automatically on port 3456 when you run the TUI, or run it standalone:
 
 ```bash
-npm run api
+fungible api
+# or: npm run api
 # Listening on http://localhost:3456
 ```
 
@@ -269,8 +282,13 @@ Available tools: same set as the MCP server below.
 
 Exposes your financial data to Claude via the [Model Context Protocol](https://modelcontextprotocol.io).
 
+Two modes:
+- **stdio** (`fungible mcp`) — Claude Desktop spawns this as a child process. Use this in your Claude config.
+- **HTTP** — starts automatically on port 3741 whenever the TUI is running. Connect any MCP client to `http://localhost:3741/mcp`.
+
 ```bash
-npm run mcp
+fungible mcp
+# or: npm run mcp
 ```
 
 Available tools:
