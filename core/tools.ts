@@ -25,6 +25,8 @@ import type { ToolDef } from './llm-provider.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Keep in sync with executeTool — any tool that mutates data must be listed here
+// or TUI refresh and afterWrite callbacks will be silently skipped for that tool.
 export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',

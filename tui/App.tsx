@@ -60,19 +60,19 @@ export function App() {
 
   return (
     <RefreshProvider>
-    <TypingContext.Provider value={setScreenTyping}>
-    <Box flexDirection="column" height="100%">
-      <Box flexGrow={1}>
-        {currentScreen}
-      </Box>
-      <Chat
-        isActive={chatFocused}
-        onActivate={() => setChatFocused(true)}
-        onDeactivate={() => setChatFocused(false)}
-        onNavigate={navigate}
-      />
-    </Box>
-    </TypingContext.Provider>
+      <TypingContext.Provider value={setScreenTyping}>
+        <Box flexDirection="column" height="100%">
+          <Box flexGrow={1}>
+            {currentScreen}
+          </Box>
+          <Chat
+            isActive={chatFocused}
+            onActivate={() => setChatFocused(true)}
+            onDeactivate={() => setChatFocused(false)}
+            onNavigate={navigate}
+          />
+        </Box>
+      </TypingContext.Provider>
     </RefreshProvider>
   );
 }
