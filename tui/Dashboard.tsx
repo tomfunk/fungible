@@ -450,7 +450,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                             {isSelected ? '▶ ' : '  '}
                             {row.category.length > nameW ? row.category.slice(0, nameW - 1) + '…' : row.category.padEnd(nameW)}
                           </Text>
-                          <Text color={C_WARNING}>{fmt(row.current).padStart(10)}</Text>
+                          <Text color={C_NEUTRAL}>{fmt(row.current).padStart(10)}</Text>
                           <Text color={color}>{fmtDelta(row.lastPeriodDelta).padStart(9)}</Text>
                           <Text color={color}>{fmtDelta(row.lastYearDelta).padStart(9)}</Text>
                           <Text color={color}>{fmtDelta(row.avg12mDelta).padStart(9)}</Text>
@@ -472,7 +472,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                             {isSelected ? '▶ ' : '  '}
                             {row.category.length > dashCatNameW ? row.category.slice(0, dashCatNameW - 1) + '…' : row.category.padEnd(dashCatNameW)}
                           </Text>
-                          <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
+                          <Text color={C_NEUTRAL}>{fmt(row.total).padStart(10)}</Text>
                           <Text color={C_ACCENT} dimColor={!isSelected}>
                             {bar(row.total, maxCategorySpend, dashBarW)}
                           </Text>
@@ -505,7 +505,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     return (
                       <Box key={key} gap={2}>
                         <Text color={color}>{'  '}{label.padEnd(16)}</Text>
-                        <Text color={C_WARNING}>{fmt(slice.current).padStart(10)}</Text>
+                        <Text color={C_NEUTRAL}>{fmt(slice.current).padStart(10)}</Text>
                         <Text color={color}>{fmtDelta(slice.lastPeriodDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.lastYearDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.avg12mDelta).padStart(9)}</Text>
@@ -521,7 +521,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     return (
                       <Box key={key} gap={2}>
                         <Text color={color}>{'  '}{label.padEnd(16)}</Text>
-                        <Text color={C_WARNING}>{fmt(amount).padStart(10)}</Text>
+                        <Text color={C_NEUTRAL}>{fmt(amount).padStart(10)}</Text>
                         <Text dimColor>{pct(amount, totalExpenses).padStart(4)}</Text>
                         <Text color={color}>{bar(amount, totalExpenses, dashFlexBarW)}</Text>
                       </Box>

@@ -14,7 +14,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -580,9 +580,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       <Box marginTop={1}>
         <Box gap={3}>
-          <Text bold color={mainView === 'accounts' ? C_NEUTRAL : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
-          <Text bold color={mainView === 'add-data' ? C_NEUTRAL : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
-          <Text bold color={mainView === 'dupes' ? C_NEUTRAL : undefined} dimColor={mainView !== 'dupes'}>
+          <Text bold color={mainView === 'accounts' ? C_ACCENT : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
+          <Text bold color={mainView === 'add-data' ? C_ACCENT : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
+          <Text bold color={mainView === 'dupes' ? C_ACCENT : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
           {showHints && <Text dimColor>[Tab]</Text>}
@@ -625,7 +625,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                       {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
-                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? C_WARNING : undefined}>{acct.nickname ? '✎' : ' '}</Text>
+                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? C_MANUAL : undefined}>{acct.nickname ? '✎' : ' '}</Text>
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
@@ -709,7 +709,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text color={editField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
                     {editField === 'subtype' ? '▶ ' : '  '}Subtype
                   </Text>
-                  <Text color={editField === 'subtype' ? C_ACCENT : C_WARNING}>
+                  <Text color={editField === 'subtype' ? C_ACCENT : C_DIM}>
                     {'← '}{editSubtype || '—'}{'  →'}
                   </Text>
                 </Box>
@@ -894,7 +894,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text color={newAcctField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
                     {newAcctField === 'subtype' ? '▶ ' : '  '}Subtype
                   </Text>
-                  <Text color={newAcctField === 'subtype' ? C_ACCENT : C_WARNING}>
+                  <Text color={newAcctField === 'subtype' ? C_ACCENT : C_DIM}>
                     {'← '}{newAcctSubtype || '—'}{'  →'}
                   </Text>
                 </Box>

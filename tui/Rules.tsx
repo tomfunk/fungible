@@ -332,7 +332,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           {SECTIONS.map((s) => (
-            <Text key={s} bold color={section === s ? C_NEUTRAL : undefined} dimColor={section !== s}>
+            <Text key={s} bold color={section === s ? C_ACCENT : undefined} dimColor={section !== s}>
               {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : 'Categories'}
             </Text>
           ))}
