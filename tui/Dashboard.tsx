@@ -151,11 +151,24 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     });
   }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
+  // Close drill when filter context changes significantly
+  // Note: anchor and range are intentionally excluded — period/range nav keeps drill open
   useEffect(() => {
     setMerchantDrill(null);
     setMerchantRows([]);
     setMerchantCursor(0);
-  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, search, driftMode, view]);
+  }, [selectedAccount?.id ?? null, search, driftMode, view]);
+
+  // Re-fetch merchant data when period or range changes while drill is active
+  useEffect(() => {
+    if (!merchantDrill) return;
+    const { from, to } = getPeriodDates(range, anchor);
+    const { category } = merchantDrill;
+    setMerchantDrill({ category, from, to });
+    setMerchantCursor(0);
+    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined).then(setMerchantRows);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchor.toISOString().slice(0, 10), range]);
 
   const categories = summary?.byCategory ?? [];
 
@@ -198,7 +211,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         }
         return;
       }
-      return;
+      // ← →, r: fall through — re-fetch effect handles merchant refresh on anchor/range change
+      if (!key.leftArrow && !key.rightArrow && input !== 'r') { return; }
     }
 
     // Search input mode — capture all keys
@@ -348,7 +362,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         <Text bold>Dashboard</Text>
         {showHints && <Text dimColor>
           {merchantDrill
-            ? '↑↓ merchant  ·  Enter txns  ·  Esc back'
+            ? '← → period  ·  [r] range  ·  ↑↓ merchant  ·  Enter txns  ·  Esc back'
             : view === 'account'
             ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta  ·  [/] search`
             : view === 'categories'

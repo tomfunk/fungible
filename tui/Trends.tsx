@@ -49,7 +49,6 @@ export function Trends({
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
   const [merchantRows, setMerchantRows] = useState<MerchantSummaryRow[]>([]);
-  const [merchantCursor, setMerchantCursor] = useState(0);
   const [merchantDrill, setMerchantDrill] = useState<{ category: string; from: string; to: string; label: string } | null>(null);
 
   useEffect(() => {
@@ -78,36 +77,32 @@ export function Trends({
   useEffect(() => {
     setMerchantDrill(null);
     setMerchantRows([]);
-    setMerchantCursor(0);
   }, [viewIdx, range]);
+
+  // When period cursor changes while drill is active, re-fetch merchants for new period
+  useEffect(() => {
+    if (!merchantDrill) return;
+    const row = rows[cursor];
+    if (!row) return;
+    setMerchantDrill({ category: merchantDrill.category, from: row.from, to: row.to, label: row.label });
+    void getMerchantSummary(merchantDrill.category, row.from, row.to).then(setMerchantRows);
+  }, [cursor]);
 
   useInput((input, key) => {
     if (merchantDrill) {
-      if (key.escape) {
-        setMerchantDrill(null);
-        setMerchantRows([]);
-        setMerchantCursor(0);
-        return;
-      }
-      if (key.upArrow)   { setMerchantCursor((c) => Math.max(0, c - 1)); return; }
-      if (key.downArrow) { setMerchantCursor((c) => Math.min(merchantRows.length - 1, c + 1)); return; }
+      if (key.escape) { setMerchantDrill(null); setMerchantRows([]); return; }
+      // ↑↓ navigate periods — useEffect re-fetches merchant data when cursor changes
+      if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
       if (key.return) {
-        const row = merchantRows[merchantCursor];
-        if (row && merchantDrill) {
-          onNavigate('transactions', {
-            category: merchantDrill.category,
-            from: merchantDrill.from,
-            to: merchantDrill.to,
-            search: row.merchant,
-          });
-        }
+        const row = rows[cursor];
+        if (row) onNavigate('transactions', { category: merchantDrill.category, from: row.from, to: row.to });
         return;
       }
       // Tab and 'r' exit drill and fall through to their normal handlers
       if (key.tab || input === 'r') {
         setMerchantDrill(null);
         setMerchantRows([]);
-        setMerchantCursor(0);
       } else {
         return;
       }
@@ -138,7 +133,6 @@ export function Trends({
       if (view.mode !== 'category' || !view.category) return;
       const row = rows[cursor];
       if (!row) return;
-      setMerchantCursor(0);
       setMerchantDrill({ category: view.category, from: row.from, to: row.to, label: row.label });
       void getMerchantSummary(view.category, row.from, row.to).then(setMerchantRows);
     }
@@ -189,7 +183,7 @@ export function Trends({
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
         {showHints && <Text dimColor>
-          {merchantDrill ? '↑↓ merchant  ·  Enter txns  ·  Esc back' : '[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns  ·  [m] merchants'}
+          {merchantDrill ? '↑↓ period  ·  Enter txns  ·  [Tab]/[r] exit  ·  Esc back' : '[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns  ·  [m] merchants'}
         </Text>}
       </Box>
 
@@ -214,20 +208,14 @@ export function Trends({
               <Text dimColor>No merchant spend for this category in this period.</Text>
             ) : (
               <Box flexDirection="column">
-                {merchantRows.map((row, i) => {
-                  const isSelected = i === merchantCursor;
-                  return (
-                    <Box key={`${row.merchant}-${i}`} gap={2}>
-                      <Text color={isSelected ? C_ACCENT : undefined}>
-                        {isSelected ? '▶ ' : '  '}
-                        {truncate(row.merchant, merchantNameW).padEnd(merchantNameW)}
-                      </Text>
-                      <Text color={C_NEGATIVE}>{fmt(row.total).padStart(10)}</Text>
-                      <Text dimColor>{`${row.count}x`.padStart(6)}</Text>
-                      <Text dimColor>{`${Math.round(row.pct * 100)}%`.padStart(6)}</Text>
-                    </Box>
-                  );
-                })}
+                {merchantRows.map((row, i) => (
+                  <Box key={`${row.merchant}-${i}`} gap={2}>
+                    <Text>{truncate(row.merchant, merchantNameW).padEnd(merchantNameW)}</Text>
+                    <Text color={C_NEGATIVE}>{fmt(row.total).padStart(10)}</Text>
+                    <Text dimColor>{`${row.count}x`.padStart(6)}</Text>
+                    <Text dimColor>{`${Math.round(row.pct * 100)}%`.padStart(6)}</Text>
+                  </Box>
+                ))}
               </Box>
             )}
           </Box>
