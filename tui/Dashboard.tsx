@@ -385,7 +385,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
           {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>
-            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints && !merchantDrill ? '  [Tab]' : ''}
+            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}
           </Text>
         </Box>
       </Box>
