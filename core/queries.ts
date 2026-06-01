@@ -65,31 +65,27 @@ export async function getMerchantSummary(
   accountId?: string,
 ): Promise<MerchantSummaryRow[]> {
   const acctClause = accountId ? 'AND account_id = ?' : '';
-  const baseArgs: (string | number | null)[] = accountId ? [from, to, category, accountId] : [from, to, category];
-  const baseWhere = `WHERE date >= ? AND date <= ? AND category = ?
+  const args: (string | number | null)[] = accountId ? [from, to, category, accountId] : [from, to, category];
+
+  const result = await db.execute({
+    sql: `SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
+          FROM transactions
+          WHERE date >= ? AND date <= ? AND category = ?
             AND pending = 0 AND ignored = 0
             AND category NOT IN (SELECT category FROM hidden_categories)
-            ${acctClause}`;
+            ${acctClause}
+          GROUP BY merchant
+          HAVING SUM(amount) > 0
+          ORDER BY total DESC, count DESC, merchant ASC`,
+    args,
+  });
+  const rows = result.rows as unknown as { merchant: string; total: number; count: number }[];
 
-  const [catResult, rowResult] = await Promise.all([
-    db.execute({
-      sql: `SELECT SUM(amount) as total FROM transactions ${baseWhere}`,
-      args: baseArgs,
-    }),
-    db.execute({
-      sql: `SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
-            FROM transactions ${baseWhere}
-            GROUP BY merchant
-            HAVING SUM(amount) > 0
-            ORDER BY total DESC, count DESC, merchant ASC`,
-      args: baseArgs,
-    }),
-  ]);
-
-  const categoryTotal = Number((catResult.rows[0] as unknown as { total: number | null }).total ?? 0);
+  // Denominator uses only net-positive merchants — same set as the list. Merchants with more
+  // refunds than charges are excluded from both, so pct = share of the positive-net spend shown.
+  const categoryTotal = rows.reduce((sum, r) => sum + Number(r.total), 0);
   if (!categoryTotal) return [];
 
-  const rows = rowResult.rows as unknown as { merchant: string; total: number; count: number }[];
   return rows.map((r) => ({
     merchant: r.merchant,
     total: Number(r.total),

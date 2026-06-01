@@ -151,6 +151,28 @@ describe('Dashboard', () => {
     await waitFor(() => expect(frame(r)).toContain('▊'));
   });
 
+  it('m key opens merchant drill and renders merchant names', async () => {
+    const r = dash();
+    // Wait for categories to load (Grocery is top spend = index 0, cursor starts there)
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('m');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('TOP MERCHANTS');
+      expect(f).toContain('Whole Foods');
+      expect(f).toContain('Trader Joes');
+    });
+  });
+
+  it('Esc exits merchant drill back to category view', async () => {
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('m');
+    await waitFor(() => expect(frame(r)).toContain('TOP MERCHANTS'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+  });
+
   it('d key toggles delta mode label', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
@@ -329,6 +351,43 @@ describe('Trends', () => {
     await waitFor(() => expect(frame(r)).toContain('Month'));
     r.stdin.write('r');
     await waitFor(() => expect(frame(r)).toContain('Quarter'));
+  });
+
+  it('m key in category view opens merchant drill and renders merchant names', async () => {
+    const r = render(
+      <W>
+        <Trends onNavigate={noop} showHints={false} initialFilter={{ category: 'Grocery' }} />
+      </W>,
+    );
+    // Wait for buildTrendViews to load category views AND viewIdx to land on Grocery.
+    // posLabel = "${viewIdx+1} / ${views.length}". Grocery is index 7 → "8 / ..."
+    // Only appears once category views load and viewIdx is set by initialFilter.
+    await waitFor(() => expect(frame(r)).toMatch(/\b8 \/ /), 2000);
+    // Wait for period rows to load (Grocery-specific months)
+    await waitFor(() => expect(frame(r)).toContain('Apr 2026'), 2000);
+    // Allow any in-flight React effects to settle before sending input
+    await new Promise((res) => setTimeout(res, 50));
+    r.stdin.write('m');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('TOP MERCHANTS');
+      expect(f).toContain('Whole Foods');
+    }, 2000);
+  });
+
+  it('Tab in merchant drill exits drill and cycles view', async () => {
+    const r = render(
+      <W>
+        <Trends onNavigate={noop} showHints={false} initialFilter={{ category: 'Grocery' }} />
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toMatch(/\b8 \/ /), 2000);
+    await waitFor(() => expect(frame(r)).toContain('Apr 2026'), 2000);
+    await new Promise((res) => setTimeout(res, 50));
+    r.stdin.write('m');
+    await waitFor(() => expect(frame(r)).toContain('TOP MERCHANTS'), 2000);
+    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).not.toContain('TOP MERCHANTS'), 1000);
   });
 
   it('pressing nav number calls onNavigate', async () => {

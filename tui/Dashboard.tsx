@@ -110,10 +110,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   }
 
   function openMerchantDrill(category: string, from: string, to: string) {
-    const rows = getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined);
-    setMerchantRows(rows);
-    setMerchantCursor(0);
     setMerchantDrill({ category, from, to });
+    setMerchantCursor(0);
+    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined).then(setMerchantRows);
   }
 
   useEffect(() => {

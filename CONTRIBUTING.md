@@ -64,6 +64,7 @@ chore/short-description
 - Query-level logic should have test coverage in `tests/queries.test.ts` (or the relevant test file)
 - Tests use a shared in-memory DB initialized via `tests/helpers/makeTestDb.ts`
 - Follow the existing `insertTx` / `describe` + `it` pattern
+- **Any new interactive feature in a TUI screen must have a corresponding test in `tests/tui/screens.test.tsx`** that simulates the key press and asserts on the rendered output. This catches bugs like unawaited async calls that only surface at runtime. Use the `waitFor` helper and `r.stdin.write(key)` to simulate user input.
 
 ### Version bump
 

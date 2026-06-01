@@ -103,7 +103,14 @@ export function Trends({
         }
         return;
       }
-      return;
+      // Tab and 'r' exit drill and fall through to their normal handlers
+      if (key.tab || input === 'r') {
+        setMerchantDrill(null);
+        setMerchantRows([]);
+        setMerchantCursor(0);
+      } else {
+        return;
+      }
     }
 
     if (key.escape) { onNavigate('dashboard'); return; }
@@ -131,10 +138,9 @@ export function Trends({
       if (view.mode !== 'category' || !view.category) return;
       const row = rows[cursor];
       if (!row) return;
-      const merchants = getMerchantSummary(view.category, row.from, row.to);
-      setMerchantRows(merchants);
       setMerchantCursor(0);
       setMerchantDrill({ category: view.category, from: row.from, to: row.to, label: row.label });
+      void getMerchantSummary(view.category, row.from, row.to).then(setMerchantRows);
     }
   }, { isActive: isActive !== false });
 
