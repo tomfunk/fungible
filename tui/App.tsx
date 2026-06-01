@@ -10,6 +10,7 @@ import { Rules } from './Rules.js';
 import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
 import { Chat } from './Chat.js';
+import { RefreshProvider } from './RefreshContext.js';
 
 export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health';
 
@@ -21,6 +22,8 @@ export type TxFilter = {
   account?: string;
   accountName?: string;
   search?: string;
+  range?: string;   // 'week' | 'month' | 'quarter' | 'year' | 'alltime'
+  anchor?: string;  // YYYY-MM-DD — which specific period to land on
 };
 
 export function App() {
@@ -50,7 +53,7 @@ export function App() {
       case 'transactions': return <Transactions onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'trends':       return <Trends       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'networth':     return <NetWorth     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
-      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
       case 'rules':        return <Rules        onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
@@ -58,18 +61,20 @@ export function App() {
   })();
 
   return (
-    <TypingContext.Provider value={setScreenTyping}>
-    <Box flexDirection="column" height="100%">
-      <Box flexGrow={1}>
-        {currentScreen}
-      </Box>
-      <Chat
-        isActive={chatFocused}
-        onActivate={() => setChatFocused(true)}
-        onDeactivate={() => setChatFocused(false)}
-        onNavigate={navigate}
-      />
-    </Box>
-    </TypingContext.Provider>
+    <RefreshProvider>
+      <TypingContext.Provider value={setScreenTyping}>
+        <Box flexDirection="column" height="100%">
+          <Box flexGrow={1}>
+            {currentScreen}
+          </Box>
+          <Chat
+            isActive={chatFocused}
+            onActivate={() => setChatFocused(true)}
+            onDeactivate={() => setChatFocused(false)}
+            onNavigate={navigate}
+          />
+        </Box>
+      </TypingContext.Provider>
+    </RefreshProvider>
   );
 }

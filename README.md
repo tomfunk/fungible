@@ -39,6 +39,7 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 - **Regex search** — `/` on Dashboard or Transactions filters by name using a regular expression; search is shared when navigating between Dashboard, Transactions, and Trends
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
 - **HTTP API** — REST-style API server for scripting and automation
+- **Daily backups** — database is backed up to `~/.fungible/backups/` on startup once per day; defaults to 7 days retention, configurable via `FUNGIBLE_BACKUP_DAYS`
 
 ## Try it (no account needed)
 
@@ -75,6 +76,18 @@ npm run dev -- --setup
 ```
 
 Data and config are stored at `~/.fungible/`. Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your bank accounts. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
+
+## Running
+
+| Command | What starts |
+|---------|-------------|
+| `fungible` | TUI + MCP server (HTTP, port 3741) + REST API (port 3456) |
+| `fungible mcp` | stdio MCP server only — use this in your Claude Desktop config |
+| `fungible api` | REST API server only |
+
+When you run the TUI, the MCP server and REST API start automatically in the background on their default ports. They share the same database connection as the TUI, so any changes made through them are reflected the next time you navigate in the UI.
+
+The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`) override the defaults.
 
 ## Screens
 
@@ -239,10 +252,11 @@ npm run seed-rules
 
 ## HTTP API
 
-Exposes the same tools as the MCP server over HTTP — useful for scripting and automation.
+Exposes the same tools as the MCP server over HTTP — useful for scripting and automation. Starts automatically on port 3456 when you run the TUI, or run it standalone:
 
 ```bash
-npm run api
+fungible api
+# or: npm run api
 # Listening on http://localhost:3456
 ```
 
@@ -268,8 +282,47 @@ Available tools: same set as the MCP server below.
 
 Exposes your financial data to Claude via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-```bash
-npm run mcp
+**Two connection modes:**
+
+- **stdio** — Claude Desktop spawns `fungible mcp` as a child process. Always works, even when the TUI isn't open. When the TUI is running, writes notify it automatically so the UI refreshes. Use this if you're not sure which to pick.
+
+- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open.
+
+Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+**stdio — Homebrew:**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
+    }
+  }
+}
+```
+
+**stdio — from source:**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "command": "node",
+      "args": ["--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
+    }
+  }
+}
+```
+
+**HTTP (TUI must be running):**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "url": "http://localhost:3741/mcp"
+    }
+  }
+}
 ```
 
 Available tools:
@@ -300,29 +353,3 @@ Available tools:
 | `get_drift` | Per-category spending deltas vs prior period, last year, and 12-month avg |
 | `get_trends` | Month-by-month spending trends for the last N months |
 | `get_finance_guide` | Opinionated personal finance guidance by topic |
-
-Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-**If installed via Homebrew:**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["--experimental-sqlite", "--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
-    }
-  }
-}
-```
-
-**If running from source:**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "command": "node",
-      "args": ["--experimental-sqlite", "--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
-    }
-  }
-}
-```

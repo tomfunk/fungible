@@ -16,6 +16,7 @@ import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
 import { useSetTyping } from './TypingContext.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 const BAR_WIDTH = 20;
 
@@ -51,15 +52,27 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
 ];
 
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const now = new Date();
-  const [range, setRange] = useState<Range>('month');
-  const [anchor, setAnchor] = useState<Date>(() => getPeriodStart('month', now));
+  const [range, setRange] = useState<Range>(() => {
+    const r = initialFilter?.range;
+    return (r && (RANGES as string[]).includes(r)) ? r as Range : 'month';
+  });
+  const [anchor, setAnchor] = useState<Date>(() => {
+    const r: Range = (initialFilter?.range && (RANGES as string[]).includes(initialFilter.range)) ? initialFilter.range as Range : 'month';
+    if (initialFilter?.anchor && /^\d{4}-\d{2}-\d{2}$/.test(initialFilter.anchor)) {
+      const [y, m, d] = initialFilter.anchor.split('-').map(Number);
+      return getPeriodStart(r, new Date(y, m - 1, d));
+    }
+    return getPeriodStart(r, now);
+  });
   const [summary, setSummary] = useState<MonthlySummary | null>(null);
   const [flexData, setFlexData] = useState<FlexSummary | null>(null);
   const [uncategorized, setUncategorized] = useState(0);
   const [catCursor, setCatCursor] = useState(0);
   const [view, setView] = useState<DashView>('categories');
-  const [bounds] = useState(getDataBounds);
+  const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
+  useEffect(() => { void getDataBounds().then(setBounds); }, []);
   const [driftMode, setDriftMode] = useState(false);
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
   const [flexDrift, setFlexDrift] = useState<FlexDriftData  | null>(null);
@@ -77,25 +90,22 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [filteredFlex,    setFilteredFlex]    = useState<FlexSummary    | null>(null);
 
   // Account filter
-  const [accountRows, setAccountRows] = useState<AccountRow[]>(() => {
-    const { from, to } = getPeriodDates('month', getPeriodStart('month', now));
-    return getAccountRows(from, to);
-  });
+  const [accountRows, setAccountRows] = useState<AccountRow[]>([]);
   const [acctCursor, setAcctCursor] = useState(0);
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
 
   function load(r: Range, a: Date, acct: AccountRow | null) {
     const { from, to } = getPeriodDates(r, a);
-    setAccountRows(getAccountRows(from, to));
+    void getAccountRows(from, to).then(setAccountRows);
     setAcctCursor(0);
     if (acct) {
-      setSummary(getRangeSummary(from, to, acct.id));
-      setFlexData(getFlexSummary(from, to, acct.id));
-      setUncategorized(getUncategorizedCount(from, to, acct.id));
+      void getRangeSummary(from, to, acct.id).then(setSummary);
+      void getFlexSummary(from, to, acct.id).then(setFlexData);
+      void getUncategorizedCount(from, to, acct.id).then(setUncategorized);
     } else {
-      setSummary(getRangeSummary(from, to));
-      setFlexData(getFlexSummary(from, to));
-      setUncategorized(getUncategorizedCount(from, to));
+      void getRangeSummary(from, to).then(setSummary);
+      void getFlexSummary(from, to).then(setFlexData);
+      void getUncategorizedCount(from, to).then(setUncategorized);
     }
   }
 
@@ -109,7 +119,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   useEffect(() => {
     load(range, anchor, selectedAccount);
     setCatCursor(0);
-  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, refreshKey]);
 
   useEffect(() => {
     if (!driftMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
@@ -117,9 +127,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
     const acctId = selectedAccount?.id ?? undefined;
-    setCatDrift(getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId));
-    setFlexDrift(getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId));
-    setAcctDrift(getAccountDriftData(current, lastPeriod, lastYear, rolling12));
+    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setCatDrift);
+    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setFlexDrift);
+    void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(setAcctDrift);
   }, [driftMode, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   const setTyping = useSetTyping();
@@ -129,16 +139,17 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const term = searchMode ? searchInput : search;
     if (!term) { setSearchStats(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    setSearchStats(countSearchMatches(from, to, term, selectedAccount?.id ?? undefined));
+    void countSearchMatches(from, to, term, selectedAccount?.id ?? undefined).then(setSearchStats);
   }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   // When a search is committed, recompute category + flex data to only show matching transactions
   useEffect(() => {
     if (!search) { setFilteredSummary(null); setFilteredFlex(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    const { summary: fs, flexData: ff } = getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined);
-    setFilteredSummary(fs);
-    setFilteredFlex(ff);
+    void getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined).then(({ summary: fs, flexData: ff }) => {
+      setFilteredSummary(fs);
+      setFilteredFlex(ff);
+    });
   }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   useEffect(() => {
@@ -361,7 +372,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
           {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>
-            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints ? '  [Tab]  [d]' : ''}
+            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints && !merchantDrill ? '  [Tab]  [d]' : ''}
           </Text>
         </Box>
       </Box>
@@ -514,7 +525,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                             {isSelected ? '▶ ' : '  '}
                             {row.category.length > nameW ? row.category.slice(0, nameW - 1) + '…' : row.category.padEnd(nameW)}
                           </Text>
-                          <Text color={C_WARNING}>{fmt(row.current).padStart(10)}</Text>
+                          <Text color={C_NEUTRAL}>{fmt(row.current).padStart(10)}</Text>
                           <Text color={color}>{fmtDelta(row.lastPeriodDelta).padStart(9)}</Text>
                           <Text color={color}>{fmtDelta(row.lastYearDelta).padStart(9)}</Text>
                           <Text color={color}>{fmtDelta(row.avg12mDelta).padStart(9)}</Text>
@@ -536,7 +547,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                             {isSelected ? '▶ ' : '  '}
                             {row.category.length > dashCatNameW ? row.category.slice(0, dashCatNameW - 1) + '…' : row.category.padEnd(dashCatNameW)}
                           </Text>
-                          <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
+                          <Text color={C_NEUTRAL}>{fmt(row.total).padStart(10)}</Text>
                           <Text color={C_ACCENT} dimColor={!isSelected}>
                             {bar(row.total, maxCategorySpend, dashBarW)}
                           </Text>
@@ -569,7 +580,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     return (
                       <Box key={key} gap={2}>
                         <Text color={color}>{'  '}{label.padEnd(16)}</Text>
-                        <Text color={C_WARNING}>{fmt(slice.current).padStart(10)}</Text>
+                        <Text color={C_NEUTRAL}>{fmt(slice.current).padStart(10)}</Text>
                         <Text color={color}>{fmtDelta(slice.lastPeriodDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.lastYearDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.avg12mDelta).padStart(9)}</Text>
@@ -585,7 +596,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     return (
                       <Box key={key} gap={2}>
                         <Text color={color}>{'  '}{label.padEnd(16)}</Text>
-                        <Text color={C_WARNING}>{fmt(amount).padStart(10)}</Text>
+                        <Text color={C_NEUTRAL}>{fmt(amount).padStart(10)}</Text>
                         <Text dimColor>{pct(amount, totalExpenses).padStart(4)}</Text>
                         <Text color={color}>{bar(amount, totalExpenses, dashFlexBarW)}</Text>
                       </Box>

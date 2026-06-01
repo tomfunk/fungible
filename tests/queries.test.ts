@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../core/db.js', async () => {
   const { makeTestDb } = await import('./helpers/makeTestDb.js');
-  return { db: makeTestDb() };
+  return { db: await makeTestDb() };
 });
 
 import { db } from '../core/db.js';
@@ -16,7 +16,7 @@ import {
 } from '../core/queries.js';
 
 let txId = 0;
-const insertTx = (opts: {
+async function insertTx(opts: {
   date?: string;
   name?: string;
   merchantName?: string | null;
@@ -26,43 +26,44 @@ const insertTx = (opts: {
   pending?: number;
   ignored?: number;
   accountId?: string;
-}) => {
+}) {
   txId++;
-  db.prepare(`
-    INSERT INTO transactions (id, account_id, date, name, merchant_name, display_name, amount, category, pending, ignored)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    `tx${txId}`,
-    opts.accountId ?? 'acct1',
-    opts.date ?? '2025-01-15',
-    opts.name ?? 'Test Transaction',
-    opts.merchantName ?? null,
-    opts.displayName ?? null,
-    opts.amount,
-    opts.category ?? 'Shopping',
-    opts.pending ?? 0,
-    opts.ignored ?? 0,
-  );
-};
+  await db.execute({
+    sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, display_name, amount, category, pending, ignored)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      `tx${txId}`,
+      opts.accountId ?? 'acct1',
+      opts.date ?? '2025-01-15',
+      opts.name ?? 'Test Transaction',
+      opts.merchantName ?? null,
+      opts.displayName ?? null,
+      opts.amount,
+      opts.category ?? 'Shopping',
+      opts.pending ?? 0,
+      opts.ignored ?? 0,
+    ],
+  });
+}
 
-beforeEach(() => {
+beforeEach(async () => {
   txId = 0;
-  db.exec('DELETE FROM transactions');
-  db.exec('DELETE FROM hidden_categories');
-  db.exec('DELETE FROM categories');
-  db.exec('DELETE FROM accounts');
+  await db.execute('DELETE FROM transactions');
+  await db.execute('DELETE FROM hidden_categories');
+  await db.execute('DELETE FROM categories');
+  await db.execute('DELETE FROM accounts');
 });
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getHiddenCategories', () => {
-  it('returns empty set when no hidden categories', () => {
-    expect(getHiddenCategories().size).toBe(0);
+  it('returns empty set when no hidden categories', async () => {
+    expect((await getHiddenCategories()).size).toBe(0);
   });
 
-  it('returns set of hidden category names', () => {
-    db.exec("INSERT INTO hidden_categories VALUES ('Transfer')");
-    db.exec("INSERT INTO hidden_categories VALUES ('Loan Payment')");
-    const hidden = getHiddenCategories();
+  it('returns set of hidden category names', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Loan Payment'] });
+    const hidden = await getHiddenCategories();
     expect(hidden.has('Transfer')).toBe(true);
     expect(hidden.has('Loan Payment')).toBe(true);
     expect(hidden.has('Shopping')).toBe(false);
@@ -71,78 +72,76 @@ describe('getHiddenCategories', () => {
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getRangeSummary', () => {
-  it('returns zeros for empty database', () => {
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('returns zeros for empty database', async () => {
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.income).toBe(0);
     expect(s.expenses).toBe(0);
     expect(s.net).toBe(0);
     expect(s.byCategory).toHaveLength(0);
   });
 
-  it('separates expenses (positive amounts) from income (negative amounts)', () => {
-    insertTx({ amount: 100, category: 'Shopping' });
-    insertTx({ amount: -200, category: 'Income' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('separates expenses (positive amounts) from income (negative amounts)', async () => {
+    await insertTx({ amount: 100, category: 'Shopping' });
+    await insertTx({ amount: -200, category: 'Income' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(100);
     expect(s.income).toBeCloseTo(200);
-    expect(s.net).toBeCloseTo(100); // income - expenses = 200 - 100 = 100
+    expect(s.net).toBeCloseTo(100);
   });
 
-  it('only includes dates within the range', () => {
-    insertTx({ date: '2025-01-01', amount: 50, category: 'Shopping' });
-    insertTx({ date: '2025-01-31', amount: 50, category: 'Shopping' });
-    insertTx({ date: '2024-12-31', amount: 999, category: 'Shopping' }); // before range
-    insertTx({ date: '2025-02-01', amount: 999, category: 'Shopping' }); // after range
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('only includes dates within the range', async () => {
+    await insertTx({ date: '2025-01-01', amount: 50, category: 'Shopping' });
+    await insertTx({ date: '2025-01-31', amount: 50, category: 'Shopping' });
+    await insertTx({ date: '2024-12-31', amount: 999, category: 'Shopping' });
+    await insertTx({ date: '2025-02-01', amount: 999, category: 'Shopping' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(100);
   });
 
-  it('excludes pending transactions', () => {
-    insertTx({ amount: 100, category: 'Shopping', pending: 1 });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('excludes pending transactions', async () => {
+    await insertTx({ amount: 100, category: 'Shopping', pending: 1 });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBe(0);
   });
 
-  it('excludes ignored transactions', () => {
-    insertTx({ amount: 100, category: 'Shopping', ignored: 1 });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('excludes ignored transactions', async () => {
+    await insertTx({ amount: 100, category: 'Shopping', ignored: 1 });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBe(0);
   });
 
-  it('excludes hidden categories', () => {
-    db.exec("INSERT INTO hidden_categories VALUES ('Transfer')");
-    insertTx({ amount: 500, category: 'Transfer' });
-    insertTx({ amount: 100, category: 'Shopping' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('excludes hidden categories', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await insertTx({ amount: 500, category: 'Transfer' });
+    await insertTx({ amount: 100, category: 'Shopping' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(100);
   });
 
-  it('nets refunds within a category before classifying as income/expense', () => {
-    // Travel: $1000 out, $800 refund → net $200 expense
-    insertTx({ amount: 1000, category: 'Travel' });
-    insertTx({ amount: -800, category: 'Travel' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('nets refunds within a category before classifying as income/expense', async () => {
+    await insertTx({ amount: 1000, category: 'Travel' });
+    await insertTx({ amount: -800, category: 'Travel' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(200);
     expect(s.income).toBe(0);
     expect(s.byCategory).toHaveLength(1);
     expect(s.byCategory[0]).toEqual({ category: 'Travel', total: 200 });
   });
 
-  it('categories with net negative total count as income', () => {
-    // Category receives more refunds than charges
-    insertTx({ amount: 100, category: 'Rewards' });
-    insertTx({ amount: -200, category: 'Rewards' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
-    expect(s.income).toBeCloseTo(100); // net is -100 → abs = 100 income
+  it('categories with net negative total count as income', async () => {
+    await insertTx({ amount: 100, category: 'Rewards' });
+    await insertTx({ amount: -200, category: 'Rewards' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
+    expect(s.income).toBeCloseTo(100);
     expect(s.expenses).toBe(0);
-    expect(s.byCategory).toHaveLength(0); // not an expense category
+    expect(s.byCategory).toHaveLength(0);
   });
 
-  it('aggregates multiple categories correctly', () => {
-    insertTx({ amount: 100, category: 'Food & Drink' });
-    insertTx({ amount: 200, category: 'Shopping' });
-    insertTx({ amount: -500, category: 'Income' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31');
+  it('aggregates multiple categories correctly', async () => {
+    await insertTx({ amount: 100, category: 'Food & Drink' });
+    await insertTx({ amount: 200, category: 'Shopping' });
+    await insertTx({ amount: -500, category: 'Income' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(300);
     expect(s.income).toBeCloseTo(500);
     expect(s.byCategory).toHaveLength(2);
@@ -151,125 +150,122 @@ describe('getRangeSummary', () => {
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getFlexSummary', () => {
-  const insertCat = (name: string, flexibility: string | null) => {
-    db.prepare('INSERT INTO categories (name, flexibility) VALUES (?, ?)').run(name, flexibility);
-  };
+  async function insertCat(name: string, flexibility: string | null) {
+    await db.execute({ sql: 'INSERT INTO categories (name, flexibility) VALUES (?, ?)', args: [name, flexibility] });
+  }
 
-  beforeEach(() => {
-    db.exec('DELETE FROM categories');
+  beforeEach(async () => {
+    await db.execute('DELETE FROM categories');
   });
 
-  it('returns zeros for empty database', () => {
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('returns zeros for empty database', async () => {
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.fixed).toBe(0);
     expect(s.flexible).toBe(0);
     expect(s.discretionary).toBe(0);
     expect(s.untagged).toBe(0);
   });
 
-  it('buckets spending by flexibility tier', () => {
-    insertCat('Rent', 'fixed');
-    insertCat('Food & Drink', 'flexible');
-    insertCat('Entertainment', 'discretionary');
-    insertTx({ amount: 1500, category: 'Rent' });
-    insertTx({ amount: 300, category: 'Food & Drink' });
-    insertTx({ amount: 100, category: 'Entertainment' });
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('buckets spending by flexibility tier', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertCat('Food & Drink', 'flexible');
+    await insertCat('Entertainment', 'discretionary');
+    await insertTx({ amount: 1500, category: 'Rent' });
+    await insertTx({ amount: 300, category: 'Food & Drink' });
+    await insertTx({ amount: 100, category: 'Entertainment' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.fixed).toBeCloseTo(1500);
     expect(s.flexible).toBeCloseTo(300);
     expect(s.discretionary).toBeCloseTo(100);
     expect(s.untagged).toBe(0);
   });
 
-  it('puts spending with no flexibility tag in untagged', () => {
-    insertCat('Mystery', null);
-    insertTx({ amount: 50, category: 'Mystery' });
-    insertTx({ amount: 75, category: 'UnknownCat' }); // not in categories table at all
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('puts spending with no flexibility tag in untagged', async () => {
+    await insertCat('Mystery', null);
+    await insertTx({ amount: 50, category: 'Mystery' });
+    await insertTx({ amount: 75, category: 'UnknownCat' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.untagged).toBeCloseTo(125);
   });
 
-  it('nets out refunds before bucketing — no tier inflation (regression)', () => {
-    // This is the bug that caused percentages to sum to >100%.
-    // Travel: $10,000 charge, $8,000 refund → net $2,000 → discretionary += $2,000
-    // NOT: discretionary += $10,000 (gross positive transactions)
-    insertCat('Travel', 'discretionary');
-    insertTx({ amount: 10000, category: 'Travel' });
-    insertTx({ amount: -8000, category: 'Travel' });
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('nets out refunds before bucketing — no tier inflation (regression)', async () => {
+    await insertCat('Travel', 'discretionary');
+    await insertTx({ amount: 10000, category: 'Travel' });
+    await insertTx({ amount: -8000, category: 'Travel' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.discretionary).toBeCloseTo(2000);
     expect(s.fixed).toBe(0);
     expect(s.flexible).toBe(0);
   });
 
-  it('excludes categories where net is negative (refund-heavy categories)', () => {
-    insertCat('Travel', 'discretionary');
-    insertTx({ amount: 100, category: 'Travel' });
-    insertTx({ amount: -500, category: 'Travel' }); // net negative → not an expense
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('excludes categories where net is negative (refund-heavy categories)', async () => {
+    await insertCat('Travel', 'discretionary');
+    await insertTx({ amount: 100, category: 'Travel' });
+    await insertTx({ amount: -500, category: 'Travel' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.discretionary).toBe(0);
   });
 
-  it('fixed + flexible + discretionary + untagged == total expenses', () => {
-    insertCat('Rent', 'fixed');
-    insertCat('Food & Drink', 'flexible');
-    insertCat('Entertainment', 'discretionary');
-    insertTx({ amount: 1500, category: 'Rent' });
-    insertTx({ amount: 300, category: 'Food & Drink' });
-    insertTx({ amount: 100, category: 'Entertainment' });
-    insertTx({ amount: 200, category: 'Misc' }); // untagged
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('fixed + flexible + discretionary + untagged == total expenses', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertCat('Food & Drink', 'flexible');
+    await insertCat('Entertainment', 'discretionary');
+    await insertTx({ amount: 1500, category: 'Rent' });
+    await insertTx({ amount: 300, category: 'Food & Drink' });
+    await insertTx({ amount: 100, category: 'Entertainment' });
+    await insertTx({ amount: 200, category: 'Misc' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     const total = s.fixed + s.flexible + s.discretionary + s.untagged;
     expect(total).toBeCloseTo(2100);
   });
 
-  it('excludes hidden categories', () => {
-    db.exec("INSERT INTO hidden_categories VALUES ('Transfer')");
-    insertCat('Transfer', 'fixed');
-    insertTx({ amount: 500, category: 'Transfer' });
-    insertTx({ amount: 100, category: 'Shopping' });
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
-    expect(s.fixed).toBe(0); // Transfer is hidden
-    expect(s.untagged).toBeCloseTo(100); // Shopping has no flex tag
+  it('excludes hidden categories', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await insertCat('Transfer', 'fixed');
+    await insertTx({ amount: 500, category: 'Transfer' });
+    await insertTx({ amount: 100, category: 'Shopping' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
+    expect(s.fixed).toBe(0);
+    expect(s.untagged).toBeCloseTo(100);
   });
 
-  it('excludes pending transactions', () => {
-    insertCat('Rent', 'fixed');
-    insertTx({ amount: 1500, category: 'Rent', pending: 1 });
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('excludes pending transactions', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertTx({ amount: 1500, category: 'Rent', pending: 1 });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.fixed).toBe(0);
   });
 
-  it('excludes ignored transactions', () => {
-    insertCat('Rent', 'fixed');
-    insertTx({ amount: 1500, category: 'Rent', ignored: 1 });
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('excludes ignored transactions', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertTx({ amount: 1500, category: 'Rent', ignored: 1 });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.fixed).toBe(0);
   });
 
-  it('respects date range', () => {
-    insertCat('Rent', 'fixed');
-    insertTx({ date: '2025-01-15', amount: 1500, category: 'Rent' });
-    insertTx({ date: '2024-12-15', amount: 9999, category: 'Rent' }); // out of range
-    const s = getFlexSummary('2025-01-01', '2025-01-31');
+  it('respects date range', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertTx({ date: '2025-01-15', amount: 1500, category: 'Rent' });
+    await insertTx({ date: '2024-12-15', amount: 9999, category: 'Rent' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.fixed).toBeCloseTo(1500);
   });
 });
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getRangeSummary with accountId', () => {
-  it('filters to the given account', () => {
-    insertTx({ amount: 100, category: 'Shopping', accountId: 'acct1' });
-    insertTx({ amount: 200, category: 'Dining',   accountId: 'acct2' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
+  it('filters to the given account', async () => {
+    await insertTx({ amount: 100, category: 'Shopping', accountId: 'acct1' });
+    await insertTx({ amount: 200, category: 'Dining',   accountId: 'acct2' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
     expect(s.expenses).toBeCloseTo(100);
     expect(s.byCategory).toHaveLength(1);
     expect(s.byCategory[0].category).toBe('Shopping');
   });
 
-  it('returns zeros when account has no transactions in range', () => {
-    insertTx({ amount: 100, accountId: 'acct2' });
-    const s = getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
+  it('returns zeros when account has no transactions in range', async () => {
+    await insertTx({ amount: 100, accountId: 'acct2' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
     expect(s.expenses).toBe(0);
     expect(s.income).toBe(0);
   });
@@ -277,12 +273,12 @@ describe('getRangeSummary with accountId', () => {
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getMerchantSummary', () => {
-  it('returns merchants ranked by net spend with counts and percentages', () => {
-    insertTx({ amount: 120, category: 'Food & Drink', name: 'Blue Bottle' });
-    insertTx({ amount: 30, category: 'Food & Drink', name: 'Blue Bottle' });
-    insertTx({ amount: 50, category: 'Food & Drink', name: 'Chipotle' });
+  it('returns merchants ranked by net spend with counts and percentages', async () => {
+    await insertTx({ amount: 120, category: 'Food & Drink', name: 'Blue Bottle' });
+    await insertTx({ amount: 30, category: 'Food & Drink', name: 'Blue Bottle' });
+    await insertTx({ amount: 50, category: 'Food & Drink', name: 'Chipotle' });
 
-    const rows = getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
+    const rows = await getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
     expect(rows).toHaveLength(2);
     expect(rows[0].merchant).toBe('Blue Bottle');
     expect(rows[0].total).toBeCloseTo(150);
@@ -294,28 +290,28 @@ describe('getMerchantSummary', () => {
     expect(rows[1].pct).toBeCloseTo(0.25);
   });
 
-  it('uses display_name when available and excludes non-positive net merchants', () => {
-    insertTx({ amount: 100, category: 'Travel', name: 'LYFT *TRIP', displayName: 'Lyft' });
-    insertTx({ amount: -40, category: 'Travel', name: 'LYFT *REFUND', displayName: 'Lyft' });
-    insertTx({ amount: 20, category: 'Travel', name: 'Refund-only merchant' });
-    insertTx({ amount: -30, category: 'Travel', name: 'Refund-only merchant' });
+  it('uses display_name when available and excludes non-positive net merchants', async () => {
+    await insertTx({ amount: 100, category: 'Travel', name: 'LYFT *TRIP', displayName: 'Lyft' });
+    await insertTx({ amount: -40, category: 'Travel', name: 'LYFT *REFUND', displayName: 'Lyft' });
+    await insertTx({ amount: 20, category: 'Travel', name: 'Refund-only merchant' });
+    await insertTx({ amount: -30, category: 'Travel', name: 'Refund-only merchant' });
 
-    const rows = getMerchantSummary('Travel', '2025-01-01', '2025-01-31');
+    const rows = await getMerchantSummary('Travel', '2025-01-01', '2025-01-31');
     expect(rows).toHaveLength(1);
     expect(rows[0].merchant).toBe('Lyft');
     expect(rows[0].total).toBeCloseTo(60);
     expect(rows[0].pct).toBeCloseTo(1);
   });
 
-  it('respects account filter and excludes hidden/pending/ignored rows', () => {
-    db.exec("INSERT INTO hidden_categories VALUES ('Transfer')");
-    insertTx({ amount: 90, category: 'Food', name: 'A', accountId: 'acct1' });
-    insertTx({ amount: 110, category: 'Food', name: 'B', accountId: 'acct2' });
-    insertTx({ amount: 200, category: 'Food', name: 'C', accountId: 'acct1', pending: 1 });
-    insertTx({ amount: 200, category: 'Food', name: 'D', accountId: 'acct1', ignored: 1 });
-    insertTx({ amount: 500, category: 'Transfer', name: 'E', accountId: 'acct1' });
+  it('respects account filter and excludes hidden/pending/ignored rows', async () => {
+    await db.execute({ sql: "INSERT INTO hidden_categories VALUES (?)", args: ['Transfer'] });
+    await insertTx({ amount: 90, category: 'Food', name: 'A', accountId: 'acct1' });
+    await insertTx({ amount: 110, category: 'Food', name: 'B', accountId: 'acct2' });
+    await insertTx({ amount: 200, category: 'Food', name: 'C', accountId: 'acct1', pending: 1 });
+    await insertTx({ amount: 200, category: 'Food', name: 'D', accountId: 'acct1', ignored: 1 });
+    await insertTx({ amount: 500, category: 'Transfer', name: 'E', accountId: 'acct1' });
 
-    const rows = getMerchantSummary('Food', '2025-01-01', '2025-01-31', 'acct1');
+    const rows = await getMerchantSummary('Food', '2025-01-01', '2025-01-31', 'acct1');
     expect(rows).toHaveLength(1);
     expect(rows[0].merchant).toBe('A');
     expect(rows[0].total).toBeCloseTo(90);
@@ -324,51 +320,52 @@ describe('getMerchantSummary', () => {
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getFlexSummary with accountId', () => {
-  const insertCat = (name: string, flexibility: string) =>
-    db.prepare('INSERT INTO categories (name, flexibility) VALUES (?, ?)').run(name, flexibility);
+  async function insertCat(name: string, flexibility: string) {
+    await db.execute({ sql: 'INSERT INTO categories (name, flexibility) VALUES (?, ?)', args: [name, flexibility] });
+  }
 
-  it('filters to the given account', () => {
-    insertCat('Rent', 'fixed');
-    insertTx({ amount: 1500, category: 'Rent', accountId: 'acct1' });
-    insertTx({ amount: 999,  category: 'Rent', accountId: 'acct2' });
-    const s = getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
+  it('filters to the given account', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertTx({ amount: 1500, category: 'Rent', accountId: 'acct1' });
+    await insertTx({ amount: 999,  category: 'Rent', accountId: 'acct2' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
     expect(s.fixed).toBeCloseTo(1500);
   });
 
-  it('returns zeros when account has no transactions', () => {
-    insertCat('Rent', 'fixed');
-    insertTx({ amount: 1500, category: 'Rent', accountId: 'acct2' });
-    const s = getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
+  it('returns zeros when account has no transactions', async () => {
+    await insertCat('Rent', 'fixed');
+    await insertTx({ amount: 1500, category: 'Rent', accountId: 'acct2' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
     expect(s.fixed).toBe(0);
   });
 });
 
 // ──────────────────────────────────────────────────────────────────────
 describe('getRecentTransactions', () => {
-  it('returns empty array when no transactions', () => {
-    expect(getRecentTransactions()).toHaveLength(0);
+  it('returns empty array when no transactions', async () => {
+    expect(await getRecentTransactions()).toHaveLength(0);
   });
 
-  it('returns transactions ordered by date descending', () => {
-    insertTx({ date: '2025-01-01', amount: 10 });
-    insertTx({ date: '2025-01-15', amount: 20 });
-    insertTx({ date: '2025-01-10', amount: 30 });
-    const txs = getRecentTransactions();
+  it('returns transactions ordered by date descending', async () => {
+    await insertTx({ date: '2025-01-01', amount: 10 });
+    await insertTx({ date: '2025-01-15', amount: 20 });
+    await insertTx({ date: '2025-01-10', amount: 30 });
+    const txs = await getRecentTransactions();
     expect(txs[0].date).toBe('2025-01-15');
     expect(txs[1].date).toBe('2025-01-10');
     expect(txs[2].date).toBe('2025-01-01');
   });
 
-  it('respects the limit parameter', () => {
-    for (let i = 0; i < 15; i++) insertTx({ amount: i });
-    expect(getRecentTransactions(5)).toHaveLength(5);
-    expect(getRecentTransactions(10)).toHaveLength(10);
+  it('respects the limit parameter', async () => {
+    for (let i = 0; i < 15; i++) await insertTx({ amount: i });
+    expect(await getRecentTransactions(5)).toHaveLength(5);
+    expect(await getRecentTransactions(10)).toHaveLength(10);
   });
 
-  it('excludes pending transactions', () => {
-    insertTx({ amount: 100, pending: 1 });
-    insertTx({ amount: 200, pending: 0 });
-    const txs = getRecentTransactions();
+  it('excludes pending transactions', async () => {
+    await insertTx({ amount: 100, pending: 1 });
+    await insertTx({ amount: 200, pending: 0 });
+    const txs = await getRecentTransactions();
     expect(txs).toHaveLength(1);
     expect(txs[0].amount).toBe(200);
   });
@@ -376,15 +373,16 @@ describe('getRecentTransactions', () => {
 
 // ──────────────────────────────────────────────────────────────────────
 describe('hasAccounts', () => {
-  it('returns false when no accounts linked', () => {
-    db.exec('DELETE FROM plaid_items');
-    expect(hasAccounts()).toBe(false);
+  it('returns false when no accounts linked', async () => {
+    await db.execute('DELETE FROM plaid_items');
+    expect(await hasAccounts()).toBe(false);
   });
 
-  it('returns true when at least one account is linked', () => {
-    db.prepare(
-      "INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item1', 'tok_abc', 'Chase')"
-    ).run();
-    expect(hasAccounts()).toBe(true);
+  it('returns true when at least one account is linked', async () => {
+    await db.execute({
+      sql: "INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item1', 'tok_abc', 'Chase')",
+      args: [],
+    });
+    expect(await hasAccounts()).toBe(true);
   });
 });

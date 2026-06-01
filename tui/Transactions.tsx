@@ -18,6 +18,7 @@ import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
 type Tx = TxRow;
@@ -46,6 +47,7 @@ function truncate(s: string, n: number) {
 
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
@@ -53,14 +55,14 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [account, setAccount] = useState<string | null>(initialFilter?.account ?? null);
   const [accountName, setAccountName] = useState<string | null>(initialFilter?.accountName ?? null);
   const [sort, setSort] = useState<SortMode>('date-desc');
-  const [bounds] = useState(getDataBounds);
+  const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
   const [search, setSearch] = useState(initialFilter?.search ?? '');
   const [searchInput, setSearchInput] = useState(initialFilter?.search ?? '');
   const [txs, setTxs] = useState<Tx[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
   const [statusMsg, setStatusMsg] = useState('');
-  const [categories, setCategories] = useState<string[]>(getAllCategories);
+  const [categories, setCategories] = useState<string[]>([]);
 
   // Edit panel state
   const [editField, setEditField] = useState<EditField>('name');
@@ -76,13 +78,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    const rows = getTransactions({ category, from, to, search: s, tag, account, sort });
-    setTxs(rows);
-    if (!keepCursor) setCursor(0);
-    else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
+    void getTransactions({ category, from, to, search: s, tag, account, sort }).then((rows) => {
+      setTxs(rows);
+      if (!keepCursor) setCursor(0);
+      else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
+    });
   }
 
-  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort]);
+  useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
+  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {
@@ -95,21 +99,24 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openEdit() {
     if (!selected) return;
-    const cats = getAllCategories();
-    setCategories(cats);
-    setEditName('');
-    setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
-    setEditField('name');
-    setMode('edit');
+    void getAllCategories().then((cats) => {
+      setCategories(cats);
+      setEditName('');
+      setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
+      setEditField('name');
+      setMode('edit');
+    });
   }
 
   function openTagPanel() {
     if (!selected) return;
-    setAllTags(getTagOptions());
-    setTxTagIds(getTransactionTagIds(selected.id));
-    setTagInput('');
-    setTagCursor(0);
-    setMode('tag');
+    void Promise.all([getTagOptions(), getTransactionTagIds(selected.id)]).then(([tags, tagIds]) => {
+      setAllTags(tags);
+      setTxTagIds(tagIds);
+      setTagInput('');
+      setTagCursor(0);
+      setMode('tag');
+    });
   }
 
   function toggleTag(tagId: number) {
@@ -126,13 +133,16 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function createAndApplyTag(name: string) {
     if (!selected) return;
-    const tagId = getOrCreateTag(name);
-    addTagToTransaction(selected.id, tagId);
-    setAllTags(getTagOptions());
-    setTxTagIds((s) => new Set([...s, tagId]));
-    setTagInput('');
-    setTagCursor(0);
-    load(search, true);
+    void getOrCreateTag(name).then((tagId) => {
+      void addTagToTransaction(selected.id, tagId);
+      void Promise.all([getTagOptions(), getTransactionTagIds(selected.id)]).then(([tags, tagIds]) => {
+        setAllTags(tags);
+        setTxTagIds(tagIds);
+      });
+      setTagInput('');
+      setTagCursor(0);
+      load(search, true);
+    });
   }
 
   function saveToTransaction() {
@@ -237,18 +247,17 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (key.downArrow) { setTagCursor((c) => Math.min(filteredTags.length - 1, c + 1)); return; }
       if (key.return) {
         const t = filteredTags[tagCursor];
-        let tagId: number | null = null;
-        if (t) {
-          tagId = t.id;
-        } else if (tagInput.trim()) {
-          tagId = getOrCreateTag(tagInput.trim());
-        }
-        if (tagId !== null) {
-          addTagToTransactions(txs.map((tx) => tx.id), tagId);
+        const applyTag = (tagId: number) => {
+          void addTagToTransactions(txs.map((tx) => tx.id), tagId);
           setStatusMsg(`Tagged ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
           setTimeout(() => setStatusMsg(''), 2500);
           setMode('list');
           load(search, true);
+        };
+        if (t) {
+          applyTag(t.id);
+        } else if (tagInput.trim()) {
+          void getOrCreateTag(tagInput.trim()).then(applyTag);
         }
         return;
       }
@@ -344,18 +353,21 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'e' && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
-        const cats = getAllCategories();
-        setCategories(cats);
-        setEditCatCursor(0);
-        setMode('edit-all');
+        void getAllCategories().then((cats) => {
+          setCategories(cats);
+          setEditCatCursor(0);
+          setMode('edit-all');
+        });
         return;
       }
       if (input === 'g' && selected) openTagPanel();
       if (input === 'G' && txs.length > 0) {
-        setAllTags(getTagOptions());
-        setTagInput('');
-        setTagCursor(0);
-        setMode('tag-all');
+        void getTagOptions().then((tags) => {
+          setAllTags(tags);
+          setTagInput('');
+          setTagCursor(0);
+          setMode('tag-all');
+        });
         return;
       }
       if (input === 'c' && selected?.manual_category) clearOverride();

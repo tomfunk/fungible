@@ -4,9 +4,10 @@ import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
 import { getMerchantSummary, type MerchantSummaryRow } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
-import { fmt, fmtSigned, bar, Divider } from './fmt.js';
+import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
@@ -30,29 +31,49 @@ export function Trends({
   isActive?: boolean;
   showHints: boolean;
 }) {
-  const [views] = useState<View[]>(buildTrendViews);
-  const [viewIdx, setViewIdx] = useState(() => {
-    const cat = initialFilter?.category ?? null;
-    if (!cat) return 0;
-    const idx = views.findIndex((v) => v.category === cat);
-    return idx >= 0 ? idx : 0;
+  const refreshKey = useRefreshKey();
+  const [views, setViews] = useState<View[]>([
+    { mode: 'expenses',      category: null, flex: null,            label: 'Expenses'      },
+    { mode: 'income',        category: null, flex: null,            label: 'Income'        },
+    { mode: 'net',           category: null, flex: null,            label: 'Net'           },
+    { mode: 'flexbreakdown', category: null, flex: null,            label: 'Flexibility'   },
+    { mode: 'flex',          category: null, flex: 'fixed',         label: 'Fixed'         },
+    { mode: 'flex',          category: null, flex: 'flexible',      label: 'Flexible'      },
+    { mode: 'flex',          category: null, flex: 'discretionary', label: 'Discretionary' },
+  ]);
+  const [viewIdx, setViewIdx] = useState(0);
+  const [range, setRange] = useState<TrendsRange>(() => {
+    const r = initialFilter?.range;
+    return (r && (TRENDS_RANGES as string[]).includes(r)) ? r as TrendsRange : 'month';
   });
-  const [range, setRange] = useState<TrendsRange>('month');
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
   const [merchantRows, setMerchantRows] = useState<MerchantSummaryRow[]>([]);
   const [merchantCursor, setMerchantCursor] = useState(0);
   const [merchantDrill, setMerchantDrill] = useState<{ category: string; from: string; to: string; label: string } | null>(null);
 
+  useEffect(() => {
+    void buildTrendViews().then((loaded) => {
+      setViews(loaded);
+      const cat = initialFilter?.category;
+      if (cat) {
+        const idx = loaded.findIndex((v) => v.category === cat);
+        if (idx >= 0) setViewIdx(idx);
+      }
+    });
+  }, []);
+
   const view = views[viewIdx] ?? views[0];
-  const isNet = view.mode === 'net';
-  const isFlexBreakdown = view.mode === 'flexbreakdown';
+  const isNet = view?.mode === 'net';
+  const isFlexBreakdown = view?.mode === 'flexbreakdown';
 
   useEffect(() => {
-    const data = getPeriodTotals(view, range);
-    setRows(data);
-    setCursor(Math.max(0, data.length - 1));
-  }, [viewIdx, range]);
+    if (!view) return;
+    void getPeriodTotals(view, range).then((data) => {
+      setRows(data);
+      setCursor(Math.max(0, data.length - 1));
+    });
+  }, [viewIdx, range, views, refreshKey]);
 
   useEffect(() => {
     setMerchantDrill(null);
@@ -193,7 +214,7 @@ export function Trends({
                     <Box key={`${row.merchant}-${i}`} gap={2}>
                       <Text color={isSelected ? C_ACCENT : undefined}>
                         {isSelected ? '▶ ' : '  '}
-                        {row.merchant.length > merchantNameW ? row.merchant.slice(0, merchantNameW - 1) + '…' : row.merchant.padEnd(merchantNameW)}
+                        {truncate(row.merchant, merchantNameW).padEnd(merchantNameW)}
                       </Text>
                       <Text color={C_NEGATIVE}>{fmt(row.total).padStart(10)}</Text>
                       <Text dimColor>{`${row.count}x`.padStart(6)}</Text>

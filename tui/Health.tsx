@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 function savingsRateColor(rate: number): string {
   if (rate < 0)  return C_NEGATIVE;
@@ -39,15 +40,23 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
-  const [data] = useState<HealthData>(loadHealthData);
+const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, totalDebt: 0, netWorth: 0 };
 
-  const defaultSpend   = Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP);
-  const defaultSavings = Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP;
+export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
+  const [data, setData] = useState<HealthData>(DEFAULT_HEALTH);
 
   const [dialIdx, setDialIdx]           = useState(0);
-  const [monthlySpend, setMonthlySpend] = useState(defaultSpend);
-  const [monthlySavings, setMonthlySavings] = useState(defaultSavings);
+  const [monthlySpend, setMonthlySpend] = useState(SPEND_STEP);
+  const [monthlySavings, setMonthlySavings] = useState(0);
+
+  useEffect(() => {
+    void loadHealthData().then((d) => {
+      setData(d);
+      setMonthlySpend(Math.max(SPEND_STEP, Math.round(d.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP));
+      setMonthlySavings(Math.round(d.monthlySavings / SPEND_STEP) * SPEND_STEP);
+    });
+  }, [refreshKey]);
   const [withdrawal, setWithdrawal]     = useState(DEFAULT_WITHDRAWAL);
   const [growth, setGrowth]             = useState(DEFAULT_GROWTH);
 
@@ -75,8 +84,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       return;
     }
     if (input === 'r') {
-      if (currentDial === 'spend')      setMonthlySpend(defaultSpend);
-      if (currentDial === 'savings')    setMonthlySavings(defaultSavings);
+      if (currentDial === 'spend')      setMonthlySpend(Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP));
+      if (currentDial === 'savings')    setMonthlySavings(Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP);
       if (currentDial === 'withdrawal') setWithdrawal(DEFAULT_WITHDRAWAL);
       if (currentDial === 'growth')     setGrowth(DEFAULT_GROWTH);
       return;
@@ -101,6 +110,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const remainingDebt  = Math.max(0, data.totalDebt - data.cash);
   const debtMonths     = monthlySavings > 0 ? remainingDebt / monthlySavings : null;
 
+  const defaultSpend    = Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP);
+  const defaultSavings  = Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP;
   const spendChanged    = monthlySpend !== defaultSpend;
   const savingsChanged  = monthlySavings !== defaultSavings;
   const withdrawChanged = withdrawal !== DEFAULT_WITHDRAWAL;

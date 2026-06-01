@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
+import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
@@ -13,7 +14,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,7 @@ function fmtDate(d: string | null): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
 
@@ -139,10 +141,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const acctInstW = Math.max(8,  acctFlex - acctNameW);
 
   function loadAccounts() {
-    setLinkedAccounts(getLinkedAccounts());
-    setDupes(getCsvPlaidDupeCandidates());
+    void getLinkedAccounts().then(setLinkedAccounts);
+    void getCsvPlaidDupeCandidates().then(setDupes);
   }
-  useEffect(() => { loadAccounts(); }, []);
+  useEffect(() => { loadAccounts(); }, [refreshKey]);
 
   function openEdit(acct: LinkedAccount) {
     const type = acct.type;
@@ -183,11 +185,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   }
 
   function saveNewAcct() {
-    createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null);
-    const accts = getCsvAccounts();
-    setCsvAccounts(accts);
-    setCsvAccountCursor(accts.length - 1);
-    setAddStep('account');
+    void createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null).then(() => {
+      void getCsvAccounts().then((accts) => {
+        setCsvAccounts(accts);
+        setCsvAccountCursor(accts.length - 1);
+        setAddStep('account');
+      });
+    });
   }
 
   function saveManualAsset() {
@@ -238,7 +242,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
-      '--experimental-sqlite', '--no-warnings',
+      '--no-warnings',
       '--import', 'tsx/esm',
       script,
     ], { cwd: new URL('..', import.meta.url).pathname });
@@ -283,12 +287,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function doImport() {
     const acct = csvAccounts[csvAccountCursor];
-    const result = importCsvTransactions(csvRows, acct, {
+    void importCsvTransactions(csvRows, acct, {
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
+    }).then((result) => {
+      setImportResult(result);
+      setAddStep('done');
     });
-    setImportResult(result);
-    setAddStep('done');
   }
 
   function previewRow(row: string[]) {
@@ -411,10 +416,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
       if (input === 'x' && dupes[dupeCursor]) {
-        deleteDuplicate(dupes[dupeCursor].csvId);
-        const next = getCsvPlaidDupeCandidates();
-        setDupes(next);
-        setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+        void deleteDuplicate(dupes[dupeCursor].csvId).then(() => {
+          void getCsvPlaidDupeCandidates().then((next) => {
+            setDupes(next);
+            setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+          });
+        });
         return;
       }
       if (input === 'X') {
@@ -466,7 +473,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         else if (addStep === 'map-debit')  { setDebitCol(colCursor); setColCursor(0); setAddStep('map-credit'); }
         else if (addStep === 'map-credit') {
           setCreditCol(colCursor);
-          const accts = getCsvAccounts(); setCsvAccounts(accts); setAddStep('account');
+          void getCsvAccounts().then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
         }
       }
       return;
@@ -481,8 +488,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'direction') {
       if (key.escape) { setAddStep('landing'); return; }
-      if (input === 'i') { setPositiveIsInflow(true);  const a = getCsvAccounts(); setCsvAccounts(a); setAddStep('account'); }
-      if (input === 'o') { setPositiveIsInflow(false); const a = getCsvAccounts(); setCsvAccounts(a); setAddStep('account'); }
+      if (input === 'i') { setPositiveIsInflow(true);  void getCsvAccounts().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'o') { setPositiveIsInflow(false); void getCsvAccounts().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
       return;
     }
 
@@ -573,9 +580,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       <Box marginTop={1}>
         <Box gap={3}>
-          <Text bold color={mainView === 'accounts' ? C_NEUTRAL : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
-          <Text bold color={mainView === 'add-data' ? C_NEUTRAL : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
-          <Text bold color={mainView === 'dupes' ? C_NEUTRAL : undefined} dimColor={mainView !== 'dupes'}>
+          <Text bold color={mainView === 'accounts' ? C_ACCENT : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
+          <Text bold color={mainView === 'add-data' ? C_ACCENT : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
+          <Text bold color={mainView === 'dupes' ? C_ACCENT : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
           {showHints && <Text dimColor>[Tab]</Text>}
@@ -618,7 +625,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                       {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
-                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? C_WARNING : undefined}>{acct.nickname ? '✎' : ' '}</Text>
+                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? C_MANUAL : undefined}>{acct.nickname ? '✎' : ' '}</Text>
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
@@ -702,7 +709,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text color={editField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
                     {editField === 'subtype' ? '▶ ' : '  '}Subtype
                   </Text>
-                  <Text color={editField === 'subtype' ? C_ACCENT : C_WARNING}>
+                  <Text color={editField === 'subtype' ? C_ACCENT : C_DIM}>
                     {'← '}{editSubtype || '—'}{'  →'}
                   </Text>
                 </Box>
@@ -887,7 +894,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text color={newAcctField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
                     {newAcctField === 'subtype' ? '▶ ' : '  '}Subtype
                   </Text>
-                  <Text color={newAcctField === 'subtype' ? C_ACCENT : C_WARNING}>
+                  <Text color={newAcctField === 'subtype' ? C_ACCENT : C_DIM}>
                     {'← '}{newAcctSubtype || '—'}{'  →'}
                   </Text>
                 </Box>

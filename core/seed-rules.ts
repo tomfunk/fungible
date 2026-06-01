@@ -60,21 +60,34 @@ const RULES: { priority: number; match_type: 'name' | 'regex'; pattern: string; 
   { priority: 9, match_type: 'regex', pattern: 'GOOGLE.*STORAGE', category: 'Subscriptions' },
 ];
 
-export function seedRules(): { rules: number; recategorized: number } {
-  db.prepare('DELETE FROM category_rules').run();
-  const insert = db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (?, ?, ?, ?)');
-  for (const r of RULES) insert.run(r.priority, r.match_type, r.pattern, r.category);
+export async function seedRules(): Promise<{ rules: number; recategorized: number }> {
+  await db.execute('DELETE FROM category_rules');
+  await db.batch(
+    RULES.map((r) => ({
+      sql: 'INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (?, ?, ?, ?)',
+      args: [r.priority, r.match_type, r.pattern, r.category],
+    })),
+    'write',
+  );
 
-  const uncategorized = db.prepare(
-    'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE category = ? AND manual_category IS NULL'
-  ).all('Uncategorized') as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
+  const uncategorizedResult = await db.execute({
+    sql: 'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE category = ? AND manual_category IS NULL',
+    args: ['Uncategorized'],
+  });
+  const uncategorized = uncategorizedResult.rows as unknown as {
+    id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number;
+  }[];
 
-  const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
   let recategorized = 0;
+  const updates: { sql: string; args: (string | number | null)[] }[] = [];
   for (const tx of uncategorized) {
-    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-    if (cat !== 'Uncategorized') { update.run(cat, tx.id); recategorized++; }
+    const cat = await categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+    if (cat !== 'Uncategorized') {
+      updates.push({ sql: 'UPDATE transactions SET category = ? WHERE id = ?', args: [cat, tx.id] });
+      recategorized++;
+    }
   }
+  if (updates.length > 0) await db.batch(updates, 'write');
 
   return { rules: RULES.length, recategorized };
 }

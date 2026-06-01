@@ -83,7 +83,7 @@ export function Setup() {
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
-      '--experimental-sqlite', '--no-warnings',
+      '--no-warnings',
       '--import', 'tsx/esm',
       script,
     ], { cwd: new URL('..', import.meta.url).pathname });
@@ -159,9 +159,7 @@ export function Setup() {
 
     if (step === 'seed-choice') {
       if (input === 'y') {
-        const result = seedRules();
-        setSeedResult(result);
-        setStep('done');
+        void seedRules().then((result) => { setSeedResult(result); setStep('done'); });
         return;
       }
       if (input === 'n') { setStep('done'); return; }

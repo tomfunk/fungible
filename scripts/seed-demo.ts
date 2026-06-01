@@ -5,33 +5,27 @@
 import { db } from '../core/db.js';
 import { seedRules } from '../core/seed-rules.js';
 
-export function seedDemo() {
-  const existing = (db.prepare('SELECT COUNT(*) as c FROM transactions').get() as { c: number }).c;
+export async function seedDemo() {
+  const countResult = await db.execute('SELECT COUNT(*) as c FROM transactions');
+  const existing = (countResult.rows[0] as unknown as { c: number }).c;
   if (existing > 0) return; // already seeded
 
-  seedRules();
+  await seedRules();
 
 // ── Accounts ──────────────────────────────────────────────────────────────────
 
-db.prepare(`INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`).run(
-  'demo-checking', 'Everyday Checking', 'depository', 'checking', 'First National Bank', '4242'
-);
-db.prepare(`INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`).run(
-  'demo-savings', 'High-Yield Savings', 'depository', 'savings', 'First National Bank', '8888'
-);
-db.prepare(`INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`).run(
-  'demo-credit', 'Rewards Visa', 'credit', 'credit card', 'Chase', '1234'
-);
-db.prepare(`INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`).run(
-  'demo-brokerage', 'Brokerage', 'investment', 'brokerage', 'Fidelity', '5678'
-);
+await db.batch([
+  { sql: `INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`,
+    args: ['demo-checking', 'Everyday Checking', 'depository', 'checking', 'First National Bank', '4242'] },
+  { sql: `INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`,
+    args: ['demo-savings', 'High-Yield Savings', 'depository', 'savings', 'First National Bank', '8888'] },
+  { sql: `INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`,
+    args: ['demo-credit', 'Rewards Visa', 'credit', 'credit card', 'Chase', '1234'] },
+  { sql: `INSERT OR IGNORE INTO accounts (id, name, type, subtype, institution_name, mask) VALUES (?, ?, ?, ?, ?, ?)`,
+    args: ['demo-brokerage', 'Brokerage', 'investment', 'brokerage', 'Fidelity', '5678'] },
+], 'write');
 
 // ── Transactions ──────────────────────────────────────────────────────────────
-
-const insert = db.prepare(`
-  INSERT OR IGNORE INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-`);
 
 const txns: [string, string, string, string, string | null, number, string][] = [
   // Income
@@ -55,12 +49,12 @@ const txns: [string, string, string, string, string | null, number, string][] = 
 
   // Groceries
   ['demo-t030', 'demo-credit',   '2026-05-06', 'Whole Foods Market',            'Whole Foods',       87.43,  'Grocery'],
-  ['demo-t031', 'demo-credit',   '2026-05-10', 'Trader Joe\'s',                 'Trader Joe\'s',     54.21,  'Grocery'],
+  ['demo-t031', 'demo-credit',   '2026-05-10', "Trader Joe's",                  "Trader Joe's",      54.21,  'Grocery'],
   ['demo-t032', 'demo-credit',   '2026-05-16', 'Whole Foods Market',            'Whole Foods',       63.80,  'Grocery'],
   ['demo-t033', 'demo-credit',   '2026-04-07', 'Whole Foods Market',            'Whole Foods',       91.20,  'Grocery'],
-  ['demo-t034', 'demo-credit',   '2026-04-14', 'Trader Joe\'s',                 'Trader Joe\'s',     48.60,  'Grocery'],
+  ['demo-t034', 'demo-credit',   '2026-04-14', "Trader Joe's",                  "Trader Joe's",      48.60,  'Grocery'],
   ['demo-t035', 'demo-credit',   '2026-03-09', 'Whole Foods Market',            'Whole Foods',       79.40,  'Grocery'],
-  ['demo-t036', 'demo-credit',   '2026-03-20', 'Trader Joe\'s',                 'Trader Joe\'s',     61.30,  'Grocery'],
+  ['demo-t036', 'demo-credit',   '2026-03-20', "Trader Joe's",                  "Trader Joe's",      61.30,  'Grocery'],
 
   // Dining
   ['demo-t040', 'demo-credit',   '2026-05-07', 'Sweetgreen',                    'Sweetgreen',        16.50,  'Dining'],
@@ -85,7 +79,7 @@ const txns: [string, string, string, string, string | null, number, string][] = 
   ['demo-t060', 'demo-credit',   '2026-05-11', 'Amazon',                        'Amazon',            43.99,  'Shopping'],
   ['demo-t061', 'demo-credit',   '2026-05-15', 'Uniqlo',                        'Uniqlo',            89.00,  'Shopping'],
   ['demo-t062', 'demo-credit',   '2026-04-20', 'Amazon',                        'Amazon',            27.50,  'Shopping'],
-  ['demo-t063', 'demo-credit',   '2026-03-17', 'Amazon',                        'Amazon',            112.34, 'Shopping'],
+  ['demo-t063', 'demo-credit',   '2026-03-17', 'Amazon',                        'Amazon',           112.34,  'Shopping'],
 
   // Health
   ['demo-t070', 'demo-credit',   '2026-05-02', 'Equinox',                       'Equinox',          135.00,  'Personal Care'],
@@ -104,44 +98,56 @@ const txns: [string, string, string, string, string | null, number, string][] = 
   ['demo-t087', 'demo-credit',   '2026-04-28', 'Japan Airlines',                'JAL',              890.00,  'Travel'],
 
   // Credit card payment (transfer)
-  ['demo-t090', 'demo-checking', '2026-05-15', 'Chase Credit Card Payment',     null,              -1200.00, 'Transfer'],
-  ['demo-t091', 'demo-checking', '2026-04-15', 'Chase Credit Card Payment',     null,              -1100.00, 'Transfer'],
+  ['demo-t090', 'demo-checking', '2026-05-15', 'Chase Credit Card Payment',     null,             -1200.00,  'Transfer'],
+  ['demo-t091', 'demo-checking', '2026-04-15', 'Chase Credit Card Payment',     null,             -1100.00,  'Transfer'],
 ];
 
-for (const [id, acct, date, name, merchant, amount, category] of txns) {
-  insert.run(id, acct, date, name, merchant, amount, category, category);
-}
+await db.batch(
+  txns.map(([id, acct, date, name, merchant, amount, category]) => ({
+    sql: `INSERT OR IGNORE INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    args: [id, acct, date, name, merchant, amount, category, category],
+  })),
+  'write',
+);
 
 // ── Balance history ────────────────────────────────────────────────────────────
 
-const insertBal = db.prepare(`
-  INSERT OR IGNORE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)
-`);
-
 const balances: [string, number, string][] = [
-  ['demo-checking',  8420.00, '2026-05-25'],
-  ['demo-checking',  6810.00, '2026-04-30'],
-  ['demo-checking',  5990.00, '2026-03-31'],
-  ['demo-savings',  18500.00, '2026-05-25'],
-  ['demo-savings',  18200.00, '2026-04-30'],
-  ['demo-savings',  17900.00, '2026-03-31'],
-  ['demo-credit',   -1340.00, '2026-05-25'],
-  ['demo-credit',    -980.00, '2026-04-30'],
-  ['demo-credit',   -1120.00, '2026-03-31'],
+  ['demo-checking',   8420.00, '2026-05-25'],
+  ['demo-checking',   6810.00, '2026-04-30'],
+  ['demo-checking',   5990.00, '2026-03-31'],
+  ['demo-savings',   18500.00, '2026-05-25'],
+  ['demo-savings',   18200.00, '2026-04-30'],
+  ['demo-savings',   17900.00, '2026-03-31'],
+  ['demo-credit',    -1340.00, '2026-05-25'],
+  ['demo-credit',     -980.00, '2026-04-30'],
+  ['demo-credit',    -1120.00, '2026-03-31'],
   ['demo-brokerage', 34200.00, '2026-05-25'],
   ['demo-brokerage', 32100.00, '2026-04-30'],
   ['demo-brokerage', 30500.00, '2026-03-31'],
 ];
 
-for (const [acct, bal, date] of balances) insertBal.run(acct, bal, date);
+await db.batch(
+  balances.map(([acct, bal, date]) => ({
+    sql: `INSERT OR IGNORE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)`,
+    args: [acct, bal, date],
+  })),
+  'write',
+);
 
 // ── Tags ──────────────────────────────────────────────────────────────────────
 
-db.prepare(`INSERT OR IGNORE INTO tags (name) VALUES (?)`).run('tokyo trip');
-const tagId = (db.prepare(`SELECT id FROM tags WHERE name = 'tokyo trip'`).get() as { id: number }).id;
-const tagInsert = db.prepare(`INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)`);
-for (const id of ['demo-t080','demo-t081','demo-t082','demo-t083','demo-t084','demo-t085','demo-t086','demo-t087']) {
-  tagInsert.run(id, tagId);
-}
+await db.execute({ sql: `INSERT OR IGNORE INTO tags (name) VALUES (?)`, args: ['tokyo trip'] });
+const tagResult = await db.execute(`SELECT id FROM tags WHERE name = 'tokyo trip'`);
+const tagId = (tagResult.rows[0] as unknown as { id: number }).id;
+
+await db.batch(
+  ['demo-t080','demo-t081','demo-t082','demo-t083','demo-t084','demo-t085','demo-t086','demo-t087'].map((id) => ({
+    sql: `INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)`,
+    args: [id, tagId],
+  })),
+  'write',
+);
 
 }

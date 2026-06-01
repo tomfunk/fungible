@@ -11,7 +11,6 @@ type Rule = {
 
 // Plaid's personal_finance_category → our simplified categories
 const PLAID_CATEGORY_MAP: Record<string, string> = {
-  // Plaid API categories
   INCOME: 'Income',
   TRANSFER_IN: 'Transfer',
   TRANSFER_OUT: 'Transfer',
@@ -28,8 +27,6 @@ const PLAID_CATEGORY_MAP: Record<string, string> = {
   TRANSPORTATION: 'Transportation',
   TRAVEL: 'Travel',
   RENT_AND_UTILITIES: 'Bills & Utilities',
-
-  // Capital One CSV export categories
   'Merchandise': 'Shopping',
   'Gas/Automotive': 'Transportation',
   'Other Travel': 'Travel',
@@ -46,9 +43,14 @@ const PLAID_CATEGORY_MAP: Record<string, string> = {
   'OTHER': 'Uncategorized',
 };
 
-export function categorize(name: string, merchant: string | null, plaidCategory: string | null, amount?: number): string {
-  const rules = db.prepare('SELECT match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC').all() as Rule[];
-
+/** Pure sync categorization using pre-loaded rules. */
+export function categorizeWithRules(
+  rules: Rule[],
+  name: string,
+  merchant: string | null,
+  plaidCategory: string | null,
+  amount?: number,
+): string {
   const haystacks = [name.toLowerCase()];
   if (merchant && merchant.toLowerCase() !== name.toLowerCase()) haystacks.push(merchant.toLowerCase());
 
@@ -64,16 +66,45 @@ export function categorize(name: string, merchant: string | null, plaidCategory:
   return 'Uncategorized';
 }
 
-/** Re-categorize all transactions that don't have a manual override. Returns the count updated. */
-export function applyCategoriesToAll(): number {
-  const rows = db.prepare(
-    'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE manual_category IS NULL'
-  ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
-  const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
-  let count = 0;
+/** Load category rules from DB. */
+export async function loadCategoryRules(): Promise<Rule[]> {
+  const result = await db.execute(
+    'SELECT match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC'
+  );
+  return result.rows as unknown as Rule[];
+}
+
+/** Categorize a single transaction (loads rules from DB). */
+export async function categorize(
+  name: string,
+  merchant: string | null,
+  plaidCategory: string | null,
+  amount?: number,
+): Promise<string> {
+  const rules = await loadCategoryRules();
+  return categorizeWithRules(rules, name, merchant, plaidCategory, amount);
+}
+
+/** Re-categorize all transactions without a manual override. Returns count updated. */
+export async function applyCategoriesToAll(): Promise<number> {
+  const rules = await loadCategoryRules();
+
+  const txRes = await db.execute(
+    'SELECT id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
+  );
+  const rows = txRes.rows as unknown as {
+    id: string; name: string; merchant_name: string | null;
+    raw_category: string | null; amount: number; category: string;
+  }[];
+
+  const updates: { sql: string; args: (string | number | null)[] }[] = [];
   for (const tx of rows) {
-    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-    if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
+    const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+    if (cat !== 'Uncategorized' && cat !== tx.category) {
+      updates.push({ sql: 'UPDATE transactions SET category = ? WHERE id = ?', args: [cat, tx.id] });
+    }
   }
-  return count;
+
+  if (updates.length > 0) await db.batch(updates, 'write');
+  return updates.length;
 }

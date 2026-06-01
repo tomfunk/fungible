@@ -22,6 +22,15 @@ done
 TSX_ESM=$(node --no-warnings -e \
   "const r=require('module').createRequire('$PACKAGE_DIR/package.json');process.stdout.write(r.resolve('tsx/esm'))")
 
-exec node --experimental-sqlite --no-warnings \
-  --import "$TSX_ESM" \
-  "$PACKAGE_DIR/tui/index.tsx" "$@"
+SUBCOMMAND="${1:-}"
+case "$SUBCOMMAND" in
+  mcp)
+    exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/mcp/server.ts"
+    ;;
+  api)
+    exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/api/server.ts"
+    ;;
+  *)
+    exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/tui/index.tsx" "$@"
+    ;;
+esac

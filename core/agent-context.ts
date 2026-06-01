@@ -59,8 +59,8 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 
 // ─── Balances ─────────────────────────────────────────────────────────────────
 
-export function getBalances(): BalanceSummary {
-  const rows = db.prepare(`
+export async function getBalances(): Promise<BalanceSummary> {
+  const result = await db.execute(`
     SELECT
       a.id, COALESCE(a.nickname, a.name) as name, a.type, a.subtype,
       a.institution_name as institution,
@@ -78,12 +78,14 @@ export function getBalances(): BalanceSummary {
         ELSE 4
       END,
       bh.balance DESC
-  `).all() as (Omit<AccountWithBalance, 'isAsset' | 'isLiability'>)[];
+  `);
+  const rows = result.rows as unknown as (Omit<AccountWithBalance, 'isAsset' | 'isLiability'>)[];
 
   const accounts: AccountWithBalance[] = rows.map((r) => ({
     ...r,
+    balance: Number(r.balance),
     isAsset: r.type === 'depository' || r.type === 'investment'
-      || (r.type === 'other' && r.balance > 0),
+      || (r.type === 'other' && Number(r.balance) > 0),
     isLiability: r.type === 'credit',
   }));
 
@@ -119,13 +121,13 @@ export function getBalances(): BalanceSummary {
 
 // ─── Financial Health ─────────────────────────────────────────────────────────
 
-export function getFinancialHealth(
+export async function getFinancialHealth(
   withdrawalRate = 4,
   annualGrowthPct = 7,
-): FinancialHealth {
-  const balances = getBalances();
+): Promise<FinancialHealth> {
+  const balances = await getBalances();
 
-  const expRow = db.prepare(`
+  const expResult = await db.execute(`
     SELECT
       COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_expenses,
       COALESCE(
@@ -138,10 +140,11 @@ export function getFinancialHealth(
       AND pending = 0 AND ignored = 0
       AND category NOT IN (SELECT category FROM hidden_categories)
       AND category != 'Transfer'
-  `).get() as { avg_expenses: number; avg_savings: number };
+  `);
+  const expRow = expResult.rows[0] as unknown as { avg_expenses: number; avg_savings: number };
 
-  const avgMonthlyExpenses = expRow.avg_expenses;
-  const avgMonthlySavings  = expRow.avg_savings;
+  const avgMonthlyExpenses = Number(expRow.avg_expenses);
+  const avgMonthlySavings  = Number(expRow.avg_savings);
 
   const cashRunwayMonths   = avgMonthlyExpenses > 0 ? balances.cash   / avgMonthlyExpenses : 0;
   const liquidRunwayMonths = avgMonthlyExpenses > 0 ? balances.liquid / avgMonthlyExpenses : 0;
@@ -173,7 +176,7 @@ export function getFinancialHealth(
  * Month-by-month spending summary for the last N months.
  * If category is provided, also returns that category's total per month.
  */
-export function getSpendingTrends(months = 12, category?: string): MonthlyTrendRow[] {
+export async function getSpendingTrends(months = 12, category?: string): Promise<MonthlyTrendRow[]> {
   // Build list of (year, month) for the last N months
   const now = new Date();
   const periods: { year: number; month: number; from: string; to: string }[] = [];
@@ -186,17 +189,21 @@ export function getSpendingTrends(months = 12, category?: string): MonthlyTrendR
     periods.push({ year, month, from, to });
   }
 
-  return periods.map(({ year, month, from, to }) => {
-    const rows = db.prepare(`
-      SELECT category, SUM(amount) as total
-      FROM transactions
-      WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0
-        AND category NOT IN (SELECT category FROM hidden_categories)
-      GROUP BY category
-    `).all(from, to) as { category: string; total: number }[];
+  return Promise.all(periods.map(async ({ year, month, from, to }) => {
+    const result = await db.execute({
+      sql: `
+        SELECT category, SUM(amount) as total
+        FROM transactions
+        WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0
+          AND category NOT IN (SELECT category FROM hidden_categories)
+        GROUP BY category
+      `,
+      args: [from, to],
+    });
+    const rows = result.rows as unknown as { category: string; total: number }[];
 
-    const income   = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
-    const expenses = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
+    const income   = rows.filter((r) => Number(r.total) < 0).reduce((s, r) => s + Math.abs(Number(r.total)), 0);
+    const expenses = rows.filter((r) => Number(r.total) > 0).reduce((s, r) => s + Number(r.total), 0);
 
     const row: MonthlyTrendRow = {
       year,
@@ -210,11 +217,11 @@ export function getSpendingTrends(months = 12, category?: string): MonthlyTrendR
     if (category) {
       const catRow = rows.find((r) => r.category === category);
       row.category = category;
-      row.categoryTotal = catRow ? catRow.total : 0;
+      row.categoryTotal = catRow ? Number(catRow.total) : 0;
     }
 
     return row;
-  });
+  }));
 }
 
 // ─── App Context ──────────────────────────────────────────────────────────────

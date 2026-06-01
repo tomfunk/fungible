@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
@@ -7,10 +7,12 @@ import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 import { useSetTyping } from './TypingContext.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
-export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean; initialFilter?: TxFilter }) {
+  const refreshKey = useRefreshKey();
   const [tags, setTags] = useState<Tag[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
@@ -20,14 +22,28 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
 
-  function load() { setTags(getAllTags()); }
-  useEffect(() => { load(); }, []);
+  function load() { void getAllTags().then(setTags); }
+
+  const initialNavDone = useRef(false);
+  useEffect(() => {
+    void getAllTags().then((loaded) => {
+      setTags(loaded);
+      if (!initialNavDone.current) {
+        initialNavDone.current = true;
+        const target = initialFilter?.tag;
+        if (target) {
+          const idx = loaded.findIndex((t) => t.name.toLowerCase() === target.toLowerCase());
+          if (idx >= 0) { setCursor(idx); openDetail(loaded[idx]); }
+        }
+      }
+    });
+  }, [refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(mode === 'search' || mode === 'add' || mode === 'rename'); }, [mode]);
 
   function openDetail(tag: Tag) {
-    setTagSummary(getTagSummary(tag.name));
+    void getTagSummary(tag.name).then(setTagSummary);
     setCatCursor(0);
     setMode('detail');
   }
@@ -88,13 +104,13 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       if (key.leftArrow) {
         const next = Math.max(0, cursor - 1);
         setCursor(next);
-        if (visibleTags[next]) { setTagSummary(getTagSummary(visibleTags[next].name)); setCatCursor(0); }
+        if (visibleTags[next]) { void getTagSummary(visibleTags[next].name).then(setTagSummary); setCatCursor(0); }
         return;
       }
       if (key.rightArrow) {
         const next = Math.min(visibleTags.length - 1, cursor + 1);
         setCursor(next);
-        if (visibleTags[next]) { setTagSummary(getTagSummary(visibleTags[next].name)); setCatCursor(0); }
+        if (visibleTags[next]) { void getTagSummary(visibleTags[next].name).then(setTagSummary); setCatCursor(0); }
         return;
       }
       if (key.upArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }

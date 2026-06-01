@@ -10,6 +10,7 @@ import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, CURSOR, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
+import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
@@ -20,6 +21,7 @@ type Section = 'rules' | 'names' | 'categories';
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const refreshKey = useRefreshKey();
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -75,15 +77,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const catNameW = Math.max(12, inner - 28);
 
   function load() {
-    setRules(getAllRules());
-    setNameRules(getAllNameRules());
-    setUncategorized(getUncategorizedCount());
-    setHiddenSet(getHiddenCategorySet());
-    setCategories(getAllCategories());
-    setCatDetails(getCategoryDetails());
+    void getAllRules().then(setRules);
+    void getAllNameRules().then(setNameRules);
+    void getUncategorizedCount().then(setUncategorized);
+    void getHiddenCategorySet().then(setHiddenSet);
+    void getAllCategories().then(setCategories);
+    void getCategoryDetails().then(setCatDetails);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [refreshKey]);
 
   function handleDeleteRule(id: number) {
     deleteCategoryRule(id);
@@ -201,7 +203,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           const cat = categories[catListCursor];
           const nowHidden = !hiddenSet.has(cat);
           toggleHiddenCategory(cat, hiddenSet);
-          setHiddenSet(getHiddenCategorySet());
+          void getHiddenCategorySet().then(setHiddenSet);
           setStatusMsg(`${cat} is now ${nowHidden ? 'hidden' : 'visible'}`);
           setTimeout(() => setStatusMsg(''), 2000);
           return;
@@ -330,7 +332,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           {SECTIONS.map((s) => (
-            <Text key={s} bold color={section === s ? C_NEUTRAL : undefined} dimColor={section !== s}>
+            <Text key={s} bold color={section === s ? C_ACCENT : undefined} dimColor={section !== s}>
               {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : 'Categories'}
             </Text>
           ))}
