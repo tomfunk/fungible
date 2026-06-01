@@ -402,6 +402,7 @@ async function executeToolImpl(
 
       const from = str('from'); const to = str('to');
       const year = num('year'); const month = num('month');
+      const accountId = str('account_id') || undefined;
 
       const fmtRows = (rows: Awaited<ReturnType<typeof getMerchantSummary>>, label: string) => {
         if (!rows.length) return `No merchant spend found for "${category}" in ${label}.`;
@@ -409,12 +410,12 @@ async function executeToolImpl(
       };
 
       if (from && to) {
-        return fmtRows(await getMerchantSummary(category, from, to), `${from} – ${to}`);
+        return fmtRows(await getMerchantSummary(category, from, to, accountId), `${from} – ${to}`);
       }
       if (year && month) {
         const start = `${year}-${String(month).padStart(2, '0')}-01`;
         const end   = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
-        return fmtRows(await getMerchantSummary(category, start, end), `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`);
+        return fmtRows(await getMerchantSummary(category, start, end, accountId), `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`);
       }
       return "Provide either (year + month) or (from + to).";
     }

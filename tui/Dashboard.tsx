@@ -197,7 +197,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         return;
       }
       if (key.upArrow)   { setMerchantCursor((c) => Math.max(0, c - 1)); return; }
-      if (key.downArrow) { setMerchantCursor((c) => Math.min(merchantRows.length - 1, c + 1)); return; }
+      if (key.downArrow) { setMerchantCursor((c) => merchantRows.length > 0 ? Math.min(merchantRows.length - 1, c + 1) : 0); return; }
       if (key.return) {
         const row = merchantRows[merchantCursor];
         if (row && merchantDrill) {
@@ -261,7 +261,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       const displayCats = displaySummary?.byCategory ?? [];
       if (key.upArrow)   { setCatCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setCatCursor((c) => Math.min(displayCats.length - 1, c + 1)); return; }
-      if (input === 'm') {
+      if (input === 'm' && !driftMode) {
         const cat = displayCats[catCursor];
         if (cat) {
           const { from, to } = getPeriodDates(range, anchor);
