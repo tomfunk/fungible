@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
-import { getMerchantSummary, type MerchantSummaryRow } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
-import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
+import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -48,8 +47,6 @@ export function Trends({
   });
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
-  const [merchantRows, setMerchantRows] = useState<MerchantSummaryRow[]>([]);
-  const [merchantDrill, setMerchantDrill] = useState<{ category: string; from: string; to: string; label: string } | null>(null);
 
   useEffect(() => {
     void buildTrendViews().then((loaded) => {
@@ -74,40 +71,7 @@ export function Trends({
     });
   }, [viewIdx, range, views, refreshKey]);
 
-  useEffect(() => {
-    setMerchantDrill(null);
-    setMerchantRows([]);
-  }, [viewIdx, range]);
-
-  // When period cursor changes while drill is active, re-fetch merchants for new period
-  useEffect(() => {
-    if (!merchantDrill) return;
-    const row = rows[cursor];
-    if (!row) return;
-    setMerchantDrill({ category: merchantDrill.category, from: row.from, to: row.to, label: row.label });
-    void getMerchantSummary(merchantDrill.category, row.from, row.to).then(setMerchantRows);
-  }, [cursor]);
-
   useInput((input, key) => {
-    if (merchantDrill) {
-      if (key.escape) { setMerchantDrill(null); setMerchantRows([]); return; }
-      // ↑↓ navigate periods — useEffect re-fetches merchant data when cursor changes
-      if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
-      if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
-      if (key.return) {
-        const row = rows[cursor];
-        if (row) onNavigate('transactions', { category: merchantDrill.category, from: row.from, to: row.to });
-        return;
-      }
-      // Tab and 'r' exit drill and fall through to their normal handlers
-      if (key.tab || input === 'r') {
-        setMerchantDrill(null);
-        setMerchantRows([]);
-      } else {
-        return;
-      }
-    }
-
     if (key.escape) { onNavigate('dashboard'); return; }
     if (input === '2') {
       const row = rows[cursor];
@@ -128,13 +92,6 @@ export function Trends({
     if (key.return) {
       const row = rows[cursor];
       if (row) onNavigate('transactions', { category: view.category ?? undefined, from: row.from, to: row.to });
-    }
-    if (input === 'm') {
-      if (view.mode !== 'category' || !view.category) return;
-      const row = rows[cursor];
-      if (!row) return;
-      setMerchantDrill({ category: view.category, from: row.from, to: row.to, label: row.label });
-      void getMerchantSummary(view.category, row.from, row.to).then(setMerchantRows);
     }
   }, { isActive: isActive !== false });
 
@@ -171,7 +128,6 @@ export function Trends({
   const HALF_BAR = Math.max(6, Math.floor((inner - rowBase - 13 - 4 - 1) / 2));
   // Flex: [rowBase] gap [total=13] gap [bar1] gap [bar2] gap [bar3] — 4 gaps of 2
   const FLEX_BAR = Math.max(5, Math.floor((inner - rowBase - 13 - 8) / 3));
-  const merchantNameW = Math.max(12, inner - 30);
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -182,9 +138,7 @@ export function Trends({
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
-        {showHints && <Text dimColor>
-          {merchantDrill ? '↑↓ period  ·  Enter txns  ·  [Tab]/[r] exit  ·  Esc back' : '[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns  ·  [m] merchants'}
-        </Text>}
+        {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
@@ -200,27 +154,7 @@ export function Trends({
       </Box>
       <Divider />
 
-      {merchantDrill ? (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold dimColor>{`TOP MERCHANTS · ${merchantDrill.category} · ${merchantDrill.label}`}</Text>
-          <Box marginTop={1}>
-            {merchantRows.length === 0 ? (
-              <Text dimColor>No merchant spend for this category in this period.</Text>
-            ) : (
-              <Box flexDirection="column">
-                {merchantRows.map((row, i) => (
-                  <Box key={`${row.merchant}-${i}`} gap={2}>
-                    <Text>{truncate(row.merchant, merchantNameW).padEnd(merchantNameW)}</Text>
-                    <Text color={C_NEGATIVE}>{fmt(row.total).padStart(10)}</Text>
-                    <Text dimColor>{`${row.count}x`.padStart(6)}</Text>
-                    <Text dimColor>{`${Math.round(row.pct * 100)}%`.padStart(6)}</Text>
-                  </Box>
-                ))}
-              </Box>
-            )}
-          </Box>
-        </Box>
-      ) : rows.length === 0 ? (
+      {rows.length === 0 ? (
         <Box marginTop={1}><Text dimColor>No data.</Text></Box>
       ) : (
         <>
