@@ -366,7 +366,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
             : view === 'account'
             ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta  ·  [/] search`
             : view === 'categories'
-            ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [m] merchants  ·  [Tab] view  ·  [d] delta  ·  [/] search'
+            ? `← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta  ·  [/] search`
             : '← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta  ·  [/] search'}
         </Text>}
       </Box>
