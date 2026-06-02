@@ -31,7 +31,7 @@
     "@libsql/client": "^0.17.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
-    "ink": "^7.0.4",
+    "ink": "^7.0.5",
     "openai": "^6.39.0",
     "plaid": "^42.2.0",
     "react": "^19.2.6",
