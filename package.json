@@ -32,7 +32,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
     "ink": "^7.0.4",
-    "openai": "^6.39.0",
+    "openai": "^6.41.0",
     "plaid": "^42.2.0",
     "react": "^19.2.6",
     "tsx": "^4.22.3",
