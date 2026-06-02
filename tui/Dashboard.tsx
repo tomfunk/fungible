@@ -14,7 +14,8 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
+import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
+import { StatCard, SectionHeader, SelectableRow, TextInput } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 
@@ -397,7 +398,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         <Box gap={2} marginTop={1}>
           <Text color={C_ACCENT}>/</Text>
           {searchMode ? (
-            <Text>{searchInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text>
+            <TextInput value={searchInput} />
           ) : (
             <Text color={C_ACCENT}>{search}</Text>
           )}
@@ -424,13 +425,15 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
             <Text dimColor>Delta not available for All Time range.</Text>
           ) : (
             <>
-              <Box gap={2} marginBottom={0}>
-                <Text dimColor>{''.padEnd(2)}</Text>
-                <Text dimColor>{'Account'.padEnd(dashAcctNameW)}</Text>
-                {driftMode
-                  ? <Text dimColor>{'vs prev'.padStart(10)}</Text>
-                  : <Text dimColor>{'Income'.padStart(10)}</Text>}
-                <Text dimColor>{'Expenses'.padStart(10)}</Text>
+              <Box marginBottom={0}>
+                <Text dimColor>{'  '}</Text>
+                <Box gap={2}>
+                  <Text dimColor>{'Account'.padEnd(dashAcctNameW)}</Text>
+                  {driftMode
+                    ? <Text dimColor>{'vs prev'.padStart(10)}</Text>
+                    : <Text dimColor>{'Income'.padStart(10)}</Text>}
+                  <Text dimColor>{'Expenses'.padStart(10)}</Text>
+                </Box>
               </Box>
               {accountRows.map((acct, i) => {
                 const isSelected = i === acctCursor;
@@ -438,8 +441,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                 const drift = driftMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
                 const spendColor = drift ? driftColor(drift.current, drift.avg12m) : C_NEGATIVE;
                 return (
-                  <Box key={acct.id} gap={2}>
-                    <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶' : ' '}</Text>
+                  <SelectableRow key={acct.id} selected={isSelected}>
                     <Text color={isFiltered ? C_WARNING : isSelected ? C_ACCENT : undefined} dimColor={!isSelected && !isFiltered}>
                       {(acct.name.length > dashAcctNameW ? acct.name.slice(0, dashAcctNameW - 1) + '…' : acct.name).padEnd(dashAcctNameW)}
                     </Text>
@@ -452,7 +454,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                       {(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(10)}
                     </Text>
                     {isFiltered && <Text color={C_WARNING}>  ●</Text>}
-                  </Box>
+                  </SelectableRow>
                 );
               })}
             </>
@@ -464,25 +466,11 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       ) : displaySummary ? (
         <>
           <Box gap={6} marginY={1}>
-            <Box flexDirection="column">
-              <Text dimColor>Income</Text>
-              <Text color={C_POSITIVE} bold>{fmt(displaySummary.income)}</Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text dimColor>Expenses</Text>
-              <Text color={C_NEGATIVE} bold>{fmt(displaySummary.expenses)}</Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text dimColor>Net</Text>
-              <Text color={displaySummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} bold>
-                {displaySummary.net >= 0 ? '+' : '-'}{fmt(displaySummary.net)}
-              </Text>
-            </Box>
+            <StatCard label="Income" value={fmt(displaySummary.income)} color={C_POSITIVE} />
+            <StatCard label="Expenses" value={fmt(displaySummary.expenses)} color={C_NEGATIVE} />
+            <StatCard label="Net" value={(displaySummary.net >= 0 ? '+' : '-') + fmt(displaySummary.net)} color={displaySummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
             {!search && uncategorized > 0 && (
-              <Box flexDirection="column">
-                <Text dimColor>Uncategorized</Text>
-                <Text color={C_WARNING} bold>{uncategorized} txns</Text>
-              </Box>
+              <StatCard label="Uncategorized" value={`${uncategorized} txns`} color={C_WARNING} />
             )}
           </Box>
 
@@ -490,7 +478,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
           {view === 'categories' ? (
             <Box flexDirection="column" marginTop={1}>
-              <Text bold dimColor>{merchantDrill ? `TOP MERCHANTS · ${merchantDrill.category}` : 'SPENDING BY CATEGORY'}</Text>
+              <SectionHeader>{merchantDrill ? `TOP MERCHANTS · ${merchantDrill.category}` : 'SPENDING BY CATEGORY'}</SectionHeader>
               {merchantDrill ? (
                 <Box flexDirection="column" marginTop={1}>
                   {merchantRows.length === 0 ? (
@@ -499,15 +487,14 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     merchantRows.map((row, i) => {
                       const isSelected = merchantCursor === i;
                       return (
-                        <Box key={`${row.merchant}-${i}`} gap={2}>
+                        <SelectableRow key={`${row.merchant}-${i}`} selected={isSelected}>
                           <Text color={isSelected ? C_ACCENT : undefined}>
-                            {isSelected ? '▶ ' : '  '}
                             {truncate(row.merchant, merchantNameW).padEnd(merchantNameW)}
                           </Text>
                           <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
                           <Text dimColor>{`${row.count}x`.padStart(6)}</Text>
                           <Text dimColor>{`${Math.round(row.pct * 100)}%`.padStart(6)}</Text>
-                        </Box>
+                        </SelectableRow>
                       );
                     })
                   )}
@@ -518,12 +505,15 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
               ) : driftMode ? (
                 <Box flexDirection="column" marginTop={1}>
                   {/* column headers */}
-                  <Box gap={2}>
-                    <Text dimColor>{''.padEnd(2 + driftCatNameW)}</Text>
-                    <Text dimColor>{'amount'.padStart(10)}</Text>
-                    <Text dimColor>{'vs prev'.padStart(9)}</Text>
-                    <Text dimColor>{'yr ago'.padStart(9)}</Text>
-                    <Text dimColor>{'12m avg'.padStart(9)}</Text>
+                  <Box>
+                    <Text dimColor>{'  '}</Text>
+                    <Box gap={2}>
+                      <Text dimColor>{''.padEnd(driftCatNameW)}</Text>
+                      <Text dimColor>{'amount'.padStart(10)}</Text>
+                      <Text dimColor>{'vs prev'.padStart(9)}</Text>
+                      <Text dimColor>{'yr ago'.padStart(9)}</Text>
+                      <Text dimColor>{'12m avg'.padStart(9)}</Text>
+                    </Box>
                   </Box>
                   {(catDrift ?? []).length === 0 ? (
                     <Text dimColor>No expense data for this period.</Text>
@@ -533,16 +523,15 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                       const color = driftColor(row.current, row.avg12m);
                       const nameW = driftCatNameW;
                       return (
-                        <Box key={`${row.category}-${i}`} gap={2}>
+                        <SelectableRow key={`${row.category}-${i}`} selected={isSelected}>
                           <Text color={isSelected ? C_ACCENT : color}>
-                            {isSelected ? '▶ ' : '  '}
                             {row.category.length > nameW ? row.category.slice(0, nameW - 1) + '…' : row.category.padEnd(nameW)}
                           </Text>
                           <Text color={C_NEUTRAL}>{fmt(row.current).padStart(10)}</Text>
                           <Text color={color}>{fmtDelta(row.lastPeriodDelta).padStart(9)}</Text>
                           <Text color={color}>{fmtDelta(row.lastYearDelta).padStart(9)}</Text>
                           <Text color={color}>{fmtDelta(row.avg12mDelta).padStart(9)}</Text>
-                        </Box>
+                        </SelectableRow>
                       );
                     })
                   )}
@@ -555,16 +544,15 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     (displaySummary?.byCategory ?? []).map((row, i) => {
                       const isSelected = catCursor === i;
                       return (
-                        <Box key={`${row.category}-${i}`} gap={2}>
+                        <SelectableRow key={`${row.category}-${i}`} selected={isSelected}>
                           <Text color={isSelected ? C_ACCENT : undefined}>
-                            {isSelected ? '▶ ' : '  '}
                             {row.category.length > dashCatNameW ? row.category.slice(0, dashCatNameW - 1) + '…' : row.category.padEnd(dashCatNameW)}
                           </Text>
                           <Text color={C_NEUTRAL}>{fmt(row.total).padStart(10)}</Text>
                           <Text color={C_ACCENT} dimColor={!isSelected}>
                             {bar(row.total, maxCategorySpend, dashBarW)}
                           </Text>
-                        </Box>
+                        </SelectableRow>
                       );
                     })
                   )}
@@ -573,7 +561,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
             </Box>
           ) : (
             <Box flexDirection="column" marginTop={1}>
-              <Text bold dimColor>SPENDING BY FLEXIBILITY</Text>
+              <SectionHeader>SPENDING BY FLEXIBILITY</SectionHeader>
               {driftMode && range === 'alltime' ? (
                 <Box marginTop={1}><Text dimColor>Delta not available for All Time range.</Text></Box>
               ) : driftMode ? (

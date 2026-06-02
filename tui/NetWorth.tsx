@@ -5,6 +5,7 @@ import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
+import { usePagination } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 const BAR_WIDTH = 32;
@@ -93,8 +94,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const AMT_W  = 14;
   const NAME_W = Math.max(14, inner - AMT_W - 16);
 
-  const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), rows.length - PAGE));
-  const visible   = rows.slice(pageStart, pageStart + PAGE);
+  const { visible, pageStart } = usePagination(rows, cursor, PAGE);
   const labelW    = range === 'year' ? 4 : range === 'quarter' ? 7 : range === 'month' ? 8 : 12;
 
   return (
