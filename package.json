@@ -34,13 +34,13 @@
     "ink": "^7.0.4",
     "openai": "^6.39.0",
     "plaid": "^42.2.0",
-    "react": "^19.2.6",
+    "react": "^19.2.7",
     "tsx": "^4.22.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.16",
     "ink-testing-library": "^4.0.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.4"
