@@ -128,10 +128,14 @@ export function Setup() {
     return null;
   }
 
-  function saveStartDate() {
+  async function saveStartDate() {
     const value = startDateInput.trim();
-    void setSetting(DEFAULT_START_DATE_KEY, value);
-    setStep('link-choice');
+    try {
+      await setSetting(DEFAULT_START_DATE_KEY, value);
+      setStep('link-choice');
+    } catch {
+      setStartDateError('Failed to save — please try again');
+    }
   }
 
   useInput((input, key) => {
@@ -175,10 +179,11 @@ export function Setup() {
     if (step === 'start-date') {
       if (key.escape) { setStep(alreadyConfigured ? 'welcome' : 'plaid-env'); setStartDateError(''); return; }
       if (key.return) {
+        if (!startDateInput.trim()) { setStep('link-choice'); return; }
         const err = validateStartDate(startDateInput);
         if (err) { setStartDateError(err); return; }
         setStartDateError('');
-        saveStartDate();
+        void saveStartDate();
         return;
       }
       if (key.backspace || key.delete) { setStartDateInput((v) => v.slice(0, -1)); setStartDateError(''); return; }
@@ -215,6 +220,10 @@ export function Setup() {
       return;
     }
   });
+
+  const startDateIsValid = step === 'start-date' && validateStartDate(startDateInput) === null;
+  const startDateRequestedDays = startDateIsValid ? daysFromStartDate(startDateInput.trim()) : null;
+  const startDateCapped = startDateRequestedDays === MAX_DAYS_REQUESTED;
 
   return (
     <Box flexDirection="column" paddingX={3} paddingY={2}>
@@ -297,42 +306,33 @@ export function Setup() {
         </Box>
       )}
 
-      {step === 'start-date' && (() => {
-        const valid = validateStartDate(startDateInput) === null;
-        // Final days_requested for this start date (calendar days + buffer, clamped).
-        const requestedDays = valid ? daysFromStartDate(startDateInput.trim()) : null;
-        const calendarDays = valid
-          ? Math.round((Date.now() - new Date(startDateInput.trim() + 'T12:00:00').getTime()) / 86_400_000)
-          : 0;
-        const capped = calendarDays + START_DATE_BUFFER_DAYS > MAX_DAYS_REQUESTED;
-        return (
-          <Box flexDirection="column" gap={1}>
-            <Text bold>Default history start date</Text>
-            <Text dimColor>
-              How far back should fungible pull transactions when you link a bank?
-              We&apos;ll use this to pre-fill the number of days requested, so you don&apos;t
-              have to do the math.
-            </Text>
-            <Text dimColor>
-              Plaid doesn&apos;t document the timezone it uses for the history window, so we add a
-              {' '}{START_DATE_BUFFER_DAYS}-day buffer to make sure your start date isn&apos;t missed.
-            </Text>
-            <Box marginTop={1}>
-              <Text>Start date (YYYY-MM-DD): </Text>
-              <Text color={C_WARNING}>{startDateInput}</Text>
-              <Text color={C_ACCENT}>█</Text>
-            </Box>
-            {requestedDays != null && (
-              <Text dimColor>= {requestedDays} days of history requested (incl. {START_DATE_BUFFER_DAYS}-day buffer)</Text>
-            )}
-            {capped && (
-              <Text color={C_WARNING}>Plaid limits history to {MAX_DAYS_REQUESTED} days, so it&apos;ll be capped there.</Text>
-            )}
-            {startDateError && <Text color={C_NEGATIVE}>{startDateError}</Text>}
-            <Text dimColor>Enter to save · Esc back</Text>
+      {step === 'start-date' && (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Default history start date</Text>
+          <Text dimColor>
+            How far back should fungible pull transactions when you link a bank?
+            We&apos;ll use this to pre-fill the number of days requested, so you don&apos;t
+            have to do the math.
+          </Text>
+          <Text dimColor>
+            Plaid doesn&apos;t document the timezone it uses for the history window, so we add a
+            {' '}{START_DATE_BUFFER_DAYS}-day buffer to make sure your start date isn&apos;t missed.
+          </Text>
+          <Box marginTop={1}>
+            <Text>Start date (YYYY-MM-DD): </Text>
+            <Text color={C_WARNING}>{startDateInput}</Text>
+            <Text color={C_ACCENT}>█</Text>
           </Box>
-        );
-      })()}
+          {startDateRequestedDays != null && (
+            <Text dimColor>= {startDateRequestedDays} days of history requested (incl. {START_DATE_BUFFER_DAYS}-day buffer)</Text>
+          )}
+          {startDateCapped && (
+            <Text color={C_WARNING}>Plaid limits history to {MAX_DAYS_REQUESTED} days, so it&apos;ll be capped there.</Text>
+          )}
+          {startDateError && <Text color={C_NEGATIVE}>{startDateError}</Text>}
+          <Text dimColor>Enter to save · Leave blank to skip · Esc back</Text>
+        </Box>
+      )}
 
       {step === 'link-choice' && (
         <Box flexDirection="column" gap={1}>
