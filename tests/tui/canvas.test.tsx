@@ -1,8 +1,59 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { evalExpr, fmtValue, fmtDialValue, type CanvasSpec } from '../../core/canvas-agent.js';
 import { CanvasView } from '../../tui/Canvas.js';
+
+// ─── generateCanvas (mocked LLM) ──────────────────────────────────────────────
+
+const MOCK_HEALTH = {
+  avgMonthlyExpenses: 12000, monthlyIncome: 15000, monthlySavings: 3000,
+  cash: 60000, liquid: 800000, totalDebt: 20000, netWorth: 1_800_000,
+};
+
+const MOCK_SPEC: CanvasSpec = {
+  title: 'Credit Card Payoff',
+  elements: [
+    { type: 'section', label: 'INPUTS' },
+    { type: 'dial', dial: { key: 'balance', label: 'Balance', default: 20000, step: 500, min: 0, format: 'dollar', hint: 'current balance' } },
+    { type: 'dial', dial: { key: 'rate',    label: 'APR',     default: 22,    step: 0.5, min: 0, max: 40, format: 'percent', hint: 'annual rate' } },
+    { type: 'dial', dial: { key: 'monthly', label: 'Monthly payment', default: 500, step: 50, min: 0, format: 'dollar', hint: 'what you pay' } },
+    { type: 'section', label: 'RESULTS' },
+    { type: 'output', output: { label: 'Months to payoff', expr: '-Math.log(1 - balance * rate/100/12 / monthly) / Math.log(1 + rate/100/12)', format: 'months', color: 'neutral' } },
+    { type: 'output', output: { label: 'Total interest', expr: 'monthly * (-Math.log(1 - balance * rate/100/12 / monthly) / Math.log(1 + rate/100/12)) - balance', format: 'dollar', color: 'negative' } },
+  ],
+};
+
+vi.mock('../../core/health.js', () => ({ loadHealthData: async () => MOCK_HEALTH }));
+vi.mock('../../core/llm-provider.js', () => ({
+  streamResponse: vi.fn(async function* () {
+    yield { type: 'tool_use', id: 'test-id', name: 'render_canvas', input: MOCK_SPEC };
+    yield { type: 'done' };
+  }),
+}));
+
+describe('generateCanvas', () => {
+  it('returns the spec from the tool call', async () => {
+    const { generateCanvas } = await import('../../core/canvas-agent.js');
+    const statuses: string[] = [];
+    const spec = await generateCanvas('how long to pay off my credit card', (s) => { statuses.push(s); });
+    expect(spec.title).toBe('Credit Card Payoff');
+    expect(spec.elements.filter((e) => e.type === 'dial')).toHaveLength(3);
+    expect(spec.elements.filter((e) => e.type === 'output')).toHaveLength(2);
+    expect(statuses).toContain('generating…');
+  });
+
+  it('throws if no tool call is returned', async () => {
+    vi.mocked(
+      (await import('../../core/llm-provider.js')).streamResponse
+    ).mockImplementationOnce(async function* () {
+      yield { type: 'text', delta: 'sorry, I cannot help' };
+      yield { type: 'done' };
+    });
+    const { generateCanvas } = await import('../../core/canvas-agent.js');
+    await expect(generateCanvas('bad prompt', () => {})).rejects.toThrow('no spec returned');
+  });
+});
 
 // ─── evalExpr ─────────────────────────────────────────────────────────────────
 
