@@ -133,10 +133,8 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="trends" showHints={showHints} />
 
-      <Box justifyContent="space-between" marginTop={1}>
-        <Text bold>Trends</Text>
-        {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
-      </Box>
+      <Box marginTop={1}><Text bold>Trends</Text></Box>
+      {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>

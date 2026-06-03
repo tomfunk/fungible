@@ -168,7 +168,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
 
       {mode === 'detail' && tag && tagSummary ? (
         <>
-          <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
+          <Box flexDirection="column" marginTop={1} marginBottom={1}>
             <Text bold>Tags <Text dimColor>— # {tag.name}  ← {cursor + 1} / {tags.length} →</Text></Text>
             {showHints && <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>}
           </Box>
@@ -208,10 +208,14 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
         </>
       ) : (
         <>
-          <Box justifyContent="space-between" marginTop={1}>
+          <Box marginTop={1}>
             <Text bold>Tags{search ? <Text color={C_WARNING}>  /{search}</Text> : null}</Text>
-            {showHints && <Text dimColor>[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
+          <Text dimColor>
+            {showHints
+              ? '[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions'
+              : '[/] search'}
+          </Text>
           {mode === 'search' && <SearchBar value={search} />}
           <Box marginTop={1}><Divider /></Box>
 

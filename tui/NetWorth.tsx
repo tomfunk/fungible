@@ -101,10 +101,8 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="networth" showHints={showHints} />
 
-      <Box marginTop={1} justifyContent="space-between">
-        <Text bold>Net Worth</Text>
-        {showHints && <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}  ·  [r] range  ·  ↑↓ scroll</Text>}
-      </Box>
+      <Box marginTop={1}><Text bold>Net Worth</Text></Box>
+      {showHints && <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}  ·  [r] range  ·  ↑↓ scroll</Text>}
       <Divider />
 
       {accounts.length === 0 ? (

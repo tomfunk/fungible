@@ -356,18 +356,19 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="dashboard" showHints={showHints} />
 
-      <Box justifyContent="space-between" marginTop={1}>
-        <Text bold>Dashboard</Text>
-        {showHints && <Text dimColor>
-          {merchantDrill
-            ? '← → period  ·  [r] range  ·  ↑↓ merchant  ·  Enter txns  ·  Esc back'
-            : view === 'account'
-            ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta  ·  [/] search`
-            : view === 'categories'
-            ? `← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta  ·  [/] search`
-            : '← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta  ·  [/] search'}
-        </Text>}
-      </Box>
+      <Box marginTop={1}><Text bold>Dashboard</Text></Box>
+      {merchantDrill
+        ? showHints && <Text dimColor>← → period  ·  [r] range  ·  ↑↓ merchant  ·  Enter txns  ·  Esc back</Text>
+        : <Text dimColor>
+            {showHints
+              ? (view === 'account'
+                  ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta  ·  [/] search`
+                  : view === 'categories'
+                    ? `← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta  ·  [/] search`
+                    : '← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta  ·  [/] search')
+              : '[/] search'}
+          </Text>
+      }
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>

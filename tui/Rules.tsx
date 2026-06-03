@@ -317,7 +317,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="rules" showHints={showHints} />
-      <Box justifyContent="space-between" marginTop={1}>
+      <Box marginTop={1}>
         <Box gap={3}>
           {SECTIONS.map((s) => (
             <Text key={s} bold color={section === s ? C_ACCENT : undefined} dimColor={section !== s}>
@@ -325,12 +325,12 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             </Text>
           ))}
         </Box>
-        {showHints && <Text dimColor>
-          {section === 'categories'
-            ? '[a] add  [n] rename  [x] delete  [v] hidden  [f] flexibility  ·  [Tab] switch'
-            : '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch'}
-        </Text>}
       </Box>
+      <Text dimColor>
+        {section === 'categories'
+          ? (showHints ? '[a] add  [n] rename  [x] delete  [v] hidden  [f] flexibility  ·  [Tab] switch' : '')
+          : (showHints ? '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch' : '[/] search')}
+      </Text>
 
       {mode === 'search' ? (
         <SearchBar value={search} hint="Esc clear" />

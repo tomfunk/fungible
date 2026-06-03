@@ -435,11 +435,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           {filterLabel ? <Text color={C_WARNING}>  {filterLabel}</Text> : null}
         </Text>
       </Box>
-      {showHints && <Box justifyContent="flex-end">
-        <Text dimColor>
-          {from ? '← →  ·  ' : ''}[s] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [x] delete
-        </Text>
-      </Box>}
+      <Text dimColor>
+        {showHints
+          ? `${from ? '← →  ·  ' : ''}[s] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [x] delete`
+          : '[/] search'}
+      </Text>
 
       {mode === 'search' && <SearchBar value={searchInput} />}
       <Box marginTop={1}><Divider /></Box>

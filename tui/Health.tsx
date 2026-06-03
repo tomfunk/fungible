@@ -124,10 +124,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="health" showHints={showHints} />
 
-      <Box marginTop={1} justifyContent="space-between">
-        <Text bold>Financial Health</Text>
-        {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
-      </Box>
+      <Box marginTop={1}><Text bold>Financial Health</Text></Box>
+      {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
       <Divider />
 
       {/* ── Snapshot ───────────────────────────────────────────────────────── */}
