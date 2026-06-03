@@ -60,6 +60,10 @@ fungible --setup   # first-time setup wizard
 fungible
 ```
 
+### Linux / WSL
+
+The "from source" instructions below work as-is on Ubuntu/Debian and Windows via WSL (tested on Ubuntu 24.04). Requires Node.js 22+.
+
 ### From source
 
 Requires Node.js 22+.
@@ -288,9 +292,11 @@ Exposes your financial data to Claude via the [Model Context Protocol](https://m
 
 - **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open.
 
-Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Config file location:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux / WSL:** `~/.config/Claude/claude_desktop_config.json`
 
-**stdio — Homebrew:**
+**stdio — Homebrew (macOS):**
 ```json
 {
   "mcpServers": {
@@ -302,7 +308,7 @@ Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_
 }
 ```
 
-**stdio — from source:**
+**stdio — from source (macOS / Linux / WSL):**
 ```json
 {
   "mcpServers": {
