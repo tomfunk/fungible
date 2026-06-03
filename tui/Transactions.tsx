@@ -15,9 +15,10 @@ import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { useTerminalWidth, CURSOR, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
@@ -61,7 +62,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [txs, setTxs] = useState<Tx[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
-  const [statusMsg, setStatusMsg] = useState('');
+  const { statusMsg, showStatus } = useStatusMessage();
   const [categories, setCategories] = useState<string[]>([]);
 
   // Edit panel state
@@ -159,9 +160,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       setTransactionCategory(selected.id, newCat);
     }
 
-    if (nameChanged || catChanged) setStatusMsg('Transaction updated');
+    if (nameChanged || catChanged) showStatus('Transaction updated');
     setMode('list');
-    setTimeout(() => setStatusMsg(''), 2000);
     load(search, true);
   }
 
@@ -184,9 +184,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       saved.push('name rule');
     }
 
-    setStatusMsg(saved.length ? `Saved: ${saved.join(' + ')}` : 'No changes');
+    showStatus(saved.length ? `Saved: ${saved.join(' + ')}` : 'No changes', 3000);
     setMode('list');
-    setTimeout(() => setStatusMsg(''), 3000);
     load(search, true);
   }
 
@@ -199,8 +198,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   function clearOverride() {
     if (!selected || !selected.manual_category) return;
     clearTransactionOverride(selected.id);
-    setStatusMsg('Override cleared');
-    setTimeout(() => setStatusMsg(''), 2000);
+    showStatus('Override cleared');
     load(search, true);
   }
 
@@ -249,8 +247,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         const t = filteredTags[tagCursor];
         const applyTag = (tagId: number) => {
           void addTagToTransactions(txs.map((tx) => tx.id), tagId);
-          setStatusMsg(`Tagged ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
-          setTimeout(() => setStatusMsg(''), 2500);
+          showStatus(`Tagged ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`, 2500);
           setMode('list');
           load(search, true);
         };
@@ -274,8 +271,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         const newCat = categories[editCatCursor];
         if (newCat) {
           setTransactionCategoryBulk(txs.map((t) => t.id), newCat);
-          setStatusMsg(`Set category to "${newCat}" for ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
-          setTimeout(() => setStatusMsg(''), 3000);
+          showStatus(`Set category to "${newCat}" for ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`, 3000);
           setMode('list');
           load(search, true);
         }
@@ -374,8 +370,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === 'C' && txs.length > 0) {
         clearOverridesBulk(txs.map((t) => t.id));
         const count = txs.filter((t) => t.manual_category).length;
-        setStatusMsg(`Cleared overrides on ${count} transaction${count !== 1 ? 's' : ''}`);
-        setTimeout(() => setStatusMsg(''), 2500);
+        showStatus(`Cleared overrides on ${count} transaction${count !== 1 ? 's' : ''}`, 2500);
         load(search, true);
         return;
       }
@@ -383,8 +378,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === 'I' && txs.length > 0) {
         const target = !selected?.ignored;
         setIgnoredBulk(txs.map((t) => t.id), target);
-        setStatusMsg(`${target ? 'Ignored' : 'Un-ignored'} ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
-        setTimeout(() => setStatusMsg(''), 2500);
+        showStatus(`${target ? 'Ignored' : 'Un-ignored'} ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`, 2500);
         load(search, true);
         return;
       }
@@ -404,8 +398,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const catW  = Math.max(8,  txFlex - descW);
 
   const PAGE = 20;
-  const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), txs.length - PAGE));
-  const visible = txs.slice(pageStart, pageStart + PAGE);
+  const { visible, pageStart } = usePagination(txs, cursor, PAGE);
 
   function dateLabel(): string | null {
     if (!from) return null;
@@ -435,45 +428,38 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="transactions" showHints={showHints} />
-      </Box>
+      <PageHeader current="transactions" showHints={showHints} />
       <Box marginTop={1}>
         <Text bold>
           Transactions
           {filterLabel ? <Text color={C_WARNING}>  {filterLabel}</Text> : null}
         </Text>
       </Box>
-      {showHints && <Box justifyContent="flex-end">
-        <Text dimColor>
-          {from ? '← →  ·  ' : ''}[s] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [x] delete
-        </Text>
-      </Box>}
+      <Text dimColor>
+        {showHints
+          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [e] edit  [g] tag  [i] ignore  [x] delete`
+          : '[/] search'}
+      </Text>
 
-      {mode === 'search' && (
-        <Box marginTop={1}>
-          <Text color={C_ACCENT}>/</Text>
-          <Text>{searchInput}</Text>
-          <Text color={C_ACCENT}>{CURSOR}</Text>
-          <Text dimColor>  Esc cancel</Text>
-        </Box>
-      )}
+      {mode === 'search' && <SearchBar value={searchInput} />}
       <Box marginTop={1}><Divider /></Box>
 
-      <Box gap={2} marginTop={1}>
-        <Text color={sort.startsWith('date') ? C_ACCENT : undefined} dimColor={!sort.startsWith('date')}>
-          {'  DATE ' + (sort === 'date-desc' ? '↓' : sort === 'date-asc' ? '↑' : ' ') + '   '}
-        </Text>
-        <Text color={sort.startsWith('name') ? C_ACCENT : undefined} dimColor={!sort.startsWith('name')}>
-          {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(descW)}
-        </Text>
-        <Text color={sort.startsWith('amount') ? C_ACCENT : undefined} dimColor={!sort.startsWith('amount')}>
-          {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(10)}
-        </Text>
-        <Text color={sort.startsWith('category') ? C_ACCENT : undefined} dimColor={!sort.startsWith('category')}>
-          {'CATEGORY' + (sort === 'category-asc' ? ' ↑' : sort === 'category-desc' ? ' ↓' : '')}
-        </Text>
+      <Box marginTop={1}>
+        <Text>{'  '}</Text>
+        <Box gap={2}>
+          <Text color={sort.startsWith('date') ? C_ACCENT : undefined} dimColor={!sort.startsWith('date')}>
+            {('DATE' + (sort === 'date-desc' ? ' ↓' : sort === 'date-asc' ? ' ↑' : '  ')).padEnd(10)}
+          </Text>
+          <Text color={sort.startsWith('name') ? C_ACCENT : undefined} dimColor={!sort.startsWith('name')}>
+            {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(descW)}
+          </Text>
+          <Text color={sort.startsWith('amount') ? C_ACCENT : undefined} dimColor={!sort.startsWith('amount')}>
+            {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(10)}
+          </Text>
+          <Text color={sort.startsWith('category') ? C_ACCENT : undefined} dimColor={!sort.startsWith('category')}>
+            {'CATEGORY' + (sort === 'category-asc' ? ' ↑' : sort === 'category-desc' ? ' ↓' : '')}
+          </Text>
+        </Box>
       </Box>
 
       {visible.map((tx) => {
@@ -483,9 +469,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         const hasTags = !!tx.tag_names;
         return (
           <Box key={tx.id} flexDirection="column">
-            <Box gap={2}>
+            <SelectableRow selected={isSelected}>
               <Text color={isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
-                {isSelected ? '▶ ' : '  '}{tx.date}
+                {tx.date}
               </Text>
               <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
@@ -497,7 +483,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               >
                 {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
               </Text>
-            </Box>
+            </SelectableRow>
             {hasTags && isSelected && (
               <Box paddingLeft={14}>
                 <Text color={C_ACCENT}>{truncate('# ' + tx.tag_names, inner - 14)}</Text>
@@ -512,12 +498,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
       {mode === 'tag' && selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
+        <ModalPanel borderColor={C_WARNING}>
           <Text bold>Tags  <Text dimColor>{selected.display_name ?? selected.name}</Text></Text>
           <Box marginTop={1} gap={2}>
             <Text dimColor>Filter/new: </Text>
-            <Text color={C_WARNING}>{tagInput}</Text>
-            <Text color={C_WARNING}>█</Text>
+            <TextInput value={tagInput} color={C_WARNING} />
           </Box>
           {filteredTags.length === 0 && tagInput ? (
             <Box marginTop={1}><Text dimColor>Enter to create "{tagInput}"</Text></Box>
@@ -526,12 +511,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               const isSelected = i === tagCursor;
               const has = txTagIds.has(t.id);
               return (
-                <Box key={t.id}>
-                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                <SelectableRow key={t.id} selected={isSelected}>
                   <Text color={has ? C_POSITIVE : undefined} dimColor={!isSelected && !has}>
                     {has ? '● ' : '○ '}{t.name}
                   </Text>
-                </Box>
+                </SelectableRow>
               );
             })
           )}
@@ -539,16 +523,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             <Box marginTop={1}><Text dimColor>No tags yet — type a name and Enter to create one</Text></Box>
           )}
           <Box marginTop={1}><Text dimColor>Space/Enter toggle  ·  Esc close</Text></Box>
-        </Box>
+        </ModalPanel>
       )}
 
       {mode === 'tag-all' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
+        <ModalPanel>
           <Text bold>Tag all <Text color={C_ACCENT}>{txs.length}</Text> visible transactions</Text>
           <Box marginTop={1} gap={2}>
             <Text dimColor>Tag: </Text>
-            <Text color={C_WARNING}>{tagInput}</Text>
-            <Text color={C_ACCENT}>{CURSOR}</Text>
+            <TextInput value={tagInput} />
           </Box>
           {filteredTags.length === 0 && tagInput ? (
             <Box marginTop={1}><Text dimColor>Enter to create & apply "{tagInput}"</Text></Box>
@@ -556,19 +539,18 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             filteredTags.map((t, i) => {
               const isSel = i === tagCursor;
               return (
-                <Box key={t.id}>
-                  <Text color={isSel ? C_ACCENT : undefined}>{isSel ? '▶ ' : '  '}</Text>
+                <SelectableRow key={t.id} selected={isSel}>
                   <Text dimColor={!isSel}>{t.name}</Text>
-                </Box>
+                </SelectableRow>
               );
             })
           )}
           <Box marginTop={1}><Text dimColor>↑↓ select  ·  Enter apply  ·  Esc cancel</Text></Box>
-        </Box>
+        </ModalPanel>
       )}
 
       {mode === 'edit-all' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_MANUAL} paddingX={2} paddingY={1}>
+        <ModalPanel borderColor={C_MANUAL}>
           <Text bold>Set category for all <Text color={C_ACCENT}>{txs.length}</Text> visible transactions</Text>
           <Text dimColor>↑↓ select  ·  Enter apply  ·  Esc cancel</Text>
           <Box flexDirection="column" marginTop={1}>
@@ -576,24 +558,24 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               const idx = catWinStart + i;
               const isSel = idx === editCatCursor;
               return (
-                <Text key={cat} color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>
-                  {isSel ? '▶ ' : '  '}{cat}
-                </Text>
+                <SelectableRow key={cat} selected={isSel}>
+                  <Text color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>{cat}</Text>
+                </SelectableRow>
               );
             })}
           </Box>
-        </Box>
+        </ModalPanel>
       )}
 
       {mode === 'edit' && selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
+        <ModalPanel>
           <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
 
           <Box marginTop={1} gap={3}>
             <Box flexDirection="column">
               <Text color={editField === 'name' ? C_ACCENT : C_DIM} bold>Name</Text>
               {editField === 'name'
-                ? <Box><Text color={C_WARNING}>{editName || <Text dimColor>type new name…</Text>}</Text><Text color={C_ACCENT}>█</Text></Box>
+                ? <TextInput value={editName} color={C_WARNING} placeholder="type new name…" />
                 : <Text dimColor>{editName || '(unchanged)'}</Text>
               }
             </Box>
@@ -606,9 +588,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
                     const idx = catWinStart + i;
                     const isSel = idx === editCatCursor;
                     return (
-                      <Text key={cat} color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>
-                        {isSel ? '▶ ' : '  '}{cat}
-                      </Text>
+                      <SelectableRow key={cat} selected={isSel}>
+                        <Text color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>{cat}</Text>
+                      </SelectableRow>
                     );
                   })}
                 </Box>
@@ -624,11 +606,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               : <><Text color={C_ACCENT}>[t] / Enter  this transaction</Text><Text color={C_ACCENT}>[r] make rule</Text><Text dimColor>← name  ·  Esc cancel</Text></>
             }
           </Box>
-        </Box>
+        </ModalPanel>
       )}
 
       {mode === 'edit-rule' && selected && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_MANUAL} paddingX={2} paddingY={1}>
+        <ModalPanel borderColor={C_MANUAL}>
           <Text bold>Make Rule</Text>
           {categories[editCatCursor] !== selected.category && (
             <Text dimColor>Category: <Text color={C_NEGATIVE}>{selected.category}</Text> → <Text color={C_ACCENT}>{categories[editCatCursor]}</Text></Text>
@@ -639,7 +621,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
           <Box gap={2} marginTop={1}>
             <Text>Pattern </Text>
-            <Text color={C_MANUAL}>{editPattern}</Text><Text color={C_MANUAL}>█</Text>
+            <TextInput value={editPattern} color={C_MANUAL} />
           </Box>
           <Box gap={3} marginTop={1}>
             <Text color={editMatchType === 'name' ? C_NEUTRAL : undefined} dimColor={editMatchType !== 'name'}>[n] name</Text>
@@ -647,7 +629,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             <Text color={C_WARNING}>{matchCount} transactions match</Text>
           </Box>
           <Box marginTop={1}><Text dimColor>Enter save  ·  Esc back</Text></Box>
-        </Box>
+        </ModalPanel>
       )}
     </Box>
   );

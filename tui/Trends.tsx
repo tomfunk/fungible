@@ -4,8 +4,9 @@ import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { StatCard, usePagination, SelectableRow, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
@@ -96,8 +97,7 @@ export function Trends({
   }, { isActive: isActive !== false });
 
   const PAGE = 30;
-  const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), rows.length - PAGE));
-  const visible = rows.slice(pageStart, pageStart + PAGE);
+  const { visible, pageStart } = usePagination(rows, cursor, PAGE);
 
   // Scale maxes
   const maxIncome   = isNet ? Math.max(...rows.map((r) => r.income   ?? 0), 1) : 1;
@@ -131,15 +131,10 @@ export function Trends({
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="trends" showHints={showHints} />
-      </Box>
+      <PageHeader current="trends" showHints={showHints} />
 
-      <Box justifyContent="space-between" marginTop={1}>
-        <Text bold>Trends</Text>
-        {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
-      </Box>
+      <Box marginTop={1}><Text bold>Trends</Text></Box>
+      {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
@@ -160,21 +155,27 @@ export function Trends({
         <>
           <Box flexDirection="column" marginTop={1}>
             {isNet && (
-              <Box gap={1} marginBottom={1}>
-                <Text dimColor>{' '.repeat(2 + labelWidth)}</Text>
-                <Text dimColor>{''.padStart(13)}</Text>
-                <Text color={C_NEGATIVE} dimColor>{'expenses ←'.padStart(HALF_BAR)}</Text>
-                <Text dimColor>{'|'}</Text>
-                <Text color={C_POSITIVE}>{'→ income'}</Text>
+              <Box marginBottom={1}>
+                <Text>{'  '}</Text>
+                <Box gap={1}>
+                  <Text dimColor>{''.padEnd(labelWidth)}</Text>
+                  <Text dimColor>{''.padStart(13)}</Text>
+                  <Text color={C_NEGATIVE} dimColor>{'expenses ←'.padStart(HALF_BAR)}</Text>
+                  <Text dimColor>{'|'}</Text>
+                  <Text color={C_POSITIVE}>{'→ income'}</Text>
+                </Box>
               </Box>
             )}
             {isFlexBreakdown && (
-              <Box gap={2} marginBottom={1}>
-                <Text dimColor>{' '.repeat(2 + labelWidth)}</Text>
-                <Text dimColor>{''.padStart(13)}</Text>
-                <Text color={FLEX_COLORS.fixed} dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
-                <Text color={FLEX_COLORS.flexible} dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
-                <Text color={FLEX_COLORS.discretionary} dimColor>{'discr'}</Text>
+              <Box marginBottom={1}>
+                <Text>{'  '}</Text>
+                <Box gap={2}>
+                  <Text dimColor>{''.padEnd(labelWidth)}</Text>
+                  <Text dimColor>{''.padStart(13)}</Text>
+                  <Text color={FLEX_COLORS.fixed} dimColor>{'fixed'.padEnd(FLEX_BAR)}</Text>
+                  <Text color={FLEX_COLORS.flexible} dimColor>{'flexible'.padEnd(FLEX_BAR)}</Text>
+                  <Text color={FLEX_COLORS.discretionary} dimColor>{'discr'}</Text>
+                </Box>
               </Box>
             )}
             {visible.map((row, i) => {
@@ -187,17 +188,15 @@ export function Trends({
                 const rightBar = '█'.repeat(incFilled) + '░'.repeat(HALF_BAR - incFilled);
                 const net = row.income - row.expenses;
                 return (
-                  <Box key={row.from} gap={1}>
-                    <Text color={isSelected ? C_ACCENT : undefined}>
-                      {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
-                    </Text>
+                  <SelectableRow key={row.from} selected={isSelected} gap={1}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{row.label.padEnd(labelWidth)}</Text>
                     <Text color={net >= 0 ? C_POSITIVE : C_NEGATIVE} dimColor={!isSelected}>
                       {fmtSigned(net).padStart(13)}
                     </Text>
                     <Text color={C_NEGATIVE} dimColor={!isSelected}>{leftBar}</Text>
                     <Text dimColor>|</Text>
                     <Text color={C_POSITIVE} dimColor={!isSelected}>{rightBar}</Text>
-                  </Box>
+                  </SelectableRow>
                 );
               }
 
@@ -206,56 +205,45 @@ export function Trends({
                 const flexF  = Math.min(FLEX_BAR, Math.max(0, Math.round(((row.flexible ?? 0) / flexMax) * FLEX_BAR)));
                 const discrF = Math.min(FLEX_BAR, Math.max(0, Math.round(((row.discretionary ?? 0) / flexMax) * FLEX_BAR)));
                 return (
-                  <Box key={row.from} gap={2}>
-                    <Text color={isSelected ? C_ACCENT : undefined}>
-                      {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
-                    </Text>
+                  <SelectableRow key={row.from} selected={isSelected}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{row.label.padEnd(labelWidth)}</Text>
                     <Text color={isSelected ? C_NEUTRAL : undefined} dimColor={!isSelected}>
                       {fmt(row.total).padStart(13)}
                     </Text>
                     <Text color={FLEX_COLORS.fixed} dimColor={!isSelected}>{'█'.repeat(fixedF) + '░'.repeat(FLEX_BAR - fixedF)}</Text>
                     <Text color={FLEX_COLORS.flexible} dimColor={!isSelected}>{'█'.repeat(flexF)  + '░'.repeat(FLEX_BAR - flexF)}</Text>
                     <Text color={FLEX_COLORS.discretionary} dimColor={!isSelected}>{'█'.repeat(discrF) + '░'.repeat(FLEX_BAR - discrF)}</Text>
-                  </Box>
+                  </SelectableRow>
                 );
               }
 
               return (
-                <Box key={row.from} gap={2}>
-                  <Text color={isSelected ? C_ACCENT : undefined}>
-                    {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
-                  </Text>
+                <SelectableRow key={row.from} selected={isSelected}>
+                  <Text color={isSelected ? C_ACCENT : undefined}>{row.label.padEnd(labelWidth)}</Text>
                   <Text color={isSelected ? C_NEUTRAL : undefined} dimColor={!isSelected}>
                     {fmt(row.total).padStart(13)}
                   </Text>
                   <Text color={color} dimColor={!isSelected}>
                     {bar(row.total, absMax, BAR_WIDTH)}
                   </Text>
-                </Box>
+                </SelectableRow>
               );
             })}
           </Box>
 
           <Box marginTop={1}><Divider /></Box>
           <Box gap={6} marginTop={1}>
-            <Box flexDirection="column">
-              <Text dimColor>periods</Text>
-              <Text bold>{rows.length}</Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text dimColor>avg/{RANGE_LABELS[range].toLowerCase()}</Text>
-              <Text bold color={isNet ? (avg >= 0 ? C_POSITIVE : C_NEGATIVE) : undefined}>
-                {isNet ? fmtSigned(avg) : fmt(avg)}
-              </Text>
-            </Box>
+            <StatCard label="periods" value={String(rows.length)} />
+            <StatCard
+              label={`avg/${RANGE_LABELS[range].toLowerCase()}`}
+              value={isNet ? fmtSigned(avg) : fmt(avg)}
+              color={isNet ? (avg >= 0 ? C_POSITIVE : C_NEGATIVE) : undefined}
+            />
             {peak && peak.total > 0 && (
-              <Box flexDirection="column">
-                <Text dimColor>peak</Text>
-                <Text bold>
-                  {peak.label}{' '}
-                  <Text dimColor>{isNet ? fmtSigned(peak.total) : fmt(peak.total)}</Text>
-                </Text>
-              </Box>
+              <StatCard
+                label="peak"
+                value={<>{peak.label}{' '}<Text dimColor>{isNet ? fmtSigned(peak.total) : fmt(peak.total)}</Text></>}
+              />
             )}
           </Box>
         </>

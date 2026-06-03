@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
-import { Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { fmt, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { SectionHeader, SelectableRow, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 function savingsRateColor(rate: number): string {
@@ -19,7 +20,6 @@ function runwayColor(months: number, green: number, yellow: number): string {
   if (months >= yellow) return C_WARNING;
   return C_NEGATIVE;
 }
-import { fmt, fmtPct, fmtMonths } from './fmt.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -118,31 +118,26 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const growthChanged   = growth !== DEFAULT_GROWTH;
 
   const L = 18;
+  const V = 12;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      {/* Nav */}
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="health" showHints={showHints} />
-      </Box>
+      <PageHeader current="health" showHints={showHints} />
 
-      <Box marginTop={1} justifyContent="space-between">
-        <Text bold>Financial Health</Text>
-        {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
-      </Box>
+      <Box marginTop={1}><Text bold>Financial Health</Text></Box>
+      {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
       <Divider />
 
       {/* ── Snapshot ───────────────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
-        <Text bold dimColor>SNAPSHOT</Text>
+        <SectionHeader>SNAPSHOT</SectionHeader>
         <Box gap={3} marginTop={1}>
           <Text dimColor>{'Savings rate'.padEnd(L)}</Text>
           {savingsRate === null ? (
-            <Text dimColor>{'—'.padStart(8)}</Text>
+            <Text dimColor>{'—'.padStart(V)}</Text>
           ) : (
             <Text bold color={savingsRateColor(savingsRate)}>
-              {fmtPct(savingsRate).padStart(8)}
+              {fmtPct(savingsRate).padStart(V)}
             </Text>
           )}
           <Text dimColor>
@@ -161,25 +156,25 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Monthly income'.padEnd(L)}</Text>
-          <Text bold>{fmt(data.monthlyIncome).padStart(8)}</Text>
+          <Text bold>{fmt(data.monthlyIncome).padStart(V)}</Text>
           <Text dimColor>avg past 12 months</Text>
         </Box>
       </Box>
 
       {/* ── Runway ─────────────────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
-        <Text bold dimColor>RUNWAY</Text>
+        <SectionHeader>RUNWAY</SectionHeader>
         <Box gap={3} marginTop={1}>
           <Text dimColor>{'Cash'.padEnd(L)}</Text>
           <Text bold color={runwayColor(cashMonths, 6, 3)}>
-            {fmtMonths(cashMonths).padStart(8)}
+            {fmtMonths(cashMonths).padStart(V)}
           </Text>
           <Text dimColor>{fmt(data.cash)} in checking/savings</Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Liquid'.padEnd(L)}</Text>
           <Text bold color={runwayColor(liquidMonths, 12, 6)}>
-            {fmtMonths(liquidMonths).padStart(8)}
+            {fmtMonths(liquidMonths).padStart(V)}
           </Text>
           <Text dimColor>{fmt(data.liquid)} incl. brokerage</Text>
         </Box>
@@ -188,30 +183,30 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       {/* ── Debt (only shown if there is debt) ─────────────────────────────── */}
       {data.totalDebt > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold dimColor>DEBT</Text>
+          <SectionHeader>DEBT</SectionHeader>
           <Box gap={3} marginTop={1}>
             <Text dimColor>{'Net cash'.padEnd(L)}</Text>
             <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
-              {(netCash < 0 ? '-' : '') + fmt(netCash).padStart(8)}
+              {(netCash < 0 ? '-' : '') + fmt(netCash).padStart(V)}
             </Text>
             <Text dimColor>
               {netCash >= 0
-                ? `${fmt(data.cash)} cash · ${fmt(data.totalDebt)} debt — could pay off now`
-                : `${fmt(data.cash)} cash · ${fmt(data.totalDebt)} debt`}
+                ? 'could pay off now'
+                : `${fmtCompact(data.cash)} cash · ${fmtCompact(data.totalDebt)} debt`}
             </Text>
           </Box>
           {netCash < 0 && (
             <Box gap={3}>
               <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
               {debtMonths === null ? (
-                <Text color={C_NEGATIVE}>{'no surplus'.padStart(8)}</Text>
+                <Text color={C_NEGATIVE}>{'no surplus'.padStart(V)}</Text>
               ) : (
                 <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
-                  {fmtMonths(debtMonths).padStart(8)}
+                  {fmtMonths(debtMonths).padStart(V)}
                 </Text>
               )}
               <Text dimColor>
-                {debtMonths !== null ? `${fmt(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
+                {debtMonths !== null ? `${fmtCompact(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
               </Text>
             </Box>
           )}
@@ -220,17 +215,17 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
       {/* ── Retirement ─────────────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
-        <Text bold dimColor>RETIREMENT</Text>
+        <SectionHeader>RETIREMENT</SectionHeader>
         <Box gap={3} marginTop={1}>
           <Text dimColor>{'Net worth'.padEnd(L)}</Text>
           <Text bold color={data.netWorth >= 0 ? C_POSITIVE : C_NEGATIVE}>
-            {fmt(data.netWorth).padStart(12)}
+            {((data.netWorth < 0 ? '-' : '') + fmtCompact(data.netWorth)).padStart(12)}
           </Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'FIRE number'.padEnd(L)}</Text>
-          <Text bold>{fmt(fireNumber).padStart(12)}</Text>
-          <Text dimColor>  {fmtPct(fireProgress * 100)}</Text>
+          <Text bold>{fmtCompact(fireNumber).padStart(12)}</Text>
+          <Text dimColor>{fmtPct(fireProgress * 100)}</Text>
           <Text color={C_ACCENT} dimColor>{progressBar(fireProgress)}</Text>
         </Box>
         <Box gap={3}>
@@ -264,65 +259,48 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
       {/* ── Assumptions ────────────────────────────────────────────────────── */}
       <Box marginTop={1}><Divider /></Box>
-      <Text bold dimColor>ASSUMPTIONS</Text>
+      <SectionHeader>ASSUMPTIONS</SectionHeader>
 
       <Box flexDirection="column" marginTop={1}>
-        <Box gap={2}>
-          <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>
-            {currentDial === 'spend' ? '▶' : ' '} {'Monthly spending'.padEnd(16)}
-          </Text>
-          <Text color={currentDial === 'spend' ? C_ACCENT : C_NEUTRAL}>
-            {'[ '}{fmt(monthlySpend).padStart(8)}{' ]'}
-          </Text>
+        <SelectableRow selected={currentDial === 'spend'} gap={2}>
+          <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>{'Monthly spending'.padEnd(16)}</Text>
+          <Text color={currentDial === 'spend' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmt(monthlySpend).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'spend'
               ? (spendChanged ? `default ${fmt(defaultSpend)} · [r] reset` : `avg past 12 months  ← → ±${fmt(SPEND_STEP)}`)
               : `avg past 12 months${spendChanged ? ' (modified)' : ''}`}
           </Text>
-        </Box>
+        </SelectableRow>
 
-        <Box gap={2}>
-          <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>
-            {currentDial === 'savings' ? '▶' : ' '} {'Monthly savings'.padEnd(16)}
-          </Text>
-          <Text color={currentDial === 'savings' ? C_ACCENT : C_NEUTRAL}>
-            {'[ '}{fmt(monthlySavings).padStart(8)}{' ]'}
-          </Text>
+        <SelectableRow selected={currentDial === 'savings'} gap={2}>
+          <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>{'Monthly savings'.padEnd(16)}</Text>
+          <Text color={currentDial === 'savings' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmt(monthlySavings).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'savings'
               ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
               : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
           </Text>
-        </Box>
+        </SelectableRow>
 
-        <Box gap={2}>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>
-            {currentDial === 'withdrawal' ? '▶' : ' '} {'Withdrawal rate'.padEnd(16)}
-          </Text>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>
-            {'[ '}{fmtPct(withdrawal).padStart(8)}{' ]'}
-          </Text>
+        <SelectableRow selected={currentDial === 'withdrawal'} gap={2}>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>{'Withdrawal rate'.padEnd(16)}</Text>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(withdrawal).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'withdrawal'
               ? `↑↓ ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
               : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
           </Text>
-        </Box>
+        </SelectableRow>
 
-        <Box gap={2}>
-          <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>
-            {currentDial === 'growth' ? '▶' : ' '} {'Growth rate'.padEnd(16)}
-          </Text>
-          <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>
-            {'[ '}{fmtPct(growth).padStart(8)}{' ]'}
-          </Text>
+        <SelectableRow selected={currentDial === 'growth'} gap={2}>
+          <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>{'Growth rate'.padEnd(16)}</Text>
+          <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(growth).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'growth'
               ? `↑↓ ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
               : `real annual return${growthChanged ? ' (modified)' : ''}`}
           </Text>
-        </Box>
-
+        </SelectableRow>
       </Box>
     </Box>
   );
