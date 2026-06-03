@@ -437,7 +437,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `${from ? '← →  ·  ' : ''}[s] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [x] delete`
+          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [e] edit  [g] tag  [i] ignore  [x] delete`
           : '[/] search'}
       </Text>
 
