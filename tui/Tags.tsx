@@ -4,9 +4,9 @@ import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../cor
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
-import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatusMessage } from './components/index.js';
+import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 
@@ -164,10 +164,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="tags" showHints={showHints} />
-      </Box>
+      <PageHeader current="tags" showHints={showHints} />
 
       {mode === 'detail' && tag && tagSummary ? (
         <>
@@ -215,13 +212,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
             <Text bold>Tags{search ? <Text color={C_WARNING}>  /{search}</Text> : null}</Text>
             {showHints && <Text dimColor>[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
-          {mode === 'search' && (
-            <Box marginTop={1} gap={1}>
-              <Text color={C_ACCENT}>/</Text>
-              <TextInput value={search} color={C_WARNING} />
-              <Text dimColor>  Esc cancel</Text>
-            </Box>
-          )}
+          {mode === 'search' && <SearchBar value={search} />}
           <Box marginTop={1}><Divider /></Box>
 
           {visibleTags.length === 0 ? (

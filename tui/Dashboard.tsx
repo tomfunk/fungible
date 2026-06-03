@@ -13,9 +13,9 @@ import {
 } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
-import { StatCard, SectionHeader, SelectableRow, TextInput } from './components/index.js';
+import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 
@@ -354,10 +354,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="dashboard" showHints={showHints} />
-      </Box>
+      <PageHeader current="dashboard" showHints={showHints} />
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Dashboard</Text>

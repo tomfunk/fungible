@@ -14,9 +14,9 @@ import {
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
-import { ModalPanel, TextInput, SelectableRow, useStatusMessage } from './components/index.js';
+import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader } from './components/index.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -619,11 +619,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      {/* Header */}
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="accounts" showHints={showHints} />
-      </Box>
+      <PageHeader current="accounts" showHints={showHints} />
 
       <Box marginTop={1}>
         <Box gap={3}>

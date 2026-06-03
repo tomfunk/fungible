@@ -4,9 +4,9 @@ import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
-import { StatCard, usePagination, SelectableRow } from './components/index.js';
+import { StatCard, usePagination, SelectableRow, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
@@ -131,10 +131,7 @@ export function Trends({
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="trends" showHints={showHints} />
-      </Box>
+      <PageHeader current="trends" showHints={showHints} />
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>

@@ -15,10 +15,10 @@ import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
-import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage } from './components/index.js';
+import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
@@ -428,10 +428,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="transactions" showHints={showHints} />
-      </Box>
+      <PageHeader current="transactions" showHints={showHints} />
       <Box marginTop={1}>
         <Text bold>
           Transactions
@@ -444,13 +441,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         </Text>
       </Box>}
 
-      {mode === 'search' && (
-        <Box marginTop={1} gap={1}>
-          <Text color={C_ACCENT}>/</Text>
-          <TextInput value={searchInput} />
-          <Text dimColor>  Esc cancel</Text>
-        </Box>
-      )}
+      {mode === 'search' && <SearchBar value={searchInput} />}
       <Box marginTop={1}><Divider /></Box>
 
       <Box marginTop={1}>

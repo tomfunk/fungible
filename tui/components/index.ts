@@ -6,3 +6,5 @@ export { TextInput } from './TextInput.js';
 export { usePagination } from './usePagination.js';
 export { useStatusMessage } from './useStatusMessage.js';
 export { ColumnHeader } from './ColumnHeader.js';
+export { PageHeader } from './PageHeader.js';
+export { SearchBar } from './SearchBar.js';

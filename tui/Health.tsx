@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
-import { Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { fmt, fmtPct, fmtMonths, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { SectionHeader, SelectableRow, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 function savingsRateColor(rate: number): string {
@@ -19,8 +20,6 @@ function runwayColor(months: number, green: number, yellow: number): string {
   if (months >= yellow) return C_WARNING;
   return C_NEGATIVE;
 }
-import { fmt, fmtPct, fmtMonths } from './fmt.js';
-import { SectionHeader, SelectableRow } from './components/index.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -122,11 +121,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      {/* Nav */}
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="health" showHints={showHints} />
-      </Box>
+      <PageHeader current="health" showHints={showHints} />
 
       <Box marginTop={1} justifyContent="space-between">
         <Text bold>Financial Health</Text>

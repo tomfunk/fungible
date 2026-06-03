@@ -46,8 +46,8 @@ const SCREENS = [
  *  1. Inline: lines containing multiple [N] shortcut labels
  *  2. Component: <NavHints current="screenname" /> implies all other screens */
 function extractNavBarKeys(src: string): string[] {
-  // NavHints component: infer all keys except the current screen's
-  const navHintsMatch = src.match(/<NavHints\s+current="([a-z]+)"/);
+  // NavHints or PageHeader component: infer all keys except the current screen's
+  const navHintsMatch = src.match(/<(?:NavHints|PageHeader)\s+current="([a-z]+)"/);
   if (navHintsMatch) {
     const current = navHintsMatch[1];
     return Object.entries(KEY_TO_SCREEN)

@@ -8,11 +8,11 @@ import {
 } from '../core/rules.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
-import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, ColumnHeader } from './components/index.js';
+import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, ColumnHeader, PageHeader, SearchBar } from './components/index.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
@@ -316,11 +316,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      {/* Header */}
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="rules" showHints={showHints} />
-      </Box>
+      <PageHeader current="rules" showHints={showHints} />
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           {SECTIONS.map((s) => (
@@ -337,11 +333,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       </Box>
 
       {mode === 'search' ? (
-        <Box marginTop={1} gap={1}>
-          <Text color={C_ACCENT}>/</Text>
-          <TextInput value={search} />
-          <Text dimColor>  Esc clear</Text>
-        </Box>
+        <SearchBar value={search} hint="Esc clear" />
       ) : search ? (
         <Box marginTop={1} gap={1}>
           <Text color={C_WARNING}>"{search}"</Text>

@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { CURSOR, C_ACCENT } from '../ui.js';
 
 /** Inline text input display: shows value (or dimmed placeholder) followed by the block cursor. */
-export function TextInput({ value, color, placeholder }: { value: string; color?: string; placeholder?: string }) {
+export function TextInput({ value, color, placeholder, showCursor = true }: { value: string; color?: string; placeholder?: string; showCursor?: boolean }) {
   return (
     <Box>
       {value ? (
@@ -11,7 +11,7 @@ export function TextInput({ value, color, placeholder }: { value: string; color?
       ) : placeholder ? (
         <Text dimColor>{placeholder}</Text>
       ) : null}
-      <Text color={C_ACCENT}>{CURSOR}</Text>
+      {showCursor && <Text color={C_ACCENT}>{CURSOR}</Text>}
     </Box>
   );
 }

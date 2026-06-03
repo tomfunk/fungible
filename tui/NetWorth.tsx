@@ -3,9 +3,9 @@ import { Box, Text, useInput } from 'ink';
 import { getAccountsWithBalances, getNetWorthHistory, type AccountBalance, type NetWorthPeriod } from '../core/queries.js';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
+import { handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
-import { usePagination } from './components/index.js';
+import { usePagination, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 const BAR_WIDTH = 32;
@@ -99,10 +99,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="networth" showHints={showHints} />
-      </Box>
+      <PageHeader current="networth" showHints={showHints} />
 
       <Box marginTop={1} justifyContent="space-between">
         <Text bold>Net Worth</Text>

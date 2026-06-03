@@ -395,6 +395,64 @@ describe('Trends', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('Tab cycles through the base views in order', async () => {
+    const r = trends();
+    const viewLabels = ['Expenses', 'Income', 'Net', 'Flexibility', 'Fixed', 'Flexible', 'Discretionary'];
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    for (let i = 1; i < viewLabels.length; i++) {
+      r.stdin.write('\t');
+      await waitFor(() => expect(frame(r)).toContain(viewLabels[i]));
+    }
+  });
+
+  it('Net view shows expense/income direction headers', async () => {
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    r.stdin.write('\t'); // Income
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('\t'); // Net
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Net');
+      expect(f).toContain('expenses');
+      expect(f).toContain('income');
+    });
+  });
+
+  it('Flexibility view shows fixed/flexible/discr column headers', async () => {
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    for (let i = 0; i < 3; i++) r.stdin.write('\t'); // Expenses→Income→Net→Flexibility
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Flexibility');
+      expect(f).toContain('fixed');
+      expect(f).toContain('flexible');
+    });
+  });
+
+  it('shows both seeded periods and Enter navigates to the selected period', async () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Trends onNavigate={onNavigate} showHints={false} /></W>);
+    // Both Apr and May periods must appear
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Apr 2026');
+      expect(f).toContain('May 2026');
+    });
+    // Cursor starts on the last period (May); Enter navigates to its transactions
+    r.stdin.write('\r');
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({ from: '2026-05-01' }));
+    });
+  });
+
+
+
+
+
+
 });
 
 // ── Net Worth ─────────────────────────────────────────────────────────────────
