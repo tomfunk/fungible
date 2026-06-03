@@ -396,12 +396,12 @@ describe('Trends', () => {
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
 
-  it('Tab cycles through the base views in order', async () => {
+  it('right arrow cycles through the base views in order', async () => {
     const r = trends();
     const viewLabels = ['Expenses', 'Income', 'Net', 'Flexibility', 'Fixed', 'Flexible', 'Discretionary'];
     await waitFor(() => expect(frame(r)).toContain('Expenses'));
     for (let i = 1; i < viewLabels.length; i++) {
-      r.stdin.write('\t');
+      r.stdin.write('\x1B[C');
       await waitFor(() => expect(frame(r)).toContain(viewLabels[i]));
     }
   });
@@ -409,9 +409,9 @@ describe('Trends', () => {
   it('Net view shows expense/income direction headers', async () => {
     const r = trends();
     await waitFor(() => expect(frame(r)).toContain('Expenses'));
-    r.stdin.write('\t'); // Income
+    r.stdin.write('\x1B[C'); // Income
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\t'); // Net
+    r.stdin.write('\x1B[C'); // Net
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Net');
@@ -423,7 +423,7 @@ describe('Trends', () => {
   it('Flexibility view shows fixed/flexible/discr column headers', async () => {
     const r = trends();
     await waitFor(() => expect(frame(r)).toContain('Expenses'));
-    for (let i = 0; i < 3; i++) r.stdin.write('\t'); // Expenses→Income→Net→Flexibility
+    for (let i = 0; i < 3; i++) r.stdin.write('\x1B[C'); // Expenses→Income→Net→Flexibility
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Flexibility');
