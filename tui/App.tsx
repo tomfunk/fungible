@@ -9,10 +9,11 @@ import { Tags } from './Tags.js';
 import { Rules } from './Rules.js';
 import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
+import { Canvas } from './Canvas.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider } from './RefreshContext.js';
 
-export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health';
+export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas';
 
 export type TxFilter = {
   category?: string;
@@ -57,6 +58,7 @@ export function App() {
       case 'rules':        return <Rules        onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'canvas':       return <Canvas       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
     }
   })();
 

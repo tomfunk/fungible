@@ -5,7 +5,7 @@ import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js
 import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
-import { SectionHeader, SelectableRow, PageHeader } from './components/index.js';
+import { SectionHeader, PageHeader, DialRow } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 function savingsRateColor(rate: number): string {
@@ -261,45 +261,31 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       <SectionHeader>ASSUMPTIONS</SectionHeader>
 
       <Box flexDirection="column" marginTop={1}>
-        <SelectableRow selected={currentDial === 'spend'} gap={2}>
-          <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>{'Monthly spending'.padEnd(16)}</Text>
-          <Text color={currentDial === 'spend' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmt(monthlySpend).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'spend'
-              ? (spendChanged ? `default ${fmt(defaultSpend)} · [r] reset` : `avg past 12 months  ← → ±${fmt(SPEND_STEP)}`)
-              : `avg past 12 months${spendChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
-
-        <SelectableRow selected={currentDial === 'savings'} gap={2}>
-          <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>{'Monthly savings'.padEnd(16)}</Text>
-          <Text color={currentDial === 'savings' ? C_ACCENT : monthlySavings < 0 ? C_NEGATIVE : C_NEUTRAL}>{'[ '}{fmtSigned(monthlySavings).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'savings'
-              ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
-              : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
-
-        <SelectableRow selected={currentDial === 'withdrawal'} gap={2}>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>{'Withdrawal rate'.padEnd(16)}</Text>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(withdrawal).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'withdrawal'
-              ? `← → ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
-              : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
-
-        <SelectableRow selected={currentDial === 'growth'} gap={2}>
-          <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>{'Growth rate'.padEnd(16)}</Text>
-          <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(growth).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'growth'
-              ? `← → ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
-              : `real annual return${growthChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
+        <DialRow
+          label="Monthly spending" value={fmt(monthlySpend)} selected={currentDial === 'spend'}
+          description={currentDial === 'spend'
+            ? (spendChanged ? `default ${fmt(defaultSpend)} · [r] reset` : `avg past 12 months  ← → ±${fmt(SPEND_STEP)}`)
+            : `avg past 12 months${spendChanged ? ' (modified)' : ''}`}
+        />
+        <DialRow
+          label="Monthly savings" value={fmtSigned(monthlySavings)} selected={currentDial === 'savings'}
+          valueColor={monthlySavings < 0 ? C_NEGATIVE : C_NEUTRAL}
+          description={currentDial === 'savings'
+            ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
+            : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
+        />
+        <DialRow
+          label="Withdrawal rate" value={fmtPct(withdrawal)} selected={currentDial === 'withdrawal'}
+          description={currentDial === 'withdrawal'
+            ? `← → ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
+            : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
+        />
+        <DialRow
+          label="Growth rate" value={fmtPct(growth)} selected={currentDial === 'growth'}
+          description={currentDial === 'growth'
+            ? `← → ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
+            : `real annual return${growthChanged ? ' (modified)' : ''}`}
+        />
       </Box>
     </Box>
   );

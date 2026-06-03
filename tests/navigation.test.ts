@@ -2,11 +2,11 @@
  * Navigation consistency test
  *
  * Screens are numbered:
- *   1=dashboard  2=transactions  3=trends  4=networth  5=tags  6=health  7=rules  8=accounts
+ *   1=dashboard  2=transactions  3=trends  4=networth  5=tags  6=health  7=rules  8=accounts  9=canvas
  *
  * Each screen must:
  *   1. Display a nav bar that shows [N] labels for every screen EXCEPT itself
- *   2. Handle every key 1–8 EXCEPT its own, navigating to the correct screen
+ *   2. Handle every key 1–9 EXCEPT its own, navigating to the correct screen
  *
  * This test parses the TSX source files to verify both invariants.
  */
@@ -28,6 +28,7 @@ const KEY_TO_SCREEN: Record<string, string> = {
   '6': 'health',
   '7': 'rules',
   '8': 'accounts',
+  '9': 'canvas',
 };
 
 const SCREENS = [
@@ -39,6 +40,7 @@ const SCREENS = [
   { file: 'Health.tsx',       screen: 'health',       key: '6' },
   { file: 'Rules.tsx',        screen: 'rules',        key: '7' },
   { file: 'Accounts.tsx',     screen: 'accounts',     key: '8' },
+  { file: 'Canvas.tsx',       screen: 'canvas',       key: '9' },
 ];
 
 /** Extract all [N] keys present in the nav bar of a source file.

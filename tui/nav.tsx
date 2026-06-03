@@ -11,16 +11,18 @@ const SCREEN_KEYS: Record<string, Screen> = {
   '6': 'health',
   '7': 'rules',
   '8': 'accounts',
+  '9': 'canvas',
 };
 
 const LABELS: Record<Screen, string> = {
   dashboard: 'dash', transactions: 'txns', trends: 'trends',
   networth: 'worth', tags: 'tags', health: 'health', rules: 'rules', accounts: 'accounts',
+  canvas: 'canvas',
 };
 
 // Split into two rows so each row stays short enough for narrow terminals
 const ROW1: Screen[] = ['dashboard', 'transactions', 'trends', 'networth'];
-const ROW2: Screen[] = ['tags', 'health', 'rules', 'accounts'];
+const ROW2: Screen[] = ['tags', 'health', 'rules', 'accounts', 'canvas'];
 
 const keyOf = (s: Screen) => Object.entries(SCREEN_KEYS).find(([, v]) => v === s)![0];
 const hint  = (s: Screen) => `[${keyOf(s)}] ${LABELS[s]}`;

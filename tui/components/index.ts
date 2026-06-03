@@ -8,3 +8,4 @@ export { useStatusMessage } from './useStatusMessage.js';
 export { ColumnHeader } from './ColumnHeader.js';
 export { PageHeader } from './PageHeader.js';
 export { SearchBar } from './SearchBar.js';
+export { DialRow } from './DialRow.js';
