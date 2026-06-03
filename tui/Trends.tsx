@@ -83,7 +83,8 @@ export function Trends({
       return;
     }
     if (handleNavKey(input, 'trends', onNavigate)) return;
-    if (key.tab)        { setViewIdx((i) => (i + 1) % views.length); return; }
+    if (key.leftArrow)  { setViewIdx((i) => (i - 1 + views.length) % views.length); return; }
+    if (key.rightArrow) { setViewIdx((i) => (i + 1) % views.length); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
     if (input === 'r') {
@@ -133,8 +134,10 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="trends" showHints={showHints} />
 
-      <Box marginTop={1}><Text bold>Trends</Text></Box>
-      {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
+      <Box justifyContent="space-between" marginTop={1}>
+        <Text bold>Trends</Text>
+        {showHints && <Text dimColor>←→ view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
+      </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
@@ -145,7 +148,7 @@ export function Trends({
           ))}
           {showHints && <Text dimColor>[r]</Text>}
         </Box>
-        <Text><Text bold>{view.label}</Text><Text dimColor>  {posLabel}</Text></Text>
+        <Text><Text dimColor>← </Text><Text bold>{view.label}</Text><Text dimColor> →  {posLabel}</Text></Text>
       </Box>
       <Divider />
 

@@ -380,7 +380,10 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           {showHints && <Text dimColor>[r]</Text>}
         </Box>
         <Box gap={2}>
-          <Text bold>{formatPeriodLabel(range, anchor)}</Text>
+          {range !== 'alltime'
+            ? <Text><Text dimColor>← </Text><Text bold>{formatPeriodLabel(range, anchor)}</Text><Text dimColor> →</Text></Text>
+            : <Text bold>{formatPeriodLabel(range, anchor)}</Text>
+          }
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
           {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>

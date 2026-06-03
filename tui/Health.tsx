@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
-import { fmt, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
+import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
@@ -20,7 +20,6 @@ function runwayColor(months: number, green: number, yellow: number): string {
   if (months >= yellow) return C_WARNING;
   return C_NEGATIVE;
 }
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_WITHDRAWAL    = 4.0;
@@ -274,7 +273,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
         <SelectableRow selected={currentDial === 'savings'} gap={2}>
           <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>{'Monthly savings'.padEnd(16)}</Text>
-          <Text color={currentDial === 'savings' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmt(monthlySavings).padStart(V)}{' ]'}</Text>
+          <Text color={currentDial === 'savings' ? C_ACCENT : monthlySavings < 0 ? C_NEGATIVE : C_NEUTRAL}>{'[ '}{fmtSigned(monthlySavings).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'savings'
               ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
@@ -287,7 +286,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(withdrawal).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'withdrawal'
-              ? `↑↓ ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
+              ? `← → ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
               : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
           </Text>
         </SelectableRow>
@@ -297,7 +296,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(growth).padStart(V)}{' ]'}</Text>
           <Text dimColor>
             {currentDial === 'growth'
-              ? `↑↓ ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
+              ? `← → ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
               : `real annual return${growthChanged ? ' (modified)' : ''}`}
           </Text>
         </SelectableRow>

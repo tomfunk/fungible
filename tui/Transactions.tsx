@@ -410,12 +410,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     return `${from} – ${to ?? ''}`;
   }
 
+  const dl = dateLabel();
   const filterLabel = [
     accountName,
     tag ? `#${tag}` : null,
     search ? `"${search}"` : null,
     category,
-    dateLabel(),
   ].filter(Boolean).join(' · ');
 
   // Category list window for edit panel
@@ -433,6 +433,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         <Text bold>
           Transactions
           {filterLabel ? <Text color={C_WARNING}>  {filterLabel}</Text> : null}
+          {dl ? <Text>
+            <Text color={C_WARNING}>{filterLabel ? '  · ' : '  '}</Text>
+            <Text dimColor>← </Text>
+            <Text color={C_WARNING}>{dl}</Text>
+            <Text dimColor> →</Text>
+          </Text> : null}
         </Text>
       </Box>
       <Text dimColor>
