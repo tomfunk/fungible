@@ -3,7 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 /** Replaces the setStatusMsg + setTimeout(clear) pattern. */
 export function useStatusMessage(defaultDuration = 2000) {
   const [statusMsg, setStatusMsg] = useState('');
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
