@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './paths.js';
-import { db } from './db.js';
 
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -18,8 +17,15 @@ export async function backupDb(): Promise<void> {
   const backupPath = path.join(BACKUP_DIR, `fungible.${today}.bak`);
 
   if (!fs.existsSync(backupPath)) {
-    await db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
     await fs.promises.copyFile(DB_PATH, backupPath);
+    // Copy WAL and SHM alongside so SQLite can replay all committed data when
+    // the backup is opened. The main .db file may lag behind by days in WAL mode.
+    for (const suffix of ['-wal', '-shm']) {
+      const src = `${DB_PATH}${suffix}`;
+      if (fs.existsSync(src)) {
+        await fs.promises.copyFile(src, `${backupPath}${suffix}`);
+      }
+    }
   }
 
   const files = fs.readdirSync(BACKUP_DIR)
@@ -27,6 +33,11 @@ export async function backupDb(): Promise<void> {
     .sort();
 
   for (const file of files.slice(0, -keepDays)) {
-    fs.unlinkSync(path.join(BACKUP_DIR, file));
+    const base = path.join(BACKUP_DIR, file);
+    fs.unlinkSync(base);
+    for (const suffix of ['-wal', '-shm']) {
+      const side = `${base}${suffix}`;
+      if (fs.existsSync(side)) fs.unlinkSync(side);
+    }
   }
 }
