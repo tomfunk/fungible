@@ -97,6 +97,7 @@ The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`)
 
 | Key | Screen |
 |-----|--------|
+| `0` | Settings |
 | `1` | Dashboard |
 | `2` | Transactions |
 | `3` | Trends |
@@ -105,10 +106,23 @@ The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`)
 | `6` | Financial Health |
 | `7` | Rules |
 | `8` | Accounts |
+| `9` | Canvas |
 | `q` | Quit |
 | `Esc` | Back / clear filter |
 
 ## Key bindings
+
+### Settings `[0]`
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Navigate fields |
+| `Enter` | Edit selected field |
+| `a` | Add spouse (if none) or add child |
+| `d` | Remove spouse or selected child |
+| `Esc` | Back to Dashboard |
+
+Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse year**, **Child name/birth year** for each child. Editing is inline — type to update, `Enter` to confirm, `Esc` to cancel.
 
 ### Dashboard `[1]`
 
@@ -243,6 +257,30 @@ The **rule form** is a single panel with fields navigated by `↑ ↓`: Pattern,
 **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 
 **Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
+
+### Canvas `[9]`
+
+An AI-generated financial calculator, built on demand by the agent. Ask the agent (`` ` ``) to generate a canvas — e.g. "make a loan payoff calculator" — and it will appear here with interactive dials.
+
+**View mode** (when a canvas is loaded):
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Select dial |
+| `← →` | Adjust selected dial by its step |
+| `Enter` | Type a value directly for selected dial |
+| `r` | Reset selected dial to default |
+| `/` | Open history browser |
+
+**History mode** (press `/` to enter):
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Select canvas |
+| Type | Filter by title or prompt |
+| `Enter` | Load selected canvas |
+| `ctrl+d` | Delete selected canvas |
+| `Esc` | Back to view |
 
 ## Scripts
 
