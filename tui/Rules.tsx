@@ -112,11 +112,11 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     load();
   }
 
-  function saveRule() {
+  async function saveRule() {
     const category = categories[catCursor];
     const minAmt = newMinAmount.trim() ? parseFloat(newMinAmount) : null;
     const maxAmt = newMaxAmount.trim() ? parseFloat(newMaxAmount) : null;
-    const count = saveCategoryRule({
+    const count = await saveCategoryRule({
       pattern: newPattern, matchType: newType, category,
       minAmount: minAmt, maxAmount: maxAmt,
       editingId: editingRuleId,
@@ -128,10 +128,10 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     load();
   }
 
-  function handleSaveNameRule() {
+  async function handleSaveNameRule() {
     const minAmt = newNameMinAmount.trim() ? parseFloat(newNameMinAmount) : null;
     const maxAmt = newNameMaxAmount.trim() ? parseFloat(newNameMaxAmount) : null;
-    saveNameRule({
+    await saveNameRule({
       pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
       minAmount: minAmt, maxAmount: maxAmt,
       editingId: editingNameRuleId,
@@ -288,7 +288,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       }
     } else if (mode === 'rule-form') {
       if (key.escape) { setEditingRuleId(null); setMode('list'); return; }
-      if (key.return) { if (newPattern.trim()) saveRule(); return; }
+      if (key.return) { if (newPattern.trim()) { void saveRule(); } return; }
       if (key.upArrow) { setRuleField((f) => RULE_FIELDS[Math.max(0, RULE_FIELDS.indexOf(f) - 1)]); return; }
       if (key.downArrow) { setRuleField((f) => RULE_FIELDS[Math.min(RULE_FIELDS.length - 1, RULE_FIELDS.indexOf(f) + 1)]); return; }
       if (ruleField === 'pattern') {
@@ -308,7 +308,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       }
     } else if (mode === 'name-rule-form') {
       if (key.escape) { setEditingNameRuleId(null); setMode('list'); return; }
-      if (key.return) { if (newNamePattern.trim() && newReplacement.trim()) handleSaveNameRule(); return; }
+      if (key.return) { if (newNamePattern.trim() && newReplacement.trim()) { void handleSaveNameRule(); } return; }
       if (key.upArrow) { setNameRuleField((f) => NAME_RULE_FIELDS[Math.max(0, NAME_RULE_FIELDS.indexOf(f) - 1)]); return; }
       if (key.downArrow) { setNameRuleField((f) => NAME_RULE_FIELDS[Math.min(NAME_RULE_FIELDS.length - 1, NAME_RULE_FIELDS.indexOf(f) + 1)]); return; }
       if (nameRuleField === 'pattern') {

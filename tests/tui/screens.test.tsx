@@ -351,6 +351,57 @@ describe('Transactions', () => {
     r.stdin.write('4'); // networth
     expect(onNavigate).toHaveBeenCalledWith('networth');
   });
+
+  it('Enter opens the edit panel for the selected transaction', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Name');
+      expect(f).toContain('Category');
+    });
+  });
+
+  it('↓ in edit panel moves to Category, ← → cycles categories', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // edit panel open (toggle arrows unique to panel)
+    r.stdin.write('\x1b[B'); // ↓ → move to category field
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // name inactive = category active
+    const before = frame(r);
+    r.stdin.write('\x1b[C'); // → cycle to next category
+    await waitFor(() => expect(frame(r)).not.toEqual(before));
+  });
+
+  it('Esc in edit panel cancels without saving', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Name'));
+    r.stdin.write('\x1b'); // Esc
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Name\n'); // panel gone
+      expect(f).toContain('Trader Joes');
+    });
+  });
+
+  it('typing a name in edit panel and Enter saves the display name', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Name')); // panel open, Name field active
+    r.stdin.write('TJ');
+    await waitFor(() => expect(frame(r)).toContain('TJ'));
+    r.stdin.write('\r'); // save
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('TJ');
+      expect(f).not.toContain('Trader Joes');
+    });
+  });
 });
 
 // ── Trends ────────────────────────────────────────────────────────────────────
@@ -712,6 +763,48 @@ describe('Tags', () => {
     await waitFor(() => expect(frame(r)).toContain('New Tag'));
   });
 
+  it('[n] opens rename panel pre-filled with the tag name', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Rename Tag');
+      expect(f).toContain('travel');
+    });
+  });
+
+  it('typing a suffix and Enter in rename panel renames the tag', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Rename Tag'));
+    for (const ch of '-edited') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('travel-edited'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Rename Tag');
+      expect(f).toContain('travel-edited');
+    });
+  });
+
+  it('Esc in rename panel cancels without saving', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Rename Tag'));
+    for (const ch of 'xyz') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('travelxyz'));
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Rename Tag');
+      expect(f).not.toContain('travelxyz');
+      expect(f).toContain('travel');
+    });
+  });
+
   it('pressing nav number calls onNavigate', async () => {
     const onNavigate = vi.fn();
     const r = render(
@@ -771,6 +864,111 @@ describe('Rules', () => {
       const f = frame(r);
       expect(f).toContain('Grocery');
       expect(f).toContain('Dining');
+    });
+  });
+
+  it('[a] opens new category rule form', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods')); // rules loaded
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Category Rule');
+      expect(f).toContain('Pattern');
+    });
+  });
+
+  it('typing pattern and Enter in rule-form saves the rule', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Category Rule'));
+    for (const ch of 'Starbucks') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Starbucks'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('New Category Rule');
+      expect(f).toContain('Starbucks');
+    });
+  });
+
+  it('Enter on existing rule opens edit form pre-filled with its pattern', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Edit Category Rule');
+      expect(f).toContain('Whole Foods');
+    });
+  });
+
+  it('[a] in Name Rules section opens new name rule form', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t'); // switch to Name Rules
+    await waitFor(() => expect(frame(r)).toContain('No name rules'));
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Name Rule');
+      expect(f).toContain('Pattern');
+      expect(f).toContain('Replace with');
+    });
+  });
+
+  it('typing pattern + replacement in name-rule-form and Enter saves the rule', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('No name rules'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Name Rule'));
+    for (const ch of 'amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('amazon'));
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // navigate to replacement
+    // Wait for React to commit the field navigation before typing (avoids stale closure)
+    await waitFor(() => expect(frame(r)).toContain('display name'));
+    for (const ch of 'Amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Amazon'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('New Name Rule');
+      expect(f).toContain('amazon');
+      expect(f).toContain('Amazon');
+    });
+  });
+
+  it('Enter in categories section opens the edit panel', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    r.stdin.write('\t'); // categories section
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Edit: Bills & Utilities');
+      expect(f).toContain('Name');
+      expect(f).toContain('Flexibility');
+    });
+  });
+
+  it('Esc in categories edit panel closes without navigating away', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Edit: Bills & Utilities'));
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Edit: Bills & Utilities');
+      expect(f).toContain('Bills & Utilities');
     });
   });
 
