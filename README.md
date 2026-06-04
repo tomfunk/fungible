@@ -377,6 +377,7 @@ Available tools:
 | Tool | Description |
 |------|-------------|
 | `spending_summary` | Income, expenses, and breakdown by category for a given month |
+| `merchant_summary` | Top merchants for a category in a date range, with totals and share of spend |
 | `list_transactions` | Search and filter transactions |
 | `edit_transaction` | Rename display name or change category |
 | `clear_edit` | Remove a manual category or name override |
@@ -399,4 +400,12 @@ Available tools:
 | `get_financial_health` | Runway, FIRE number, years to retirement |
 | `get_drift` | Per-category spending deltas vs prior period, last year, and 12-month avg |
 | `get_trends` | Month-by-month spending trends for the last N months |
+| `get_net_worth_history` | Net worth over time grouped by day, week, month, quarter, or year |
 | `get_finance_guide` | Opinionated personal finance guidance by topic |
+| `get_screen` | Return the current TUI screen content exactly as the user sees it |
+| `generate_canvas` | Prepare context and schema to build a Canvas; call then render with `show_canvas` |
+| `show_canvas` | Render a CanvasSpec on screen 9 and save to history |
+| `list_canvases` | List previously generated canvases, optionally filtered by title or prompt |
+| `load_canvas` | Load a canvas from history and display it on screen 9 |
+| `delete_canvas` | Delete a canvas from history |
+| `calculate_tvm` | Time-value-of-money solver: given 4 of (pv, fv, pmt, n, rate), solve for the fifth |
