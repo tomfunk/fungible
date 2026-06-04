@@ -1,12 +1,13 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT, C_WARNING } from './ui.js';
-import { PageHeader, SectionHeader, DialRow, TextInput } from './components/index.js';
-import { generateCanvas, evalExpr, fmtValue, fmtDialValue, type CanvasSpec, type DialDef } from '../core/canvas-agent.js';
-import { useSetTyping } from './TypingContext.js';
+import { C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { PageHeader, SectionHeader, DialRow, SearchBar, SelectableRow } from './components/index.js';
+import { evalExpr, fmtValue, fmtDialValue, type CanvasSpec, type DialDef } from '../core/canvas-agent.js';
+import { loadHistory, deleteHistoryEntry, type CanvasHistoryEntry } from '../core/canvas-history.js';
+import { useRefreshKey } from './RefreshContext.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -66,11 +67,9 @@ export function CanvasView({ spec, isActive }: { spec: CanvasSpec; isActive?: bo
         if (el.type === 'section') {
           return <Box key={i} marginTop={1}><SectionHeader>{el.label}</SectionHeader></Box>;
         }
-
         if (el.type === 'text') {
           return <Box key={i}><Text dimColor>{el.content}</Text></Box>;
         }
-
         if (el.type === 'dial') {
           const d = el.dial;
           const val = dialValues[d.key] ?? d.default;
@@ -90,18 +89,16 @@ export function CanvasView({ spec, isActive }: { spec: CanvasSpec; isActive?: bo
             />
           );
         }
-
         if (el.type === 'output') {
           const out = el.output;
           const val = evalExpr(out.expr, dialValues);
           return (
             <Box key={i} gap={3}>
               <Text dimColor>{out.label.padEnd(LABEL_W)}</Text>
-              <Text bold color={outputColor(out.color)}>{fmtValue(val, out.format).padStart(VALUE_W)}</Text>
+              <Text bold color={outputColor(out.color)}>{fmtValue(val, out.format, out.signed).padStart(VALUE_W)}</Text>
             </Box>
           );
         }
-
         return null;
       })}
     </Box>
@@ -110,54 +107,61 @@ export function CanvasView({ spec, isActive }: { spec: CanvasSpec; isActive?: bo
 
 // ─── Canvas screen ────────────────────────────────────────────────────────────
 
-type Mode = 'prompt' | 'dials';
+type Mode = 'view' | 'history';
 
-export function Canvas({ onNavigate, isActive, showHints }: {
+export function Canvas({ onNavigate, onLoadSpec, isActive, showHints, spec, specKey }: {
   onNavigate: (s: Screen) => void;
+  onLoadSpec: (spec: CanvasSpec) => void;
   isActive?: boolean;
   showHints: boolean;
+  spec: CanvasSpec | null;
+  specKey: number;
 }) {
-  const [mode,   setMode]   = useState<Mode>('prompt');
-  const [prompt, setPrompt] = useState('');
-  const [status, setStatus] = useState('');
-  const [spec,   setSpec]   = useState<CanvasSpec | null>(null);
-  const [error,  setError]  = useState('');
+  const [mode, setMode]           = useState<Mode>('view');
+  const [search, setSearch]       = useState('');
+  const [history, setHistory]     = useState<CanvasHistoryEntry[]>([]);
+  const [historyIdx, setHistoryIdx] = useState(0);
+  const refreshKey = useRefreshKey();
 
-  const setTyping = useSetTyping();
+  const filtered = search
+    ? history.filter((e) =>
+        e.title.toLowerCase().includes(search.toLowerCase()) ||
+        e.prompt.toLowerCase().includes(search.toLowerCase()))
+    : history;
 
-  const runGenerate = useCallback(async (p: string) => {
-    setError('');
-    setSpec(null);
-    setTyping(false);
-    setMode('dials');
-    try {
-      const s = await generateCanvas(p, setStatus);
-      setSpec(s);
-      setStatus('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setStatus('');
-      setMode('prompt');
-    }
-  }, []);
+  useEffect(() => {
+    if (mode === 'history') setHistory(loadHistory());
+  }, [mode, refreshKey]);
+
+  useEffect(() => { setHistoryIdx(0); }, [search]);
 
   useInput((input, key) => {
-    if (key.escape) {
-      if (mode === 'dials') { setMode('prompt'); setTyping(true); return; }
-      onNavigate('dashboard');
+    if (mode === 'history') {
+      if (key.escape)    { setMode('view'); setSearch(''); return; }
+      if (key.upArrow)   { setHistoryIdx((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow) { setHistoryIdx((i) => Math.min(filtered.length - 1, i + 1)); return; }
+      if (key.return && filtered[historyIdx]) {
+        onLoadSpec(filtered[historyIdx].spec);
+        setMode('view');
+        setSearch('');
+        return;
+      }
+      if (key.ctrl && input === 'd' && filtered[historyIdx]) {
+        deleteHistoryEntry(filtered[historyIdx].id);
+        const next = loadHistory();
+        setHistory(next);
+        setHistoryIdx((i) => Math.min(i, Math.max(0, next.length - 1)));
+        return;
+      }
+      if (key.backspace || key.delete) { setSearch((s) => s.slice(0, -1)); return; }
+      if (!key.ctrl && !key.meta && input) { setSearch((s) => s + input); return; }
       return;
     }
+
+    // view mode
+    if (key.escape) { onNavigate('dashboard'); return; }
+    if (input === '/') { setMode('history'); setHistory(loadHistory()); return; }
     handleNavKey(input, 'canvas', onNavigate);
-
-    if (mode === 'prompt') {
-      setTyping(true);
-      if (key.return && prompt.trim()) { void runGenerate(prompt.trim()); return; }
-      if (key.backspace || key.delete) { setPrompt((p) => p.slice(0, -1)); return; }
-      if (!key.ctrl && !key.meta && input) setPrompt((p) => p + input);
-      return;
-    }
-
-    if (input === 'p' || input === '/') { setMode('prompt'); setTyping(true); }
   }, { isActive: isActive !== false });
 
   return (
@@ -165,33 +169,43 @@ export function Canvas({ onNavigate, isActive, showHints }: {
       <PageHeader current="canvas" showHints={showHints} />
 
       <Box marginTop={1}><Text bold>Canvas</Text></Box>
-      {showHints && mode === 'dials' && spec && (
-        <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset  ·  [p] new prompt</Text>
+      {showHints && (
+        <Text dimColor>
+          {mode === 'history'
+            ? '↑↓ select  ·  type to filter  ·  Enter load  ·  ctrl + d delete  ·  Esc back'
+            : spec
+              ? '↑↓ select  ·  ← → adjust  ·  [r] reset  ·  [/] history'
+              : '[/] history  ·  or ask the agent (`)'}
+        </Text>
       )}
 
-      {/* ── Prompt bar ─────────────────────────────────────────────────── */}
-      <Box marginTop={1} gap={1}>
-        <Text color={C_ACCENT}>›</Text>
-        {mode === 'prompt'
-          ? <TextInput value={prompt} placeholder="what do you want to calculate?" />
-          : <Text dimColor>{prompt}</Text>
-        }
-        {mode === 'prompt' && showHints && prompt.trim() && (
-          <Text dimColor>  Enter to generate</Text>
-        )}
-      </Box>
-
-      <Box marginTop={1}><Divider /></Box>
-
-      {error && <Box marginTop={1}><Text color={C_WARNING}>{error}</Text></Box>}
-
-      {!spec && !error && status && <Box marginTop={1}><Text dimColor>{status}</Text></Box>}
-
-      {!spec && !error && !status && (
-        <Box marginTop={1}><Text dimColor>Ask a financial question and press Enter.</Text></Box>
+      {mode === 'history' ? (
+        <>
+          <SearchBar value={search} hint="↑↓ select  Enter load  ctrl+d delete  Esc back" />
+          <Box marginTop={1}><Divider /></Box>
+          <Box flexDirection="column" marginTop={1}>
+            {filtered.length === 0
+              ? <Text dimColor>No canvases found.</Text>
+              : filtered.map((e, i) => (
+                  <SelectableRow key={e.id} selected={i === historyIdx} gap={2}>
+                    <Text color={i === historyIdx ? C_ACCENT : undefined}>{e.title.padEnd(24)}</Text>
+                    <Text dimColor>{e.prompt.length > 44 ? e.prompt.slice(0, 43) + '…' : e.prompt.padEnd(44)}</Text>
+                    {(e.versions ?? 0) > 1 && <Text dimColor>v{e.versions}</Text>}
+                    <Text dimColor>{(e.updatedAt ?? e.createdAt).slice(0, 10)}</Text>
+                  </SelectableRow>
+                ))
+            }
+          </Box>
+        </>
+      ) : (
+        <>
+          <Box marginTop={1}><Divider /></Box>
+          {spec
+            ? <Box marginTop={1}><CanvasView key={specKey} spec={spec} isActive={isActive} /></Box>
+            : <Box marginTop={1}><Text dimColor>Ask the agent (`) to generate a canvas — or press [/] to browse history.</Text></Box>
+          }
+        </>
       )}
-
-      {spec && <Box marginTop={1}><CanvasView spec={spec} isActive={mode === 'dials'} /></Box>}
     </Box>
   );
 }

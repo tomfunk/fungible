@@ -7,8 +7,8 @@ import { CanvasView } from '../../tui/Canvas.js';
 // ─── generateCanvas (mocked LLM) ──────────────────────────────────────────────
 
 const MOCK_HEALTH = {
-  avgMonthlyExpenses: 12000, monthlyIncome: 15000, monthlySavings: 3000,
-  cash: 60000, liquid: 800000, totalDebt: 20000, netWorth: 1_800_000,
+  avgMonthlyExpenses: 12000, monthlyIncome: 15000, monthlySavings: 3000, savingsRate: 20,
+  cash: 60000, liquid: 800000, retirement: 900000, totalDebt: 20000, loanDebt: 0, netWorth: 1_800_000,
 };
 
 const MOCK_SPEC: CanvasSpec = {
@@ -74,9 +74,12 @@ describe('evalExpr', () => {
     expect(isNaN(evalExpr('not valid js!!!', {}))).toBe(true);
   });
 
-  it('returns NaN when result is non-finite', () => {
-    // division by zero
-    expect(isNaN(evalExpr('a / b', { a: 1, b: 0 }))).toBe(true);
+  it('passes Infinity through (used for "never" payoff sentinel)', () => {
+    expect(evalExpr('a / b', { a: 1, b: 0 })).toBe(Infinity);
+  });
+
+  it('returns NaN for negative-infinity and invalid expressions', () => {
+    expect(isNaN(evalExpr('-a / b', { a: 1, b: 0 }))).toBe(true);
   });
 });
 
@@ -98,6 +101,11 @@ describe('fmtValue', () => {
 
   it('formats years with ceil', () => {
     expect(fmtValue(9.2, 'years')).toBe('10 yr');
+  });
+
+  it('returns never for Infinity', () => {
+    expect(fmtValue(Infinity, 'months')).toBe('never');
+    expect(fmtValue(Infinity, 'dollar')).toBe('never');
   });
 
   it('returns — for NaN', () => {

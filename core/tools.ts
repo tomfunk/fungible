@@ -7,7 +7,10 @@
  * embedded agent handles those before calling executeTool.
  */
 
+import { writeFileSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
+import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows } from './dateUtils.js';
@@ -23,6 +26,8 @@ import { db } from './db.js';
 import { validateRegex } from './rule-utils.js';
 import type { ToolDef } from './llm-provider.js';
 
+import { CANVAS_SPEC_PATH, appendHistory, searchHistory, getHistoryEntry, deleteHistoryEntry } from './canvas-history.js';
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 // Keep in sync with executeTool — any tool that mutates data must be listed here
@@ -31,6 +36,7 @@ export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
   'tag_transaction', 'toggle_hidden_category', 'sync',
+  'show_canvas', 'load_canvas', 'delete_canvas',
 ]);
 
 // ─── Tool definitions (all except the agent-only `show` tool) ─────────────────
@@ -330,6 +336,55 @@ export const TOOL_DEFS: ToolDef[] = [
     name: 'sync',
     description: 'Sync latest transactions from Plaid for all connected accounts.',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'show_canvas',
+    description: 'Render a CanvasSpec in the app\'s Canvas screen (screen 9) and save it to history. The TUI auto-navigates to canvas. Always pass the original user prompt so the canvas is findable later.',
+    parameters: {
+      type: 'object',
+      properties: {
+        spec:   { type: 'string', description: 'JSON-encoded CanvasSpec (title + elements array)' },
+        prompt: { type: 'string', description: 'The original user question that generated this canvas' },
+      },
+      required: ['spec', 'prompt'],
+    },
+  },
+  {
+    name: 'get_screen',
+    description: 'Return the current text content of the TUI exactly as the user sees it. Use this to understand what screen the user is on and what is displayed before navigating or generating canvases.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_canvases',
+    description: 'List previously generated canvases from history. Optionally filter by title or prompt text.',
+    parameters: {
+      type: 'object',
+      properties: {
+        search: { type: 'string', description: 'Filter by title or prompt (optional)' },
+      },
+    },
+  },
+  {
+    name: 'load_canvas',
+    description: 'Load a previously generated canvas from history and display it on screen 9.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Canvas history ID from list_canvases' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'delete_canvas',
+    description: 'Delete a canvas from history by ID.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Canvas history ID from list_canvases' },
+      },
+      required: ['id'],
+    },
   },
 ];
 
@@ -779,6 +834,43 @@ async function executeToolImpl(
       const total = results.reduce((s, r) => s + r.added, 0);
       return results.map((r) => `${r.itemId}: +${r.added} added, ${r.modified} modified, ${r.removed} removed`).join('\n')
         + `\n\nTotal new transactions: ${total}`;
+    }
+
+    case 'get_screen': {
+      const screenPath = join(DATA_DIR, 'screen.txt');
+      try {
+        return readFileSync(screenPath, 'utf-8');
+      } catch {
+        return 'Screen not available — TUI may not be running.';
+      }
+    }
+
+    case 'show_canvas': {
+      const specStr = str('spec');
+      const spec = JSON.parse(specStr);
+      const entry = appendHistory({ title: spec.title ?? 'Untitled', prompt: str('prompt'), spec });
+      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...spec, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      return `Canvas "${entry.title}" rendered on screen 9 (id: ${entry.id}).`;
+    }
+
+    case 'list_canvases': {
+      const results = searchHistory(str('search') || undefined);
+      if (!results.length) return 'No canvases found.';
+      return results.map((e) =>
+        `${e.id}  ${e.title}\n  prompt: ${e.prompt}\n  created: ${e.createdAt.slice(0, 10)}`
+      ).join('\n\n');
+    }
+
+    case 'load_canvas': {
+      const entry = getHistoryEntry(str('id'));
+      if (!entry) return `No canvas found with id "${str('id')}".`;
+      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...entry.spec, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      return `Canvas "${entry.title}" loaded on screen 9.`;
+    }
+
+    case 'delete_canvas': {
+      const deleted = deleteHistoryEntry(str('id'));
+      return deleted ? `Canvas deleted.` : `No canvas found with id "${str('id')}".`;
     }
 
     default:

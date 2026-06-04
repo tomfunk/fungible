@@ -1,6 +1,6 @@
 import { streamResponse } from './llm-provider.js';
 import { loadHealthData } from './health.js';
-import { fmt, fmtPct, fmtCompact, fmtMonths } from './fmt.js';
+import { fmt, fmtPct, fmtPctSigned, fmtCompact, fmtCompactSigned, fmtMonths } from './fmt.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +22,7 @@ export type OutputDef = {
   expr: string;         // pure JS arithmetic over dial keys — no side effects
   format: DialFormat;
   color?: 'positive' | 'negative' | 'neutral' | 'accent';
+  signed?: boolean;     // show explicit +/- prefix (use for deltas and values that can be negative)
 };
 
 export type CanvasElement =
@@ -43,17 +44,18 @@ export function evalExpr(expr: string, values: Record<string, number>): number {
     const vals = keys.map((k) => values[k]);
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const result = new Function(...keys, `"use strict"; return (${expr});`)(...vals);
-    return typeof result === 'number' && isFinite(result) ? result : NaN;
+    return typeof result === 'number' && !isNaN(result) && result !== -Infinity ? result : NaN;
   } catch {
     return NaN;
   }
 }
 
-export function fmtValue(n: number, format: DialFormat): string {
+export function fmtValue(n: number, format: DialFormat, signed = false): string {
+  if (n === Infinity) return 'never';
   if (!isFinite(n) || isNaN(n)) return '—';
   switch (format) {
-    case 'dollar':  return fmtCompact(n);
-    case 'percent': return fmtPct(n);
+    case 'dollar':  return signed ? fmtCompactSigned(n) : fmtCompact(n);
+    case 'percent': return signed ? fmtPctSigned(n) : fmtPct(n);
     case 'months':  return fmtMonths(n);
     case 'years':   return `${Math.ceil(n)} yr`;
     case 'integer': return String(Math.round(n));
@@ -112,6 +114,9 @@ Example: monthly mortgage payment with principal P, monthly rate r, n payments:
 5. Use \`section\` to group: "INPUTS" before dials, "RESULTS" before outputs
 6. Choose \`color\` for outputs: "positive" for gains/savings, "negative" for costs/debt, "neutral" otherwise
 7. Format dials and outputs consistently — if a dial is "dollar", its related output should be too
+8. Set \`signed: true\` on outputs that represent deltas or values that can be negative — e.g. net savings, surplus/deficit, change in portfolio. This shows an explicit +/- prefix so the sign is always unambiguous
+9. For any projection with a multi-year time horizon (retirement, investment growth, net worth, savings goals), show values in **real (inflation-adjusted) dollars** as the primary output — not nominal. Add an \`inflation\` dial (key: "inflation", default: 3, step: 0.5, min: 0, max: 8, format: "percent", hint: "annual inflation"). Convert nominal to real with: \`nominal / Math.pow(1 + inflation/100, years)\`. Label the output "Real value (today's $)" or similar. A nominal output may appear secondary.
+10. The live data does not include the user's age. If a canvas needs years-to-retirement or a birth-year assumption, add an \`age\` dial (default: 35, step: 1, min: 18, max: 80, format: "integer", hint: "your current age") so the user can set it accurately.
 
 ## Existing screen conventions (for consistency)
 
@@ -137,6 +142,31 @@ Example canvas for "how long to pay off my credit card":
     { "type": "output", "output": { "label": "Total interest", "expr": "monthly * (-Math.log(1 - balance * rate/100/12 / monthly) / Math.log(1 + rate/100/12)) - balance", "format": "dollar", "color": "negative" }}
   ]
 }`;
+}
+
+// ─── Context loader ───────────────────────────────────────────────────────────
+
+export type CanvasContext = {
+  system: string;
+  tool: typeof CANVAS_TOOL;
+};
+
+export async function loadCanvasContext(): Promise<CanvasContext> {
+  const health = await loadHealthData();
+  const taxableBrokerage = health.liquid - health.cash;
+  const financialContext = [
+    `Monthly income:    ${fmt(health.monthlyIncome)} (12-month avg)`,
+    `Monthly expenses:  ${fmt(health.avgMonthlyExpenses)} (12-month avg)`,
+    `Monthly surplus:   ${fmt(health.monthlySavings)} (savings rate: ${Math.round(health.savingsRate)}%)`,
+    `Cash (checking/savings): ${fmtCompact(health.cash)}`,
+    `Taxable investments (brokerage): ${fmtCompact(taxableBrokerage)}  ← no withdrawal restrictions`,
+    `Total accessible (cash + brokerage): ${fmtCompact(health.liquid)}`,
+    `Retirement accounts (401k/IRA/Roth): ${fmtCompact(health.retirement)}  ← restricted until ~59½`,
+    `Credit card debt:  ${fmtCompact(health.totalDebt)}`,
+    health.loanDebt > 0 ? `Loan debt (mortgage/auto/student): ${fmtCompact(health.loanDebt)}` : null,
+    `Net worth:         ${fmtCompact(health.netWorth)}`,
+  ].filter(Boolean).join('\n');
+  return { system: buildSystemPrompt(financialContext), tool: CANVAS_TOOL };
 }
 
 // ─── Canvas generation ────────────────────────────────────────────────────────
@@ -180,6 +210,7 @@ const CANVAS_TOOL = {
                 expr:   { type: 'string' },
                 format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years'] },
                 color:  { type: 'string', enum: ['positive', 'negative', 'neutral', 'accent'] },
+                signed: { type: 'boolean' },
               },
             },
           },
@@ -193,24 +224,13 @@ export async function generateCanvas(
   prompt: string,
   onStatus: (msg: string) => void,
 ): Promise<CanvasSpec> {
-  const health = await loadHealthData();
-  const financialContext = [
-    `Monthly income:    ${fmt(health.monthlyIncome)} (12-month avg)`,
-    `Monthly expenses:  ${fmt(health.avgMonthlyExpenses)} (12-month avg)`,
-    `Monthly surplus:   ${fmt(health.monthlySavings)}`,
-    `Cash (checking/savings): ${fmtCompact(health.cash)}`,
-    `Liquid (incl. brokerage): ${fmtCompact(health.liquid)}`,
-    `Total debt (credit cards): ${fmtCompact(health.totalDebt)}`,
-    `Net worth:         ${fmtCompact(health.netWorth)}`,
-  ].join('\n');
-
-  const system = buildSystemPrompt(financialContext);
+  const { system, tool } = await loadCanvasContext();
 
   onStatus('generating…');
 
   let spec: CanvasSpec | null = null;
 
-  for await (const chunk of streamResponse(system, [{ role: 'user', content: prompt }], [CANVAS_TOOL])) {
+  for await (const chunk of streamResponse(system, [{ role: 'user', content: prompt }], [tool])) {
     if (chunk.type === 'tool_use' && chunk.name === 'render_canvas') {
       spec = chunk.input as unknown as CanvasSpec;
     }

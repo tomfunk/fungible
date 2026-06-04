@@ -83,9 +83,10 @@ describe('fmtCompact', () => {
     expect(fmtCompact(999)).toBe('$999.00');
   });
 
-  it('strips sign like fmt does', () => {
-    expect(fmtCompact(-2_000_000)).toBe('$2.00M');
-    expect(fmtCompact(-50_000)).toBe('$50.0K');
+  it('preserves sign for negative values', () => {
+    expect(fmtCompact(-2_000_000)).toBe('-$2.00M');
+    expect(fmtCompact(-50_000)).toBe('-$50.0K');
+    expect(fmtCompact(-5_000)).toBe('-$5,000.00');
   });
 });
 
