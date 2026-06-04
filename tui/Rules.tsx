@@ -16,8 +16,12 @@ import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, 
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name' | 'rename-category' | 'edit-category';
+type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'add-category-name' | 'rename-category' | 'edit-category';
 type CatEditField = 'flexibility' | 'hidden';
+type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category';
+type NameRuleField = 'pattern' | 'type' | 'min' | 'max' | 'replacement';
+const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category'];
+const NAME_RULE_FIELDS: NameRuleField[] = ['pattern', 'type', 'min', 'max', 'replacement'];
 type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
@@ -60,11 +64,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   // Category edit panel state
   const [catEditField, setCatEditField] = useState<CatEditField>('flexibility');
 
+  // Unified rule form field cursor
+  const [ruleField, setRuleField] = useState<RuleField>('pattern');
+  const [nameRuleField, setNameRuleField] = useState<NameRuleField>('pattern');
+
   // Search
   const [search, setSearch] = useState('');
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'add-pattern', 'add-min-amount', 'add-max-amount', 'add-name-pattern', 'add-name-min-amount', 'add-name-max-amount', 'add-name-replacement', 'add-category-name', 'rename-category']);
+  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'name-rule-form', 'add-category-name', 'rename-category']);
   useEffect(() => { setTyping(TEXT_INPUT_MODES_RULES.has(mode)); }, [mode]);
 
   const termW = useTerminalWidth();
@@ -169,7 +177,10 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       if (section === 'rules') {
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
-        if (input === 'a') { setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setMode('add-pattern'); }
+        if (input === 'a') {
+          setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0);
+          setRuleField('pattern'); setMode('rule-form');
+        }
         if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
         if ((input === 'e' || key.return) && filteredRules[cursor]) {
           const r = filteredRules[cursor];
@@ -179,12 +190,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setNewMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
           setNewMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
           setCatCursor(Math.max(0, categories.indexOf(r.category)));
-          setMode('add-pattern');
+          setRuleField('pattern'); setMode('rule-form');
         }
       } else if (section === 'names') {
         if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
-        if (input === 'a') { setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setMode('add-name-pattern'); }
+        if (input === 'a') {
+          setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement('');
+          setNameRuleField('pattern'); setMode('name-rule-form');
+        }
         if (input === 'x' && filteredNameRules[nameCursor]) { handleDeleteNameRule(filteredNameRules[nameCursor].id); }
         if ((input === 'e' || key.return) && filteredNameRules[nameCursor]) {
           const r = filteredNameRules[nameCursor];
@@ -194,7 +208,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setNewNameMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
           setNewNameMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
           setNewReplacement(r.replacement);
-          setMode('add-name-pattern');
+          setNameRuleField('pattern'); setMode('name-rule-form');
         }
       } else if (section === 'categories') {
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
@@ -259,54 +273,46 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         }
         return;
       }
-    } else if (mode === 'add-pattern') {
-      if (key.return) { if (newPattern) setMode('add-type'); return; }
+    } else if (mode === 'rule-form') {
       if (key.escape) { setEditingRuleId(null); setMode('list'); return; }
-      if (key.backspace || key.delete) { setNewPattern((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewPattern((p) => p + input);
-    } else if (mode === 'add-type') {
-      if (key.escape) { setMode('list'); return; }
-      if (input === 'n') { setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setMode('add-min-amount'); }
-      if (input === 'r') { setNewType('regex'); setNewMinAmount(''); setNewMaxAmount(''); setMode('add-min-amount'); }
-    } else if (mode === 'add-min-amount') {
-      if (key.escape) { setMode('list'); return; }
-      if (key.return) { setMode('add-max-amount'); return; }
-      if (key.backspace || key.delete) { setNewMinAmount((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewMinAmount((p) => p + input);
-    } else if (mode === 'add-max-amount') {
-      if (key.escape) { setMode('list'); return; }
-      if (key.return) { setMode('add-category'); return; }
-      if (key.backspace || key.delete) { setNewMaxAmount((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewMaxAmount((p) => p + input);
-    } else if (mode === 'add-category') {
-      if (key.escape) { setMode('list'); return; }
-      if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow) setCatCursor((c) => Math.min(categories.length - 1, c + 1));
-      if (key.return) saveRule();
-    } else if (mode === 'add-name-pattern') {
-      if (key.return) { if (newNamePattern) setMode('add-name-type'); return; }
+      if (key.return) { if (newPattern.trim()) saveRule(); return; }
+      if (key.upArrow) { setRuleField((f) => RULE_FIELDS[Math.max(0, RULE_FIELDS.indexOf(f) - 1)]); return; }
+      if (key.downArrow) { setRuleField((f) => RULE_FIELDS[Math.min(RULE_FIELDS.length - 1, RULE_FIELDS.indexOf(f) + 1)]); return; }
+      if (ruleField === 'pattern') {
+        if (key.backspace || key.delete) { setNewPattern((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewPattern((p) => p + input); return; }
+      } else if (ruleField === 'type') {
+        if (key.leftArrow || key.rightArrow) { setNewType((t) => t === 'name' ? 'regex' : 'name'); return; }
+      } else if (ruleField === 'min') {
+        if (key.backspace || key.delete) { setNewMinAmount((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewMinAmount((p) => p + input); return; }
+      } else if (ruleField === 'max') {
+        if (key.backspace || key.delete) { setNewMaxAmount((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewMaxAmount((p) => p + input); return; }
+      } else if (ruleField === 'category') {
+        if (key.leftArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      }
+    } else if (mode === 'name-rule-form') {
       if (key.escape) { setEditingNameRuleId(null); setMode('list'); return; }
-      if (key.backspace || key.delete) { setNewNamePattern((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewNamePattern((p) => p + input);
-    } else if (mode === 'add-name-type') {
-      if (key.escape) { setMode('list'); return; }
-      if (input === 'n') { setNewNameType('name'); setMode('add-name-min-amount'); }
-      if (input === 'r') { setNewNameType('regex'); setMode('add-name-min-amount'); }
-    } else if (mode === 'add-name-min-amount') {
-      if (key.escape) { setMode('list'); return; }
-      if (key.return) { setMode('add-name-max-amount'); return; }
-      if (key.backspace || key.delete) { setNewNameMinAmount((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewNameMinAmount((p) => p + input);
-    } else if (mode === 'add-name-max-amount') {
-      if (key.escape) { setMode('list'); return; }
-      if (key.return) { setMode('add-name-replacement'); return; }
-      if (key.backspace || key.delete) { setNewNameMaxAmount((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewNameMaxAmount((p) => p + input);
-    } else if (mode === 'add-name-replacement') {
-      if (key.return) { if (newReplacement) handleSaveNameRule(); return; }
-      if (key.escape) { setMode('list'); return; }
-      if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setNewReplacement((p) => p + input);
+      if (key.return) { if (newNamePattern.trim() && newReplacement.trim()) handleSaveNameRule(); return; }
+      if (key.upArrow) { setNameRuleField((f) => NAME_RULE_FIELDS[Math.max(0, NAME_RULE_FIELDS.indexOf(f) - 1)]); return; }
+      if (key.downArrow) { setNameRuleField((f) => NAME_RULE_FIELDS[Math.min(NAME_RULE_FIELDS.length - 1, NAME_RULE_FIELDS.indexOf(f) + 1)]); return; }
+      if (nameRuleField === 'pattern') {
+        if (key.backspace || key.delete) { setNewNamePattern((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewNamePattern((p) => p + input); return; }
+      } else if (nameRuleField === 'type') {
+        if (key.leftArrow || key.rightArrow) { setNewNameType((t) => t === 'name' ? 'regex' : 'name'); return; }
+      } else if (nameRuleField === 'min') {
+        if (key.backspace || key.delete) { setNewNameMinAmount((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewNameMinAmount((p) => p + input); return; }
+      } else if (nameRuleField === 'max') {
+        if (key.backspace || key.delete) { setNewNameMaxAmount((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewNameMaxAmount((p) => p + input); return; }
+      } else if (nameRuleField === 'replacement') {
+        if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewReplacement((p) => p + input); return; }
+      }
     } else if (mode === 'add-category-name') {
       if (key.escape) { setMode('list'); return; }
       if (key.return && newCategoryName.trim()) {
@@ -511,64 +517,104 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         );
       })()}
 
-      {mode === 'add-pattern' && (
-        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Rule — Pattern`}>
-          <Text dimColor>Type pattern · Enter · Esc cancel</Text>
-          <Box marginTop={1} gap={1}><Text>Pattern: </Text><TextInput value={newPattern} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-type' && (
-        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Rule — Match Type`}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text></Text>
-          <Box gap={4} marginTop={1}>
-            <Text color={C_ACCENT}>[n] name match</Text>
-            <Text color={C_ACCENT}>[r] regex match</Text>
+      {mode === 'rule-form' && (
+        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Category Rule`}>
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            <Box gap={2}>
+              <Text color={ruleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'Pattern'.padEnd(12)}</Text>
+              <Box>
+                <Text color={ruleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {ruleField === 'pattern'
+                  ? <TextInput value={newPattern} color={C_WARNING} placeholder="keyword or /regex/" />
+                  : <Text color={newPattern ? undefined : C_DIM}>{newPattern || 'empty'}</Text>}
+                <Text color={ruleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
+            <Box gap={2}>
+              <Text color={ruleField === 'type' ? C_ACCENT : C_NEUTRAL}>{'Match type'.padEnd(12)}</Text>
+              <Text color={ruleField === 'type' ? C_ACCENT : undefined}>{'← '}{newType}{'  →'}</Text>
+            </Box>
+            <Box gap={2}>
+              <Text color={ruleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'Min $'.padEnd(12)}</Text>
+              <Box>
+                <Text color={ruleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {ruleField === 'min'
+                  ? <TextInput value={newMinAmount} color={C_WARNING} placeholder="optional" />
+                  : <Text color={newMinAmount ? undefined : C_DIM}>{newMinAmount || '—'}</Text>}
+                <Text color={ruleField === 'min' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
+            <Box gap={2}>
+              <Text color={ruleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'Max $'.padEnd(12)}</Text>
+              <Box>
+                <Text color={ruleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {ruleField === 'max'
+                  ? <TextInput value={newMaxAmount} color={C_WARNING} placeholder="optional" />
+                  : <Text color={newMaxAmount ? undefined : C_DIM}>{newMaxAmount || '—'}</Text>}
+                <Text color={ruleField === 'max' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
+            <Box gap={2}>
+              <Text color={ruleField === 'category' ? C_ACCENT : C_NEUTRAL}>{'Category'.padEnd(12)}</Text>
+              <Text color={ruleField === 'category' ? C_ACCENT : C_NEUTRAL}>{'← '}{categories[catCursor] ?? '—'}{'  →'}</Text>
+            </Box>
           </Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-min-amount' && (
-        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Rule — Min Amount (optional)`}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  Type: <Text color={C_WARNING}>{newType}</Text></Text>
-          <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1} gap={1}><Text>Min $: </Text><TextInput value={newMinAmount} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-max-amount' && (
-        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Rule — Max Amount (optional)`}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  {newMinAmount && <Text>Min: <Text color={C_MANUAL}>${newMinAmount}</Text></Text>}</Text>
-          <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1} gap={1}><Text>Max $: </Text><TextInput value={newMaxAmount} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-category' && (
-        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Rule — Category`}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  Type: <Text color={C_WARNING}>{newType}</Text></Text>
-          <Text dimColor>↑↓ select · Enter save · Esc cancel</Text>
-          <Box flexDirection="column" marginTop={1}>
-            {categories.map((cat, i) => (
-              <SelectableRow key={cat} selected={i === catCursor}>
-                <Text color={i === catCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== catCursor}>{cat}</Text>
-              </SelectableRow>
-            ))}
-          </Box>
+          <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
       )}
 
-      {mode === 'add-name-pattern' && (
-        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Pattern`} borderColor={C_POSITIVE}>
-          <Text dimColor>Matches against the raw transaction name</Text>
-          <Box marginTop={1} gap={1}><Text>Pattern: </Text><TextInput value={newNamePattern} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-name-type' && (
-        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Match Type`} borderColor={C_POSITIVE}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text></Text>
-          <Box gap={4} marginTop={1}>
-            <Text color={C_POSITIVE}>[n] name match (replaces whole name)</Text>
-            <Text color={C_POSITIVE}>[r] regex (can use capture groups)</Text>
+      {mode === 'name-rule-form' && (
+        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule`} borderColor={C_POSITIVE}>
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            <Box gap={2}>
+              <Text color={nameRuleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'Pattern'.padEnd(12)}</Text>
+              <Box>
+                <Text color={nameRuleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {nameRuleField === 'pattern'
+                  ? <TextInput value={newNamePattern} color={C_WARNING} placeholder="keyword or /regex/" />
+                  : <Text color={newNamePattern ? undefined : C_DIM}>{newNamePattern || 'empty'}</Text>}
+                <Text color={nameRuleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
+            <Box gap={2}>
+              <Text color={nameRuleField === 'type' ? C_ACCENT : C_NEUTRAL}>{'Match type'.padEnd(12)}</Text>
+              <Text color={nameRuleField === 'type' ? C_ACCENT : undefined}>{'← '}{newNameType}{'  →'}</Text>
+            </Box>
+            <Box gap={2}>
+              <Text color={nameRuleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'Min $'.padEnd(12)}</Text>
+              <Box>
+                <Text color={nameRuleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {nameRuleField === 'min'
+                  ? <TextInput value={newNameMinAmount} color={C_WARNING} placeholder="optional" />
+                  : <Text color={newNameMinAmount ? undefined : C_DIM}>{newNameMinAmount || '—'}</Text>}
+                <Text color={nameRuleField === 'min' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
+            <Box gap={2}>
+              <Text color={nameRuleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'Max $'.padEnd(12)}</Text>
+              <Box>
+                <Text color={nameRuleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {nameRuleField === 'max'
+                  ? <TextInput value={newNameMaxAmount} color={C_WARNING} placeholder="optional" />
+                  : <Text color={newNameMaxAmount ? undefined : C_DIM}>{newNameMaxAmount || '—'}</Text>}
+                <Text color={nameRuleField === 'max' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
+            <Box gap={2}>
+              <Text color={nameRuleField === 'replacement' ? C_ACCENT : C_NEUTRAL}>{'Replace with'.padEnd(12)}</Text>
+              <Box>
+                <Text color={nameRuleField === 'replacement' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
+                {nameRuleField === 'replacement'
+                  ? <TextInput value={newReplacement} color={C_POSITIVE} placeholder="display name" />
+                  : <Text color={newReplacement ? C_POSITIVE : C_DIM}>{newReplacement || 'empty'}</Text>}
+                <Text color={nameRuleField === 'replacement' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
+              </Box>
+            </Box>
           </Box>
+          <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
       )}
+
       {mode === 'add-category-name' && (
         <ModalPanel title="New Category" borderColor={C_WARNING}>
           <Text dimColor>Type a name · Enter save · Esc cancel</Text>
@@ -579,38 +625,6 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         <ModalPanel title="Rename Category" borderColor={C_WARNING}>
           <Text dimColor>Updates all transactions, rules, and hidden settings · Enter save · Esc cancel</Text>
           <Box marginTop={1} gap={1}><Text>Name: </Text><TextInput value={renameCatInput} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-name-min-amount' && (
-        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Min Amount (optional)`} borderColor={C_POSITIVE}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  Type: <Text color={C_WARNING}>{newNameType}</Text></Text>
-          <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1} gap={1}><Text>Min $: </Text><TextInput value={newNameMinAmount} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-name-max-amount' && (
-        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Max Amount (optional)`} borderColor={C_POSITIVE}>
-          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  {newNameMinAmount && <Text>Min: <Text color={C_MANUAL}>${newNameMinAmount}</Text>  </Text>}</Text>
-          <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1} gap={1}><Text>Max $: </Text><TextInput value={newNameMaxAmount} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'add-name-replacement' && (
-        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Replacement`} borderColor={C_POSITIVE}>
-          <Text>
-            Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  Type: <Text color={C_WARNING}>{newNameType}</Text>
-            {(newNameMinAmount || newNameMaxAmount) && (
-              <Text>  Amount: <Text color={C_MANUAL}>
-                {newNameMinAmount && newNameMaxAmount && newNameMinAmount === newNameMaxAmount
-                  ? `$${newNameMinAmount}`
-                  : newNameMinAmount && newNameMaxAmount
-                  ? `$${newNameMinAmount}–$${newNameMaxAmount}`
-                  : newNameMinAmount ? `≥$${newNameMinAmount}` : `≤$${newNameMaxAmount}`}
-              </Text></Text>
-            )}
-          </Text>
-          <Text dimColor>The display name to show instead</Text>
-          <Box marginTop={1} gap={1}><Text>Replace with: </Text><TextInput value={newReplacement} color={C_POSITIVE} /></Box>
         </ModalPanel>
       )}
     </Box>
