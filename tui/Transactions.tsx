@@ -18,7 +18,7 @@ import type { Screen, TxFilter } from './App.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
-import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField } from './components/index.js';
+import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
@@ -288,13 +288,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         if (key.return) { saveToTransaction(); return; }
         if (input && !key.ctrl && !key.meta) { setEditName((n) => n + input); return; }
       } else {
-        if (key.upArrow) {
-          if (editCatCursor === 0) { setEditField('name'); return; }
-          setEditCatCursor((c) => c - 1);
-          return;
-        }
-        if (key.downArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
-        if (input === 't' || key.return) { saveToTransaction(); return; }
+        if (key.upArrow) { setEditField('name'); return; }
+        if (key.leftArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+        if (key.return) { saveToTransaction(); return; }
         if (input === 'r') {
           setEditPattern(selected?.name ?? '');
           setEditMatchType('name');
@@ -583,28 +580,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} flexDirection="column" gap={1}>
             <EditTextField label="Name" labelWidth={10} active={editField === 'name'} value={editName} color={C_WARNING} placeholder="type new name…" emptyText="(unchanged)" />
 
-            <Box gap={2}>
-              <Text color={editField === 'category' ? C_ACCENT : C_NEUTRAL}>{'Category'.padEnd(10)}</Text>
-              {editField === 'category' ? (
-                <Box flexDirection="column">
-                  {visibleCats.map((cat, i) => {
-                    const idx = catWinStart + i;
-                    const isSel = idx === editCatCursor;
-                    return (
-                      <SelectableRow key={cat} selected={isSel}>
-                        <Text color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>{cat}</Text>
-                      </SelectableRow>
-                    );
-                  })}
-                </Box>
-              ) : (
-                <Text color={C_ACCENT}>{categories[editCatCursor]}</Text>
-              )}
-            </Box>
+            <EditToggleField label="Category" labelWidth={10} active={editField === 'category'} value={categories[editCatCursor] ?? '—'} />
           </Box>
 
           <Box marginTop={1}>
-            <Text dimColor>↑↓ navigate  ·  Enter save  ·  [r] make rule  ·  Esc cancel</Text>
+            <Text dimColor>↑↓ field  ·  ← → category  ·  Enter save  ·  [r] make rule  ·  Esc cancel</Text>
           </Box>
         </ModalPanel>
       )}
