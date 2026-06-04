@@ -9,3 +9,4 @@ export { ColumnHeader } from './ColumnHeader.js';
 export { PageHeader } from './PageHeader.js';
 export { SearchBar } from './SearchBar.js';
 export { DialRow } from './DialRow.js';
+export { EditTextField, EditToggleField } from './EditField.js';

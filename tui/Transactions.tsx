@@ -18,7 +18,7 @@ import type { Screen, TxFilter } from './App.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
-import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
+import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
@@ -283,13 +283,16 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (mode === 'edit') {
       if (key.escape) { setMode('list'); return; }
       if (editField === 'name') {
-        if (key.return || key.rightArrow) { setEditField('category'); return; }
-        if (key.leftArrow) { return; }
+        if (key.downArrow) { setEditField('category'); return; }
         if (key.backspace || key.delete) { setEditName((n) => n.slice(0, -1)); return; }
+        if (key.return) { saveToTransaction(); return; }
         if (input && !key.ctrl && !key.meta) { setEditName((n) => n + input); return; }
       } else {
-        if (key.leftArrow) { setEditField('name'); return; }
-        if (key.upArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.upArrow) {
+          if (editCatCursor === 0) { setEditField('name'); return; }
+          setEditCatCursor((c) => c - 1);
+          return;
+        }
         if (key.downArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
         if (input === 't' || key.return) { saveToTransaction(); return; }
         if (input === 'r') {
@@ -577,17 +580,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         <ModalPanel>
           <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
 
-          <Box marginTop={1} gap={3}>
-            <Box flexDirection="column">
-              <Text color={editField === 'name' ? C_ACCENT : C_DIM} bold>Name</Text>
-              {editField === 'name'
-                ? <TextInput value={editName} color={C_WARNING} placeholder="type new name…" />
-                : <Text dimColor>{editName || '(unchanged)'}</Text>
-              }
-            </Box>
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            <EditTextField label="Name" labelWidth={10} active={editField === 'name'} value={editName} color={C_WARNING} placeholder="type new name…" emptyText="(unchanged)" />
 
-            <Box flexDirection="column">
-              <Text color={editField === 'category' ? C_ACCENT : C_DIM} bold>Category</Text>
+            <Box gap={2}>
+              <Text color={editField === 'category' ? C_ACCENT : C_NEUTRAL}>{'Category'.padEnd(10)}</Text>
               {editField === 'category' ? (
                 <Box flexDirection="column">
                   {visibleCats.map((cat, i) => {
@@ -606,11 +603,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             </Box>
           </Box>
 
-          <Box marginTop={1} gap={3}>
-            {editField === 'name'
-              ? <Text dimColor>Enter / → to pick category  ·  Esc cancel</Text>
-              : <><Text color={C_ACCENT}>[t] / Enter  this transaction</Text><Text color={C_ACCENT}>[r] make rule</Text><Text dimColor>← name  ·  Esc cancel</Text></>
-            }
+          <Box marginTop={1}>
+            <Text dimColor>↑↓ navigate  ·  Enter save  ·  [r] make rule  ·  Esc cancel</Text>
           </Box>
         </ModalPanel>
       )}

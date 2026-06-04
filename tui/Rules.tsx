@@ -12,12 +12,12 @@ import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_ACCENT, C_DIM, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
-import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, ColumnHeader, PageHeader, SearchBar } from './components/index.js';
+import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, ColumnHeader, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'add-category-name' | 'rename-category' | 'edit-category';
-type CatEditField = 'flexibility' | 'hidden';
+type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'add-category-name' | 'edit-category';
+type CatEditField = 'name' | 'flexibility' | 'hidden';
 type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category';
 type NameRuleField = 'pattern' | 'type' | 'min' | 'max' | 'replacement';
 const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category'];
@@ -72,7 +72,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const [search, setSearch] = useState('');
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'name-rule-form', 'add-category-name', 'rename-category']);
+  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'name-rule-form', 'add-category-name', 'edit-category']);
   useEffect(() => { setTyping(TEXT_INPUT_MODES_RULES.has(mode)); }, [mode]);
 
   const termW = useTerminalWidth();
@@ -230,11 +230,6 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           load();
           return;
         }
-        if (input === 'n' && categories[catListCursor]) {
-          setRenameCatInput(categories[catListCursor]);
-          setMode('rename-category');
-          return;
-        }
         if (input === 'x' && categories[catListCursor]) {
           const name = categories[catListCursor];
           deleteCategory(name);
@@ -242,16 +237,34 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           load();
           setCatListCursor((c) => Math.max(0, c - 1));
         }
-        if (key.return && catDetails[catListCursor]) {
-          setCatEditField('flexibility');
+        if ((input === 'e' || key.return) && catDetails[catListCursor]) {
+          setRenameCatInput(categories[catListCursor] ?? '');
+          setCatEditField('name');
           setMode('edit-category');
           return;
         }
       }
     } else if (mode === 'edit-category') {
-      if (key.escape || key.return) { setMode('list'); return; }
-      if (key.upArrow || key.downArrow) {
-        setCatEditField((f) => f === 'flexibility' ? 'hidden' : 'flexibility');
+      const CAT_FIELDS: CatEditField[] = ['name', 'flexibility', 'hidden'];
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) {
+        const cat = catDetails[catListCursor];
+        if (cat) {
+          const trimmed = renameCatInput.trim();
+          if (trimmed && trimmed !== cat.name) {
+            renameCategory(cat.name, trimmed);
+            showStatus(`Renamed to "${trimmed}"`);
+            load();
+          }
+        }
+        setMode('list');
+        return;
+      }
+      if (key.upArrow) { setCatEditField((f) => CAT_FIELDS[Math.max(0, CAT_FIELDS.indexOf(f) - 1)]); return; }
+      if (key.downArrow) { setCatEditField((f) => CAT_FIELDS[Math.min(CAT_FIELDS.length - 1, CAT_FIELDS.indexOf(f) + 1)]); return; }
+      if (catEditField === 'name') {
+        if (key.backspace || key.delete) { setRenameCatInput((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setRenameCatInput((p) => p + input); return; }
         return;
       }
       if (catEditField === 'flexibility' && (key.leftArrow || key.rightArrow)) {
@@ -325,21 +338,6 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       }
       if (key.backspace || key.delete) { setNewCategoryName((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewCategoryName((p) => p + input);
-    } else if (mode === 'rename-category') {
-      if (key.escape) { setMode('list'); return; }
-      if (key.return && renameCatInput.trim()) {
-        const oldName = categories[catListCursor];
-        const newName = renameCatInput.trim();
-        if (oldName && newName !== oldName) {
-          renameCategory(oldName, newName);
-          showStatus(`Renamed to "${newName}"`);
-          load();
-        }
-        setMode('list');
-        return;
-      }
-      if (key.backspace || key.delete) { setRenameCatInput((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) setRenameCatInput((p) => p + input);
     }
   }, { isActive: isActive !== false });
 
@@ -368,7 +366,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       </Box>
       <Text dimColor>
         {section === 'categories'
-          ? (showHints ? '[a] add  [n] rename  [x] delete  ·  Enter edit  ·  [Tab] switch' : '')
+          ? (showHints ? '[a] add  [x] delete  ·  Enter/[e] edit  ·  [Tab] switch' : '')
           : (showHints ? '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch' : '[/] search')}
       </Text>
 
@@ -499,12 +497,8 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         return (
           <ModalPanel title={`Edit: ${cat.name}`}>
             <Box marginTop={1} flexDirection="column" gap={1}>
-              <Box gap={2}>
-                <Text color={catEditField === 'flexibility' ? C_ACCENT : C_NEUTRAL}>{'Flexibility'.padEnd(12)}</Text>
-                <Text color={catEditField === 'flexibility' ? C_ACCENT : (flexColor ?? C_DIM)}>
-                  {'← '}{cat.flexibility ?? '—'}{'  →'}
-                </Text>
-              </Box>
+              <EditTextField label="Name" active={catEditField === 'name'} value={renameCatInput} color={C_WARNING} emptyText="—" />
+              <EditToggleField label="Flexibility" active={catEditField === 'flexibility'} value={cat.flexibility ?? '—'} valueColor={flexColor ?? C_DIM} />
               <Box gap={2}>
                 <Text color={catEditField === 'hidden' ? C_ACCENT : C_NEUTRAL}>{'Hidden'.padEnd(12)}</Text>
                 <Text color={catEditField === 'hidden' ? C_ACCENT : (isHidden ? C_WARNING : C_DIM)}>
@@ -512,7 +506,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                 </Text>
               </Box>
             </Box>
-            <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter/Esc close</Text></Box>
+            <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
           </ModalPanel>
         );
       })()}
@@ -520,44 +514,11 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       {mode === 'rule-form' && (
         <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Category Rule`}>
           <Box marginTop={1} flexDirection="column" gap={1}>
-            <Box gap={2}>
-              <Text color={ruleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'Pattern'.padEnd(12)}</Text>
-              <Box>
-                <Text color={ruleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {ruleField === 'pattern'
-                  ? <TextInput value={newPattern} color={C_WARNING} placeholder="keyword or /regex/" />
-                  : <Text color={newPattern ? undefined : C_DIM}>{newPattern || 'empty'}</Text>}
-                <Text color={ruleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
-            <Box gap={2}>
-              <Text color={ruleField === 'type' ? C_ACCENT : C_NEUTRAL}>{'Match type'.padEnd(12)}</Text>
-              <Text color={ruleField === 'type' ? C_ACCENT : undefined}>{'← '}{newType}{'  →'}</Text>
-            </Box>
-            <Box gap={2}>
-              <Text color={ruleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'Min $'.padEnd(12)}</Text>
-              <Box>
-                <Text color={ruleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {ruleField === 'min'
-                  ? <TextInput value={newMinAmount} color={C_WARNING} placeholder="optional" />
-                  : <Text color={newMinAmount ? undefined : C_DIM}>{newMinAmount || '—'}</Text>}
-                <Text color={ruleField === 'min' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
-            <Box gap={2}>
-              <Text color={ruleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'Max $'.padEnd(12)}</Text>
-              <Box>
-                <Text color={ruleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {ruleField === 'max'
-                  ? <TextInput value={newMaxAmount} color={C_WARNING} placeholder="optional" />
-                  : <Text color={newMaxAmount ? undefined : C_DIM}>{newMaxAmount || '—'}</Text>}
-                <Text color={ruleField === 'max' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
-            <Box gap={2}>
-              <Text color={ruleField === 'category' ? C_ACCENT : C_NEUTRAL}>{'Category'.padEnd(12)}</Text>
-              <Text color={ruleField === 'category' ? C_ACCENT : C_NEUTRAL}>{'← '}{categories[catCursor] ?? '—'}{'  →'}</Text>
-            </Box>
+            <EditTextField label="Pattern" active={ruleField === 'pattern'} value={newPattern} color={C_WARNING} placeholder="keyword or /regex/" emptyText="empty" />
+            <EditToggleField label="Match type" active={ruleField === 'type'} value={newType} />
+            <EditTextField label="Min $" active={ruleField === 'min'} value={newMinAmount} color={C_WARNING} placeholder="optional" />
+            <EditTextField label="Max $" active={ruleField === 'max'} value={newMaxAmount} color={C_WARNING} placeholder="optional" />
+            <EditToggleField label="Category" active={ruleField === 'category'} value={categories[catCursor] ?? '—'} />
           </Box>
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
@@ -566,50 +527,11 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       {mode === 'name-rule-form' && (
         <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule`} borderColor={C_POSITIVE}>
           <Box marginTop={1} flexDirection="column" gap={1}>
-            <Box gap={2}>
-              <Text color={nameRuleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'Pattern'.padEnd(12)}</Text>
-              <Box>
-                <Text color={nameRuleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {nameRuleField === 'pattern'
-                  ? <TextInput value={newNamePattern} color={C_WARNING} placeholder="keyword or /regex/" />
-                  : <Text color={newNamePattern ? undefined : C_DIM}>{newNamePattern || 'empty'}</Text>}
-                <Text color={nameRuleField === 'pattern' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
-            <Box gap={2}>
-              <Text color={nameRuleField === 'type' ? C_ACCENT : C_NEUTRAL}>{'Match type'.padEnd(12)}</Text>
-              <Text color={nameRuleField === 'type' ? C_ACCENT : undefined}>{'← '}{newNameType}{'  →'}</Text>
-            </Box>
-            <Box gap={2}>
-              <Text color={nameRuleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'Min $'.padEnd(12)}</Text>
-              <Box>
-                <Text color={nameRuleField === 'min' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {nameRuleField === 'min'
-                  ? <TextInput value={newNameMinAmount} color={C_WARNING} placeholder="optional" />
-                  : <Text color={newNameMinAmount ? undefined : C_DIM}>{newNameMinAmount || '—'}</Text>}
-                <Text color={nameRuleField === 'min' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
-            <Box gap={2}>
-              <Text color={nameRuleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'Max $'.padEnd(12)}</Text>
-              <Box>
-                <Text color={nameRuleField === 'max' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {nameRuleField === 'max'
-                  ? <TextInput value={newNameMaxAmount} color={C_WARNING} placeholder="optional" />
-                  : <Text color={newNameMaxAmount ? undefined : C_DIM}>{newNameMaxAmount || '—'}</Text>}
-                <Text color={nameRuleField === 'max' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
-            <Box gap={2}>
-              <Text color={nameRuleField === 'replacement' ? C_ACCENT : C_NEUTRAL}>{'Replace with'.padEnd(12)}</Text>
-              <Box>
-                <Text color={nameRuleField === 'replacement' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                {nameRuleField === 'replacement'
-                  ? <TextInput value={newReplacement} color={C_POSITIVE} placeholder="display name" />
-                  : <Text color={newReplacement ? C_POSITIVE : C_DIM}>{newReplacement || 'empty'}</Text>}
-                <Text color={nameRuleField === 'replacement' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-              </Box>
-            </Box>
+            <EditTextField label="Pattern" active={nameRuleField === 'pattern'} value={newNamePattern} color={C_WARNING} placeholder="keyword or /regex/" emptyText="empty" />
+            <EditToggleField label="Match type" active={nameRuleField === 'type'} value={newNameType} />
+            <EditTextField label="Min $" active={nameRuleField === 'min'} value={newNameMinAmount} color={C_WARNING} placeholder="optional" />
+            <EditTextField label="Max $" active={nameRuleField === 'max'} value={newNameMaxAmount} color={C_WARNING} placeholder="optional" />
+            <EditTextField label="Replace with" active={nameRuleField === 'replacement'} value={newReplacement} color={C_POSITIVE} placeholder="display name" emptyText="empty" />
           </Box>
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
@@ -619,12 +541,6 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         <ModalPanel title="New Category" borderColor={C_WARNING}>
           <Text dimColor>Type a name · Enter save · Esc cancel</Text>
           <Box marginTop={1} gap={1}><Text>Name: </Text><TextInput value={newCategoryName} color={C_WARNING} /></Box>
-        </ModalPanel>
-      )}
-      {mode === 'rename-category' && (
-        <ModalPanel title="Rename Category" borderColor={C_WARNING}>
-          <Text dimColor>Updates all transactions, rules, and hidden settings · Enter save · Esc cancel</Text>
-          <Box marginTop={1} gap={1}><Text>Name: </Text><TextInput value={renameCatInput} color={C_WARNING} /></Box>
         </ModalPanel>
       )}
     </Box>

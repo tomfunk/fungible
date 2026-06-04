@@ -16,7 +16,7 @@ import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
-import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader } from './components/index.js';
+import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -711,36 +711,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             return (
               <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
                 <Box marginTop={1} flexDirection="column" gap={1}>
-                  <Box gap={2}>
-                    <Text color={editField === 'nickname' ? C_ACCENT : C_NEUTRAL}>{'Nickname'.padEnd(10)}</Text>
-                    <Box>
-                      <Text color={editField === 'nickname' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                      {editField === 'nickname'
-                        ? <TextInput value={editNickname} color={C_WARNING} placeholder="none" />
-                        : <Text color={editNickname ? undefined : C_DIM}>{editNickname || 'none'}</Text>}
-                      <Text color={editField === 'nickname' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-                    </Box>
-                  </Box>
-                  <Box gap={2}>
-                    <Text color={editField === 'type' ? C_ACCENT : C_NEUTRAL}>{'Type'.padEnd(10)}</Text>
-                    <Text color={editField === 'type' ? C_ACCENT : undefined}>{'← '}{editType}{'  →'}</Text>
-                  </Box>
-                  <Box gap={2}>
-                    <Text color={editField === 'subtype' ? C_ACCENT : C_NEUTRAL}>{'Subtype'.padEnd(10)}</Text>
-                    <Text color={editField === 'subtype' ? C_ACCENT : C_DIM}>{'← '}{editSubtype || '—'}{'  →'}</Text>
-                  </Box>
-                  {isDebt && (
-                    <Box gap={2}>
-                      <Text color={editField === 'apr' ? C_ACCENT : C_NEUTRAL}>{'APR %'.padEnd(10)}</Text>
-                      <Box>
-                        <Text color={editField === 'apr' ? C_ACCENT : C_NEUTRAL}>{'[ '}</Text>
-                        {editField === 'apr'
-                          ? <TextInput value={editApr} color={C_WARNING} placeholder="0.0" />
-                          : <Text color={editApr ? undefined : C_DIM}>{editApr || '—'}</Text>}
-                        <Text color={editField === 'apr' ? C_ACCENT : C_NEUTRAL}>{' ]'}</Text>
-                      </Box>
-                    </Box>
-                  )}
+                  <EditTextField label="Nickname" labelWidth={10} active={editField === 'nickname'} value={editNickname} color={C_WARNING} placeholder="none" emptyText="none" />
+                  <EditToggleField label="Type" labelWidth={10} active={editField === 'type'} value={editType} />
+                  <EditToggleField label="Subtype" labelWidth={10} active={editField === 'subtype'} value={editSubtype || '—'} valueColor={C_DIM} />
+                  {isDebt && <EditTextField label="APR %" labelWidth={10} active={editField === 'apr'} value={editApr} color={C_WARNING} placeholder="0.0" />}
                 </Box>
                 <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
               </ModalPanel>
