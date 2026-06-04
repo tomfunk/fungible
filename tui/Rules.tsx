@@ -182,7 +182,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setRuleField('pattern'); setMode('rule-form');
         }
         if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
-        if ((input === 'e' || key.return) && filteredRules[cursor]) {
+        if (key.return && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);
           setNewPattern(r.pattern);
@@ -200,7 +200,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setNameRuleField('pattern'); setMode('name-rule-form');
         }
         if (input === 'x' && filteredNameRules[nameCursor]) { handleDeleteNameRule(filteredNameRules[nameCursor].id); }
-        if ((input === 'e' || key.return) && filteredNameRules[nameCursor]) {
+        if (key.return && filteredNameRules[nameCursor]) {
           const r = filteredNameRules[nameCursor];
           setEditingNameRuleId(r.id);
           setNewNamePattern(r.pattern);
@@ -237,7 +237,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           load();
           setCatListCursor((c) => Math.max(0, c - 1));
         }
-        if ((input === 'e' || key.return) && catDetails[catListCursor]) {
+        if (key.return && catDetails[catListCursor]) {
           setRenameCatInput(categories[catListCursor] ?? '');
           setCatEditField('name');
           setMode('edit-category');
@@ -366,8 +366,8 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       </Box>
       <Text dimColor>
         {section === 'categories'
-          ? (showHints ? '[a] add  [x] delete  ·  Enter/[e] edit  ·  [Tab] switch' : '')
-          : (showHints ? '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch' : '[/] search')}
+          ? (showHints ? '[a] add  [x] delete  ·  Enter edit  ·  [Tab] switch' : '')
+          : (showHints ? '[/] search  [a] add  [x] delete  ·  Enter edit  ·  [Tab] switch' : '[/] search')}
       </Text>
 
       {mode === 'search' ? (

@@ -350,7 +350,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
       if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
-      if ((input === 'e' || key.return) && selected) openEdit();
+      if (key.return && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
         void getAllCategories().then((cats) => {
           setCategories(cats);
@@ -446,7 +446,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter/[e] edit  [g] tag  [i] ignore  [x] delete`
+          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete`
           : '[/] search'}
       </Text>
 

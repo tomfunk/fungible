@@ -409,7 +409,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('add-data'); return; }
       if (key.upArrow)   { setAcctCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
-      if ((input === 'e' || key.return) && linkedAccounts[acctCursor]) {
+      if (key.return && linkedAccounts[acctCursor]) {
         openEdit(linkedAccounts[acctCursor]);
         return;
       }
@@ -625,7 +625,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  Enter/[e] edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
+            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
