@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { type TrendsRange } from '../core/dateUtils.js';
-import { buildTrendViews, generateAllPeriods, getPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
+import { buildTrendViews, generateAllPeriods, getPeriodTotals, getSearchMatchingPeriods, type View, type PeriodRow } from '../core/trends.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT, CURSOR } from './ui.js';
 import { StatCard, usePagination, SelectableRow, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
+import { useSetTyping } from './TypingContext.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
@@ -48,6 +49,11 @@ export function Trends({
   });
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
+  const [search, setSearch] = useState(initialFilter?.search ?? '');
+  const [searchMode, setSearchMode] = useState(false);
+  const [matchingPeriods, setMatchingPeriods] = useState<Set<string> | null>(null);
+  const setTyping = useSetTyping();
+  useEffect(() => { setTyping(searchMode); }, [searchMode, setTyping]);
 
   useEffect(() => {
     void buildTrendViews().then((loaded) => {
@@ -72,13 +78,30 @@ export function Trends({
     });
   }, [viewIdx, range, views, refreshKey]);
 
+  useEffect(() => {
+    if (!search) { setMatchingPeriods(null); return; }
+    void getSearchMatchingPeriods(search, range).then(setMatchingPeriods);
+  }, [search, range]);
+
+  const displayRows = matchingPeriods ? rows.filter((r) => matchingPeriods.has(r.from)) : rows;
+  const clampedCursor = displayRows.length > 0 ? Math.min(cursor, displayRows.length - 1) : 0;
+
   useInput((input, key) => {
-    if (key.escape) { onNavigate('dashboard'); return; }
+    if (searchMode) {
+      if (key.escape || key.return) { setSearchMode(false); return; }
+      if (key.backspace || key.delete) { setSearch((s) => s.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setSearch((s) => s + input); return; }
+      return;
+    }
+    if (input === '/') { setSearchMode(true); return; }
+    if (key.escape) { onNavigate('dashboard', search ? { search } : undefined); return; }
+    if (input === '1') { onNavigate('dashboard', search ? { search } : undefined); return; }
     if (input === '2') {
-      const row = rows[cursor];
+      const row = displayRows[clampedCursor];
       onNavigate('transactions', {
         ...(row ? { from: row.from, to: row.to } : {}),
         ...(view.category ? { category: view.category } : {}),
+        ...(search ? { search } : {}),
       });
       return;
     }
@@ -86,35 +109,35 @@ export function Trends({
     if (key.leftArrow)  { setViewIdx((i) => (i - 1 + views.length) % views.length); return; }
     if (key.rightArrow) { setViewIdx((i) => (i + 1) % views.length); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
-    if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
+    if (key.downArrow) { setCursor((c) => Math.min(displayRows.length - 1, c + 1)); return; }
     if (input === 'r') {
       setRange((r) => TRENDS_RANGES[(TRENDS_RANGES.indexOf(r) + 1) % TRENDS_RANGES.length]);
       return;
     }
     if (key.return) {
-      const row = rows[cursor];
-      if (row) onNavigate('transactions', { category: view.category ?? undefined, from: row.from, to: row.to });
+      const row = displayRows[clampedCursor];
+      if (row) onNavigate('transactions', { category: view.category ?? undefined, from: row.from, to: row.to, ...(search ? { search } : {}) });
     }
   }, { isActive: isActive !== false });
 
   const PAGE = 30;
-  const { visible, pageStart } = usePagination(rows, cursor, PAGE);
+  const { visible, pageStart } = usePagination(displayRows, clampedCursor, PAGE);
 
   // Scale maxes
-  const maxIncome   = isNet ? Math.max(...rows.map((r) => r.income   ?? 0), 1) : 1;
-  const maxExpenses = isNet ? Math.max(...rows.map((r) => r.expenses ?? 0), 1) : 1;
+  const maxIncome   = isNet ? Math.max(...displayRows.map((r) => r.income   ?? 0), 1) : 1;
+  const maxExpenses = isNet ? Math.max(...displayRows.map((r) => r.expenses ?? 0), 1) : 1;
   const netMax = Math.max(maxIncome, maxExpenses);
 
   const flexMax = isFlexBreakdown
-    ? Math.max(...rows.flatMap((r) => [r.fixed ?? 0, r.flexible ?? 0, r.discretionary ?? 0]), 1)
+    ? Math.max(...displayRows.flatMap((r) => [r.fixed ?? 0, r.flexible ?? 0, r.discretionary ?? 0]), 1)
     : 1;
 
   const absMax = isNet          ? netMax
                : isFlexBreakdown ? flexMax
-               : Math.max(...rows.map((r) => Math.abs(r.total)), 1);
+               : Math.max(...displayRows.map((r) => Math.abs(r.total)), 1);
 
-  const avg  = rows.length ? rows.reduce((s, r) => s + r.total, 0) / rows.length : 0;
-  const peak = rows.reduce((best, r) => Math.abs(r.total) > Math.abs(best?.total ?? 0) ? r : best, rows[0]);
+  const avg  = displayRows.length ? displayRows.reduce((s, r) => s + r.total, 0) / displayRows.length : 0;
+  const peak = displayRows.reduce((best, r) => Math.abs(r.total) > Math.abs(best?.total ?? 0) ? r : best, displayRows[0]);
 
   const labelWidth = range === 'week' ? 22 : range === 'month' ? 10 : range === 'quarter' ? 8 : 6;
   const color = viewColor(view);
@@ -135,8 +158,16 @@ export function Trends({
       <PageHeader current="trends" showHints={showHints} />
 
       <Box justifyContent="space-between" marginTop={1}>
-        <Text bold>Trends</Text>
-        {showHints && <Text dimColor>←→ view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
+        <Box gap={2}>
+          <Text bold>Trends</Text>
+          {searchMode
+            ? <Text color={C_ACCENT}>/ {search}{CURSOR}</Text>
+            : search
+              ? <Text color={C_ACCENT}>/ {search}{matchingPeriods ? ` (${displayRows.length} of ${rows.length})` : ''}</Text>
+              : null
+          }
+        </Box>
+        {showHints && <Text dimColor>{searchMode ? 'type · Enter/Esc done' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns'}</Text>}
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
@@ -152,8 +183,8 @@ export function Trends({
       </Box>
       <Divider />
 
-      {rows.length === 0 ? (
-        <Box marginTop={1}><Text dimColor>No data.</Text></Box>
+      {displayRows.length === 0 ? (
+        <Box marginTop={1}><Text dimColor>{rows.length === 0 ? 'No data.' : 'No periods match the search.'}</Text></Box>
       ) : (
         <>
           <Box flexDirection="column" marginTop={1}>
@@ -182,7 +213,7 @@ export function Trends({
               </Box>
             )}
             {visible.map((row, i) => {
-              const isSelected = rows[pageStart + i] === rows[cursor];
+              const isSelected = displayRows[pageStart + i] === displayRows[clampedCursor];
 
               if (isNet && row.income !== undefined && row.expenses !== undefined) {
                 const expFilled = Math.min(HALF_BAR, Math.max(0, Math.round((row.expenses / netMax) * HALF_BAR)));
@@ -236,7 +267,7 @@ export function Trends({
 
           <Box marginTop={1}><Divider /></Box>
           <Box gap={6} marginTop={1}>
-            <StatCard label="periods" value={String(rows.length)} />
+            <StatCard label="periods" value={String(displayRows.length)} />
             <StatCard
               label={`avg/${RANGE_LABELS[range].toLowerCase()}`}
               value={isNet ? fmtSigned(avg) : fmt(avg)}

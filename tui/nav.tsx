@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import type { Screen } from './App.js';
 
 const SCREEN_KEYS: Record<string, Screen> = {
+  '0': 'settings',
   '1': 'dashboard',
   '2': 'transactions',
   '3': 'trends',
@@ -15,13 +16,13 @@ const SCREEN_KEYS: Record<string, Screen> = {
 };
 
 const LABELS: Record<Screen, string> = {
-  dashboard: 'dash', transactions: 'txns', trends: 'trends',
+  settings: 'settings', dashboard: 'dash', transactions: 'txns', trends: 'trends',
   networth: 'worth', tags: 'tags', health: 'health', rules: 'rules', accounts: 'accounts',
   canvas: 'canvas',
 };
 
 // Split into two rows so each row stays short enough for narrow terminals
-const ROW1: Screen[] = ['dashboard', 'transactions', 'trends', 'networth'];
+const ROW1: Screen[] = ['settings', 'dashboard', 'transactions', 'trends', 'networth'];
 const ROW2: Screen[] = ['tags', 'health', 'rules', 'accounts', 'canvas'];
 
 const keyOf = (s: Screen) => Object.entries(SCREEN_KEYS).find(([, v]) => v === s)![0];

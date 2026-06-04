@@ -19,8 +19,14 @@ import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
 import { Health } from '../../tui/Health.js';
+import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
+
+vi.mock('../../core/profile.js', () => ({
+  loadProfile: () => null,
+  saveProfile: () => {},
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -393,7 +399,8 @@ describe('Trends', () => {
     );
     await waitFor(() => expect(frame(r)).toContain('Trends'));
     r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
+    // Trends passes search (undefined when empty) as second arg
+    expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined);
   });
 
   it('right arrow cycles through the base views in order', async () => {
@@ -448,11 +455,172 @@ describe('Trends', () => {
     });
   });
 
+  it('search filter from initialFilter shows indicator in header', async () => {
+    const r = trends({ initialFilter: { search: 'Whole Foods' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Whole Foods');
+    });
+  });
 
+  it('search filters to only periods containing matching transactions', async () => {
+    // Amazon only appears in May — April should be hidden
+    const r = trends({ initialFilter: { search: 'Amazon' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('May 2026');
+      expect(f).not.toContain('Apr 2026');
+    });
+  });
 
+  it('search that matches both periods shows both', async () => {
+    // Whole Foods appears in both April and May
+    const r = trends({ initialFilter: { search: 'Whole Foods' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Apr 2026');
+      expect(f).toContain('May 2026');
+    });
+  });
 
+  it('pressing 1 passes active search back to dashboard', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W><Trends onNavigate={onNavigate} showHints={false} initialFilter={{ search: 'Amazon' }} /></W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Trends'));
+    r.stdin.write('1');
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledWith('dashboard', { search: 'Amazon' });
+    });
+  });
 
+  it('pressing 2 passes active search and period into Transactions', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W><Trends onNavigate={onNavigate} showHints={false} initialFilter={{ search: 'Amazon' }} /></W>,
+    );
+    // Wait until filter is applied: Amazon-only May visible, April gone
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('May 2026');
+      expect(f).not.toContain('Apr 2026');
+    });
+    r.stdin.write('2');
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledWith(
+        'transactions',
+        expect.objectContaining({ search: 'Amazon', from: '2026-05-01' }),
+      );
+    });
+  });
 
+  it('no-match search shows empty state message', async () => {
+    const r = trends({ initialFilter: { search: 'zzznomatch' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('No periods match');
+    });
+  });
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+describe('Settings', () => {
+  function settings(overrides?: Partial<Parameters<typeof Settings>[0]>) {
+    return render(
+      <W>
+        <Settings onNavigate={noop} showHints={false} {...overrides} />
+      </W>,
+    );
+  }
+
+  it('renders Settings heading and section labels', () => {
+    const r = settings();
+    const f = frame(r);
+    expect(f).toContain('Settings');
+    expect(f).toContain('HOUSEHOLD');
+    expect(f).toContain('SPOUSE');
+    expect(f).toContain('CHILDREN');
+    expect(f).toContain('Your name');
+    expect(f).toContain('Birth year');
+  });
+
+  it('Enter on a field opens edit mode showing cursor', async () => {
+    const r = settings();
+    expect(frame(r)).not.toContain('▊');
+    r.stdin.write('\r'); // Enter on "Your name" (cursor starts at row 0)
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+  });
+
+  it('typing in edit mode accumulates in the buffer', async () => {
+    const r = settings();
+    r.stdin.write('\r');       // open edit on "Your name"
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Tom');
+    await waitFor(() => {
+      expect(frame(r)).toContain('Tom');
+      expect(frame(r)).toContain('▊');
+    });
+  });
+
+  it('Enter commits the edit and exits edit mode', async () => {
+    const r = settings();
+    r.stdin.write('\r');       // open
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Alice');
+    await waitFor(() => expect(frame(r)).toContain('Alice')); // wait for buffer to render
+    r.stdin.write('\r');       // commit with fresh closure
+    await waitFor(() => {
+      expect(frame(r)).toContain('Alice');
+      expect(frame(r)).not.toContain('▊');
+    });
+  });
+
+  it('Esc cancels edit without committing', async () => {
+    const r = settings();
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Alice');
+    r.stdin.write('\x1b');    // cancel
+    await waitFor(() => {
+      expect(frame(r)).not.toContain('Alice');
+      expect(frame(r)).not.toContain('▊');
+    });
+  });
+
+  it('[a] adds spouse fields when no spouse exists', async () => {
+    const r = settings();
+    expect(frame(r)).not.toContain('Spouse name');
+    r.stdin.write('a');       // [a] adds spouse from any cursor position
+    await waitFor(() => expect(frame(r)).toContain('Spouse name'));
+  });
+
+  it('[d] on spouse row removes spouse', async () => {
+    const r = settings();
+    r.stdin.write('a');                 // add spouse
+    await waitFor(() => expect(frame(r)).toContain('Spouse name'));
+    r.stdin.write('\x1B[B');            // ↓ to row 1 (self-year)
+    r.stdin.write('\x1B[B');            // ↓ to row 2 (spouse-name)
+    // Wait for re-render to commit cursor position before pressing 'd'
+    await waitFor(() => expect(frame(r)).toContain('[d] remove spouse'));
+    r.stdin.write('d');                 // remove spouse
+    await waitFor(() => expect(frame(r)).not.toContain('Spouse name'));
+  });
+
+  it('Esc navigates back to dashboard', async () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Settings onNavigate={onNavigate} showHints={false} /></W>);
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+  });
+
+  it('pressing a nav number calls onNavigate', () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Settings onNavigate={onNavigate} showHints={false} /></W>);
+    r.stdin.write('1');
+    expect(onNavigate).toHaveBeenCalledWith('dashboard');
+  });
 });
 
 // ── Net Worth ─────────────────────────────────────────────────────────────────
@@ -788,6 +956,39 @@ describe('Health', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('Enter opens dial edit mode showing cursor', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    expect(frame(r)).not.toContain('▊');
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+  });
+
+  it('Esc cancels dial edit mode', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).not.toContain('▊'));
+  });
+
+  it('typing and Enter commit a new dial value', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('\r');         // open edit on spend dial (pre-fills current value)
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    // Write digits one at a time — Health's handler uses /^[\d.-]$/ (single-char regex)
+    for (const ch of '4000') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('4000'));
+    r.stdin.write('\r');         // commit with fresh closure
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('4,000'); // formatted value appears in dial
+      expect(f).not.toContain('▊');
+    });
+  });
 });
 
 // ── App smoke test ────────────────────────────────────────────────────────────
@@ -826,5 +1027,12 @@ describe('App', () => {
     // hints off by default — pressing h shows them
     r.stdin.write('h');
     await waitFor(() => expect(frame(r)).toContain('[h]'));
+  });
+
+  it('pressing 0 switches to Settings screen', async () => {
+    const r = render(<App />);
+    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
+    r.stdin.write('0');
+    await waitFor(() => expect(frame(r)).toContain('Settings'));
   });
 });

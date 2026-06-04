@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { MONTHS, addDays, weekLabel, type TrendsRange } from './dateUtils.js';
+import { buildSearchRe } from './queries.js';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const Q_FROM = ['01', '04', '07', '10'];
@@ -207,4 +208,38 @@ export async function getPeriodTotals(view: View, range: TrendsRange): Promise<P
   const rawRows = rawResult.rows as unknown as any[];
   const actual = new Map<string, PeriodRow>(rawRows.map((r) => { const row = toActual(r); return [row.from, row]; }));
   return allPeriods.map((p) => actual.get(p.from) ?? zeroRow(p));
+}
+
+export async function getSearchMatchingPeriods(
+  search: string,
+  range: TrendsRange,
+): Promise<Set<string>> {
+  if (!search) return new Set();
+  const result = await db.execute(`
+    SELECT COALESCE(display_name, name) as display, merchant_name, date
+    FROM transactions WHERE pending = 0 AND ignored = 0
+  `);
+  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string }[];
+  const re = buildSearchRe(search);
+  const periods = new Set<string>();
+  for (const row of rows) {
+    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    const d = row.date;
+    if (range === 'month') {
+      periods.add(d.slice(0, 7) + '-01');
+    } else if (range === 'quarter') {
+      const m = parseInt(d.slice(5, 7));
+      periods.add(d.slice(0, 4) + '-' + Q_FROM[Math.floor((m - 1) / 3)] + '-01');
+    } else if (range === 'year') {
+      periods.add(d.slice(0, 4) + '-01-01');
+    } else {
+      // week: compute the Monday of this transaction's week
+      const dt = new Date(d + 'T12:00:00');
+      const dow = (dt.getDay() + 6) % 7;
+      const mon = new Date(dt);
+      mon.setDate(dt.getDate() - dow);
+      periods.add(mon.toISOString().slice(0, 10));
+    }
+  }
+  return periods;
 }

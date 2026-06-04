@@ -417,7 +417,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         openEdit(linkedAccounts[acctCursor]);
         return;
       }
-      if (input === 'n' && linkedAccounts[acctCursor]) {
+      if ((input === 'n' || key.return) && linkedAccounts[acctCursor]) {
         setNicknameInput(linkedAccounts[acctCursor].nickname ?? '');
         setAcctMode('nickname');
         return;

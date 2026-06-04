@@ -11,12 +11,13 @@ import { Rules } from './Rules.js';
 import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
 import { Canvas } from './Canvas.js';
+import { Settings } from './Settings.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider, useRefreshKey } from './RefreshContext.js';
 import type { CanvasSpec } from '../core/canvas-agent.js';
 import { CANVAS_SPEC_PATH } from '../core/canvas-history.js';
 
-export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas';
+export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas' | 'settings';
 
 export type TxFilter = {
   category?: string;
@@ -91,6 +92,7 @@ function AppInner() {
       case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'canvas':       return <Canvas       onNavigate={navigate} onLoadSpec={loadSpec} isActive={screenIsActive} showHints={showHints} spec={canvasSpec} specKey={specKey} />;
+      case 'settings':     return <Settings     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
     }
   })();
 

@@ -48,6 +48,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const [dialIdx, setDialIdx]           = useState(0);
   const [monthlySpend, setMonthlySpend] = useState(SPEND_STEP);
   const [monthlySavings, setMonthlySavings] = useState(0);
+  const [editMode, setEditMode]         = useState(false);
+  const [editBuffer, setEditBuffer]     = useState('');
 
   useEffect(() => {
     void loadHealthData().then((d) => {
@@ -61,12 +63,46 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
   const currentDial: Dial = DIALS[dialIdx];
 
+  function currentDialValueStr(): string {
+    if (currentDial === 'spend')      return String(monthlySpend);
+    if (currentDial === 'savings')    return String(monthlySavings);
+    if (currentDial === 'withdrawal') return String(withdrawal);
+    if (currentDial === 'growth')     return String(growth);
+    return '';
+  }
+
+  function applyEdit(buffer: string) {
+    const n = parseFloat(buffer);
+    if (!isNaN(n)) {
+      if (currentDial === 'spend')      setMonthlySpend(Math.max(SPEND_STEP, Math.round(n / SPEND_STEP) * SPEND_STEP));
+      if (currentDial === 'savings')    setMonthlySavings(Math.round(n / SPEND_STEP) * SPEND_STEP);
+      if (currentDial === 'withdrawal') setWithdrawal(parseFloat(Math.min(10, Math.max(0.5, n)).toFixed(1)));
+      if (currentDial === 'growth')     setGrowth(parseFloat(Math.min(20, Math.max(0, n)).toFixed(1)));
+    }
+    setEditMode(false);
+    setEditBuffer('');
+  }
+
   useInput((input, key) => {
+    if (editMode) {
+      if (key.escape) { setEditMode(false); setEditBuffer(''); return; }
+      if (key.return) { applyEdit(editBuffer); return; }
+      if (key.backspace || key.delete) { setEditBuffer((b) => b.slice(0, -1)); return; }
+      if (input && /^[\d.\-]$/.test(input) && !key.ctrl && !key.meta) setEditBuffer((b) => b + input);
+      return;
+    }
+
     if (key.escape) { onNavigate('dashboard'); return; }
     handleNavKey(input, 'health', onNavigate);
 
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + DIALS.length) % DIALS.length); return; }
     if (key.downArrow) { setDialIdx((i) => (i + 1) % DIALS.length); return; }
+
+    if (key.return) {
+      setEditBuffer(currentDialValueStr());
+      setEditMode(true);
+      return;
+    }
 
     if (key.rightArrow) {
       if (currentDial === 'spend')      setMonthlySpend((s) => s + SPEND_STEP);
@@ -124,7 +160,11 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       <PageHeader current="health" showHints={showHints} />
 
       <Box marginTop={1}><Text bold>Financial Health</Text></Box>
-      {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
+      {showHints && (
+        editMode
+          ? <Text dimColor>type value  ·  Enter confirm  ·  Esc cancel</Text>
+          : <Text dimColor>↑↓ select  ·  ← → adjust  ·  Enter type  ·  [r] reset</Text>
+      )}
       <Divider />
 
       {/* ── Snapshot ───────────────────────────────────────────────────────── */}
@@ -263,28 +303,40 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       <Box flexDirection="column" marginTop={1}>
         <DialRow
           label="Monthly spending" value={fmt(monthlySpend)} selected={currentDial === 'spend'}
-          description={currentDial === 'spend'
-            ? (spendChanged ? `default ${fmt(defaultSpend)} · [r] reset` : `avg past 12 months  ← → ±${fmt(SPEND_STEP)}`)
-            : `avg past 12 months${spendChanged ? ' (modified)' : ''}`}
+          editing={editMode && currentDial === 'spend'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'spend'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'spend'
+              ? (spendChanged ? `default ${fmt(defaultSpend)} · [r] reset` : `avg past 12 months  ← → ±${fmt(SPEND_STEP)}`)
+              : `avg past 12 months${spendChanged ? ' (modified)' : ''}`}
         />
         <DialRow
           label="Monthly savings" value={fmtSigned(monthlySavings)} selected={currentDial === 'savings'}
           valueColor={monthlySavings < 0 ? C_NEGATIVE : C_NEUTRAL}
-          description={currentDial === 'savings'
-            ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
-            : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
+          editing={editMode && currentDial === 'savings'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'savings'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'savings'
+              ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
+              : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
         />
         <DialRow
           label="Withdrawal rate" value={fmtPct(withdrawal)} selected={currentDial === 'withdrawal'}
-          description={currentDial === 'withdrawal'
-            ? `← → ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
-            : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
+          editing={editMode && currentDial === 'withdrawal'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'withdrawal'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'withdrawal'
+              ? `← → ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
+              : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
         />
         <DialRow
           label="Growth rate" value={fmtPct(growth)} selected={currentDial === 'growth'}
-          description={currentDial === 'growth'
-            ? `← → ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
-            : `real annual return${growthChanged ? ' (modified)' : ''}`}
+          editing={editMode && currentDial === 'growth'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'growth'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'growth'
+              ? `← → ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
+              : `real annual return${growthChanged ? ' (modified)' : ''}`}
         />
       </Box>
     </Box>

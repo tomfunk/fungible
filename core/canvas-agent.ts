@@ -1,5 +1,6 @@
 import { streamResponse } from './llm-provider.js';
 import { loadHealthData } from './health.js';
+import { loadProfile } from './profile.js';
 import { fmt, fmtPct, fmtPctSigned, fmtCompact, fmtCompactSigned, fmtMonths } from './fmt.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -116,7 +117,7 @@ Example: monthly mortgage payment with principal P, monthly rate r, n payments:
 7. Format dials and outputs consistently — if a dial is "dollar", its related output should be too
 8. Set \`signed: true\` on outputs that represent deltas or values that can be negative — e.g. net savings, surplus/deficit, change in portfolio. This shows an explicit +/- prefix so the sign is always unambiguous
 9. For any projection with a multi-year time horizon (retirement, investment growth, net worth, savings goals), show values in **real (inflation-adjusted) dollars** as the primary output — not nominal. Add an \`inflation\` dial (key: "inflation", default: 3, step: 0.5, min: 0, max: 8, format: "percent", hint: "annual inflation"). Convert nominal to real with: \`nominal / Math.pow(1 + inflation/100, years)\`. Label the output "Real value (today's $)" or similar. A nominal output may appear secondary.
-10. The live data does not include the user's age. If a canvas needs years-to-retirement or a birth-year assumption, add an \`age\` dial (default: 35, step: 1, min: 18, max: 80, format: "integer", hint: "your current age") so the user can set it accurately.
+10. If the live data includes household ages, use them to pre-fill age-related dials and personalize narrative (e.g. "years until retirement" = retirement_age - current_age). If age is not provided, add an \`age\` dial (default: 35, step: 1, min: 18, max: 80, format: "integer", hint: "your current age") so the user can set it accurately.
 
 ## Existing screen conventions (for consistency)
 
@@ -154,7 +155,29 @@ export type CanvasContext = {
 export async function loadCanvasContext(): Promise<CanvasContext> {
   const health = await loadHealthData();
   const taxableBrokerage = health.liquid - health.cash;
+  const profile = loadProfile();
+  const currentYear = new Date().getFullYear();
+
+  const householdLines: string[] = [];
+  if (profile?.self.birthYear) {
+    const age = currentYear - profile.self.birthYear;
+    const name = profile.self.name || 'You';
+    let line = `Household: ${name}, age ${age}`;
+    if (profile.spouse?.birthYear) {
+      const spouseAge = currentYear - profile.spouse.birthYear;
+      line += `; ${profile.spouse.name || 'Spouse'}, age ${spouseAge}`;
+    }
+    householdLines.push(line);
+    if (profile.children.length > 0) {
+      const childDesc = profile.children
+        .map((c) => c.birthYear > 0 ? `${c.name || 'Child'} (age ${currentYear - c.birthYear})` : (c.name || 'Child'))
+        .join(', ');
+      householdLines.push(`Children: ${childDesc}`);
+    }
+  }
+
   const financialContext = [
+    ...householdLines,
     `Monthly income:    ${fmt(health.monthlyIncome)} (12-month avg)`,
     `Monthly expenses:  ${fmt(health.avgMonthlyExpenses)} (12-month avg)`,
     `Monthly surplus:   ${fmt(health.monthlySavings)} (savings rate: ${Math.round(health.savingsRate)}%)`,

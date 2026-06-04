@@ -344,6 +344,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       return;
     }
 
+    if (input === '3' && search) { onNavigate('trends', { search }); return; }
+
     handleNavKey(input, 'dashboard', onNavigate);
   }, { isActive: isActive !== false });
 

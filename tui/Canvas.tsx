@@ -42,12 +42,41 @@ export function CanvasView({ spec, isActive }: { spec: CanvasSpec; isActive?: bo
     return d;
   });
   const [dialIdx, setDialIdx] = useState(0);
+  const [editMode, setEditMode] = useState(false);
+  const [editBuffer, setEditBuffer] = useState('');
 
   const currentKey = dials[dialIdx]?.key;
 
+  function applyEdit(buffer: string) {
+    if (currentKey) {
+      const n = parseFloat(buffer);
+      if (!isNaN(n)) {
+        const dial = dials[dialIdx];
+        let val = n;
+        if (dial.min !== undefined && val < dial.min) val = dial.min;
+        if (dial.max !== undefined && val > dial.max) val = dial.max;
+        setDialValues((v) => ({ ...v, [currentKey]: parseFloat(val.toFixed(10)) }));
+      }
+    }
+    setEditMode(false);
+    setEditBuffer('');
+  }
+
   useInput((_input, key) => {
+    if (editMode) {
+      if (key.escape) { setEditMode(false); setEditBuffer(''); return; }
+      if (key.return) { applyEdit(editBuffer); return; }
+      if (key.backspace || key.delete) { setEditBuffer((b) => b.slice(0, -1)); return; }
+      if (_input && /^[\d.\-]$/.test(_input) && !key.ctrl && !key.meta) setEditBuffer((b) => b + _input);
+      return;
+    }
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + dials.length) % dials.length); return; }
     if (key.downArrow) { setDialIdx((i) => (i + 1) % dials.length); return; }
+    if (key.return && currentKey) {
+      setEditBuffer(String(dialValues[currentKey] ?? dials[dialIdx].default));
+      setEditMode(true);
+      return;
+    }
     if (key.rightArrow && currentKey) {
       setDialValues((v) => ({ ...v, [currentKey]: dialStep(dials[dialIdx], 1,  v[currentKey] ?? dials[dialIdx].default) }));
     }
@@ -74,6 +103,7 @@ export function CanvasView({ spec, isActive }: { spec: CanvasSpec; isActive?: bo
           const d = el.dial;
           const val = dialValues[d.key] ?? d.default;
           const isSelected = dials[dialIdx]?.key === d.key;
+          const isEditingThis = isSelected && editMode;
           const atDefault = val === d.default;
           return (
             <DialRow
@@ -83,9 +113,13 @@ export function CanvasView({ spec, isActive }: { spec: CanvasSpec; isActive?: bo
               selected={isSelected}
               labelWidth={LABEL_W}
               valueWidth={VALUE_W}
-              description={isSelected
-                ? `← → ±${fmtDialValue(d.step, d.format)}${!atDefault ? '  ·  [r] reset' : ''}`
-                : `${d.hint}${!atDefault ? ' (modified)' : ''}`}
+              editing={isEditingThis}
+              editBuffer={editBuffer}
+              description={isEditingThis
+                ? 'Enter confirm  ·  Esc cancel'
+                : isSelected
+                  ? `← → ±${fmtDialValue(d.step, d.format)}${!atDefault ? '  ·  [r] reset' : ''}`
+                  : `${d.hint}${!atDefault ? ' (modified)' : ''}`}
             />
           );
         }
@@ -174,7 +208,7 @@ export function Canvas({ onNavigate, onLoadSpec, isActive, showHints, spec, spec
           {mode === 'history'
             ? '↑↓ select  ·  type to filter  ·  Enter load  ·  ctrl + d delete  ·  Esc back'
             : spec
-              ? '↑↓ select  ·  ← → adjust  ·  [r] reset  ·  [/] history'
+              ? '↑↓ select  ·  ← → adjust  ·  Enter type  ·  [r] reset  ·  [/] history'
               : '[/] history  ·  or ask the agent (`)'}
         </Text>
       )}
