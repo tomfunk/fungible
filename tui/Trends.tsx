@@ -50,8 +50,10 @@ export function Trends({
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
   const [search, setSearch] = useState(initialFilter?.search ?? '');
+  const [searchInput, setSearchInput] = useState(initialFilter?.search ?? '');
   const [searchMode, setSearchMode] = useState(false);
   const [matchingPeriods, setMatchingPeriods] = useState<Set<string> | null>(null);
+  const [matchCount, setMatchCount] = useState<number | null>(null);
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(searchMode); }, [searchMode, setTyping]);
 
@@ -79,8 +81,11 @@ export function Trends({
   }, [viewIdx, range, views, refreshKey]);
 
   useEffect(() => {
-    if (!search) { setMatchingPeriods(null); return; }
-    void getSearchMatchingPeriods(search, range).then(setMatchingPeriods);
+    if (!search) { setMatchingPeriods(null); setMatchCount(null); return; }
+    void getSearchMatchingPeriods(search, range).then(({ periods, count }) => {
+      setMatchingPeriods(periods);
+      setMatchCount(count);
+    });
   }, [search, range]);
 
   const displayRows = matchingPeriods ? rows.filter((r) => matchingPeriods.has(r.from)) : rows;
@@ -88,13 +93,18 @@ export function Trends({
 
   useInput((input, key) => {
     if (searchMode) {
-      if (key.escape || key.return) { setSearchMode(false); return; }
-      if (key.backspace || key.delete) { setSearch((s) => s.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) { setSearch((s) => s + input); return; }
+      if (key.escape) { setSearchInput(search); setSearchMode(false); return; }
+      if (key.return) { setSearch(searchInput); setSearchMode(false); return; }
+      if (key.backspace || key.delete) { setSearchInput((s) => s.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setSearchInput((s) => s + input); return; }
       return;
     }
-    if (input === '/') { setSearchMode(true); return; }
-    if (key.escape) { onNavigate('dashboard', search ? { search } : undefined); return; }
+    if (input === '/') { setSearchInput(search); setSearchMode(true); return; }
+    if (key.escape) {
+      if (search) { setSearch(''); setSearchInput(''); return; }
+      onNavigate('dashboard');
+      return;
+    }
     if (input === '1') { onNavigate('dashboard', search ? { search } : undefined); return; }
     if (input === '2') {
       const row = displayRows[clampedCursor];
@@ -159,7 +169,7 @@ export function Trends({
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
-        {showHints && <Text dimColor>{searchMode ? 'type · Enter/Esc done' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns'}</Text>}
+        <Text dimColor>{showHints ? (searchMode ? 'type · Enter apply · Esc cancel' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns') : '[/] search'}</Text>
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
@@ -173,12 +183,13 @@ export function Trends({
         </Box>
         <Text><Text dimColor>← </Text><Text bold>{view.label}</Text><Text dimColor> →  {posLabel}</Text></Text>
       </Box>
-      {searchMode && <SearchBar value={search} hint="Enter/Esc done" />}
+
+      {searchMode && <SearchBar value={searchInput} hint="Enter apply · Esc cancel" />}
       {!searchMode && search && (
-        <Box gap={1} marginTop={1}>
-          <Text color={C_ACCENT}>/</Text>
-          <Text color={C_NEUTRAL}>{search}</Text>
-          {matchingPeriods && <Text dimColor>  {displayRows.length} of {rows.length} periods</Text>}
+        <Box gap={2} marginTop={1}>
+          <Text color={C_ACCENT}>/{search}</Text>
+          {matchCount !== null && <Text dimColor>{matchCount} {matchCount === 1 ? 'txn' : 'txns'}  ·  {displayRows.length} of {rows.length} periods</Text>}
+          {showHints && <Text dimColor>[ESC] clear  [/] edit</Text>}
         </Box>
       )}
       <Divider />

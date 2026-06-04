@@ -213,8 +213,8 @@ export async function getPeriodTotals(view: View, range: TrendsRange): Promise<P
 export async function getSearchMatchingPeriods(
   search: string,
   range: TrendsRange,
-): Promise<Set<string>> {
-  if (!search) return new Set();
+): Promise<{ periods: Set<string>; count: number }> {
+  if (!search) return { periods: new Set(), count: 0 };
   const result = await db.execute(`
     SELECT COALESCE(display_name, name) as display, merchant_name, date
     FROM transactions WHERE pending = 0 AND ignored = 0
@@ -222,8 +222,10 @@ export async function getSearchMatchingPeriods(
   const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string }[];
   const re = buildSearchRe(search);
   const periods = new Set<string>();
+  let count = 0;
   for (const row of rows) {
     if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    count++;
     const d = row.date;
     if (range === 'month') {
       periods.add(d.slice(0, 7) + '-01');
@@ -241,5 +243,5 @@ export async function getSearchMatchingPeriods(
       periods.add(mon.toISOString().slice(0, 10));
     }
   }
-  return periods;
+  return { periods, count };
 }
