@@ -185,13 +185,11 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="trends" showHints={showHints} />
 
-      <Box justifyContent="space-between" marginTop={1}>
-        <Text bold>Trends</Text>
-        <Text dimColor>{showHints
-          ? (searchMode ? '' : search ? '↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns')
-          : '[/] search'}
-        </Text>
-      </Box>
+      <Box marginTop={1}><Text bold>Trends</Text></Box>
+      <Text dimColor>{showHints
+        ? (searchMode ? '' : search ? '↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns')
+        : '[/] search'}
+      </Text>
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
