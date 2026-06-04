@@ -210,6 +210,46 @@ export async function getPeriodTotals(view: View, range: TrendsRange): Promise<P
   return allPeriods.map((p) => actual.get(p.from) ?? zeroRow(p));
 }
 
+function periodFrom(date: string, range: TrendsRange): string {
+  if (range === 'month') return date.slice(0, 7) + '-01';
+  if (range === 'quarter') {
+    const m = parseInt(date.slice(5, 7));
+    return date.slice(0, 4) + '-' + Q_FROM[Math.floor((m - 1) / 3)] + '-01';
+  }
+  if (range === 'year') return date.slice(0, 4) + '-01-01';
+  const dt = new Date(date + 'T12:00:00');
+  const dow = (dt.getDay() + 6) % 7;
+  const mon = new Date(dt);
+  mon.setDate(dt.getDate() - dow);
+  return mon.toISOString().slice(0, 10);
+}
+
+export async function getSearchPeriodTotals(search: string, range: TrendsRange): Promise<PeriodRow[]> {
+  if (!search) return [];
+  const result = await db.execute(`
+    SELECT COALESCE(display_name, name) as display, merchant_name, date, amount
+    FROM transactions WHERE pending = 0 AND ignored = 0
+  `);
+  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string; amount: number }[];
+  const re = buildSearchRe(search);
+  const periodMap = new Map<string, { income: number; expenses: number }>();
+  for (const row of rows) {
+    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    const from = periodFrom(row.date, range);
+    const existing = periodMap.get(from) ?? { income: 0, expenses: 0 };
+    const amt = Number(row.amount);
+    if (amt < 0) existing.income += Math.abs(amt); else existing.expenses += amt;
+    periodMap.set(from, existing);
+  }
+  const allPeriods = await generateAllPeriods(range);
+  return allPeriods
+    .filter((p) => periodMap.has(p.from))
+    .map((p) => {
+      const { income, expenses } = periodMap.get(p.from)!;
+      return { ...p, income, expenses, total: income - expenses };
+    });
+}
+
 export async function getSearchMatchingPeriods(
   search: string,
   range: TrendsRange,
@@ -226,22 +266,7 @@ export async function getSearchMatchingPeriods(
   for (const row of rows) {
     if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
     count++;
-    const d = row.date;
-    if (range === 'month') {
-      periods.add(d.slice(0, 7) + '-01');
-    } else if (range === 'quarter') {
-      const m = parseInt(d.slice(5, 7));
-      periods.add(d.slice(0, 4) + '-' + Q_FROM[Math.floor((m - 1) / 3)] + '-01');
-    } else if (range === 'year') {
-      periods.add(d.slice(0, 4) + '-01-01');
-    } else {
-      // week: compute the Monday of this transaction's week
-      const dt = new Date(d + 'T12:00:00');
-      const dow = (dt.getDay() + 6) % 7;
-      const mon = new Date(dt);
-      mon.setDate(dt.getDate() - dow);
-      periods.add(mon.toISOString().slice(0, 10));
-    }
+    periods.add(periodFrom(row.date, range));
   }
   return { periods, count };
 }
