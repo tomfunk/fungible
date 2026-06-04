@@ -26,7 +26,7 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 - **Category rules** — substring and regex rules that auto-categorize transactions, with optional amount filters
 - **Name rules** — rename how transactions display, with optional amount filters
 - **Spending flexibility** — tag categories as fixed / flexible / discretionary; view breakdown on Dashboard
-- **Manual edits** — pin a category or display name to a specific transaction; survives re-syncs
+- **Manual edits** — pin a category or display name to a specific transaction, or promote to a rule for all matches; survives re-syncs
 - **Ignore** — soft-hide transactions from totals (transfers, reimbursements, etc.)
 - **Hidden categories** — exclude categories like Transfer from all totals and charts
 - **Tags** — label transactions across accounts (trips, projects, events) and view summaries by tag
@@ -138,7 +138,7 @@ In **delta mode**, the bar chart is replaced by three delta columns — vs prev 
 | `/` | Search by name (regex); inherited from Dashboard if navigated with an active search |
 | `a` | Show all transactions |
 | `u` | Show uncategorized only |
-| `e` | Edit: rename display name or change category |
+| `Enter` | Edit selected transaction |
 | `g` | Tag panel: add/remove tags on selected transaction |
 | `G` | Tag all visible transactions at once (use `/` to filter first) |
 | `c` | Undo manual category override |
@@ -146,14 +146,18 @@ In **delta mode**, the bar chart is replaced by three delta columns — vs prev 
 | `x` | Delete selected transaction (CSV-imported only) |
 | `Esc` | Clear active filter (peels off one at a time) |
 
+The **edit panel** has four fields navigated with `↑ ↓`: **Name** (display name override), **Category** (cycle with `← →`), **Pattern**, and **Match type**. Leave Pattern empty and `Enter` saves the change to just this transaction. Fill in Pattern and `Enter` creates a category rule (and/or name rule) that applies to all matching transactions.
+
 ### Trends `[3]`
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Cycle views: Expenses → Income → Net → [each category] |
+| `← →` | Cycle views: Expenses → Income → Net → Flexibility → Fixed → Flexible → Discretionary → [each category] |
 | `↑ ↓` | Navigate periods |
 | `r` | Cycle aggregation range (Week / Month / Quarter / Year) |
 | `Enter` | Drill into transactions for selected period |
+| `/` | Search transactions by name; hides view selector and shows net-style bars for matches |
+| `Esc` | Clear active search (or navigate back) |
 
 ### Net Worth `[4]`
 
@@ -208,20 +212,20 @@ Three sections, cycle with `Tab`: **Category Rules**, **Name Rules**, **Categori
 |-----|--------|
 | `/` | Search rules |
 | `a` | Add rule |
-| `e` / `Enter` | Edit selected rule |
+| `Enter` | Edit selected rule |
 | `x` | Delete selected rule |
 
-Category rules support substring and regex matching with optional min/max amount filters. Name rules support the same matching plus optional amount filters.
+The **rule form** is a single panel with fields navigated by `↑ ↓`: Pattern, Match type, Min $, Max $, Category (rules) or Replacement (name rules). `← →` cycles/toggles the active field. Category rules support substring and regex matching with optional min/max amount filters. Name rules support the same matching plus a replacement display name.
 
 **Categories:**
 
 | Key | Action |
 |-----|--------|
 | `a` | Add new category |
-| `n` | Rename category (cascades to all transactions, rules, and hidden settings) |
+| `Enter` | Edit selected category (Name, Flexibility, Hidden — navigated with `↑ ↓`) |
 | `x` | Delete category (resets affected transactions to Uncategorized) |
-| `v` | Toggle hidden (hidden categories are excluded from totals) |
-| `f` | Cycle flexibility tier: none → fixed → flexible → discretionary |
+| `v` | Toggle hidden from list |
+| `f` | Cycle flexibility tier from list: none → fixed → flexible → discretionary |
 
 ### Accounts `[8]`
 
@@ -229,8 +233,7 @@ Category rules support substring and regex matching with optional min/max amount
 |-----|--------|
 | `Tab` | Cycle views: Accounts → Add Data → Dupes |
 | `↑ ↓` | Select account |
-| `e` | Edit account type / subtype |
-| `n` | Set or clear a nickname (shown in place of the bank-assigned name) |
+| `Enter` | Edit selected account (nickname, type, subtype, APR — navigated with `↑ ↓`, `← →` to cycle) |
 | `v` | Update value (manual assets only) |
 | `r` | Repair Plaid link for selected account |
 | `s` | Force sync (bypasses 15-min cooldown) |
