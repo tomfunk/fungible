@@ -853,14 +853,14 @@ describe('Accounts', () => {
     const r = accounts();
     // Cursor starts on the first account (depository sorts first = Test Checking).
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
-    r.stdin.write('n');                 // open nickname editor
-    await waitFor(() => expect(frame(r)).toContain('Leave empty to clear nickname'));
-    r.stdin.write('Vacation Fund');     // type the nickname
+    r.stdin.write('\r');                // open unified edit panel
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
+    r.stdin.write('Vacation Fund');     // type the nickname (cursor starts on Nickname field)
     await waitFor(() => expect(frame(r)).toContain('Vacation Fund'));
-    r.stdin.write('\r');                // save (separate chunk so it isn't merged with the text)
+    r.stdin.write('\r');                // save
     // The list row now shows the nickname in place of the account name. Asserting
     // the original name is gone proves the list reloaded with post-write data (the
-    // status toast that mentions the nickname never contains the original name).
+    // status toast shows the nickname, not the original name).
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Vacation Fund');
@@ -895,17 +895,17 @@ describe('Accounts', () => {
 
     const r = accounts();
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
-    r.stdin.write('n');
-    await waitFor(() => expect(frame(r)).toContain('Leave empty to clear nickname'));
+    r.stdin.write('\r');                 // open unified edit panel
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
     r.stdin.write('Vacation Fund');
     await waitFor(() => expect(frame(r)).toContain('Vacation Fund'));
     r.stdin.write('\r');                 // save → write rejects
     // A failed write must show an error rather than a (false) success, and the
     // account must keep its original name.
-    await waitFor(() => expect(frame(r)).toContain('Failed to save nickname'));
+    await waitFor(() => expect(frame(r)).toContain('Failed to update'));
     const f = frame(r);
     expect(f).toContain('Test Checking');
-    expect(f).not.toContain('Nickname set to');
+    expect(f).not.toContain('Updated Vacation Fund');
   });
 });
 

@@ -5,8 +5,8 @@ import { buildTrendViews, generateAllPeriods, getPeriodTotals, getSearchMatching
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT, CURSOR } from './ui.js';
-import { StatCard, usePagination, SelectableRow, PageHeader } from './components/index.js';
+import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { StatCard, usePagination, SelectableRow, PageHeader, SearchBar } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
@@ -158,15 +158,7 @@ export function Trends({
       <PageHeader current="trends" showHints={showHints} />
 
       <Box justifyContent="space-between" marginTop={1}>
-        <Box gap={2}>
-          <Text bold>Trends</Text>
-          {searchMode
-            ? <Text color={C_ACCENT}>/ {search}{CURSOR}</Text>
-            : search
-              ? <Text color={C_ACCENT}>/ {search}{matchingPeriods ? ` (${displayRows.length} of ${rows.length})` : ''}</Text>
-              : null
-          }
-        </Box>
+        <Text bold>Trends</Text>
         {showHints && <Text dimColor>{searchMode ? 'type · Enter/Esc done' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns'}</Text>}
       </Box>
 
@@ -181,6 +173,14 @@ export function Trends({
         </Box>
         <Text><Text dimColor>← </Text><Text bold>{view.label}</Text><Text dimColor> →  {posLabel}</Text></Text>
       </Box>
+      {searchMode && <SearchBar value={search} hint="Enter/Esc done" />}
+      {!searchMode && search && (
+        <Box gap={1} marginTop={1}>
+          <Text color={C_ACCENT}>/</Text>
+          <Text color={C_NEUTRAL}>{search}</Text>
+          {matchingPeriods && <Text dimColor>  {displayRows.length} of {rows.length} periods</Text>}
+        </Box>
+      )}
       <Divider />
 
       {displayRows.length === 0 ? (

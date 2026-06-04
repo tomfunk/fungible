@@ -361,17 +361,20 @@ export async function toggleHiddenCategory(category: string, hidden: Set<string>
   }
 }
 
-export type Tag = { id: number; name: string; count: number };
+export type Tag = { id: number; name: string; count: number; inflow: number; outflow: number };
 
 export async function getAllTags(): Promise<Tag[]> {
   const result = await db.execute(`
-    SELECT t.id, t.name, COUNT(tt.transaction_id) as count
+    SELECT t.id, t.name, COUNT(tt.transaction_id) as count,
+      COALESCE(SUM(CASE WHEN tx.amount < 0 THEN ABS(tx.amount) ELSE 0 END), 0) as inflow,
+      COALESCE(SUM(CASE WHEN tx.amount > 0 THEN tx.amount ELSE 0 END), 0) as outflow
     FROM tags t
     LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
+    LEFT JOIN transactions tx ON tx.id = tt.transaction_id
     GROUP BY t.id ORDER BY t.name
   `);
-  return (result.rows as unknown as { id: number; name: string; count: number }[]).map((r) => ({
-    id: Number(r.id), name: r.name, count: Number(r.count),
+  return (result.rows as unknown as { id: number; name: string; count: number; inflow: number; outflow: number }[]).map((r) => ({
+    id: Number(r.id), name: r.name, count: Number(r.count), inflow: Number(r.inflow), outflow: Number(r.outflow),
   }));
 }
 
@@ -445,11 +448,11 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null };
+export type LinkedAccount = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null };
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.institution_name, a.mask,
+    SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.institution_name, a.mask, a.apr,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name

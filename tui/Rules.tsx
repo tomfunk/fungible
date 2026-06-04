@@ -9,14 +9,15 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { useTerminalWidth, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
+import { useTerminalWidth, FLEX_COLORS, C_ACCENT, C_DIM, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, ColumnHeader, PageHeader, SearchBar } from './components/index.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name' | 'rename-category';
+type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name' | 'rename-category' | 'edit-category';
+type CatEditField = 'flexibility' | 'hidden';
 type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
@@ -55,6 +56,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   // Editing
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
   const [editingNameRuleId, setEditingNameRuleId] = useState<number | null>(null);
+
+  // Category edit panel state
+  const [catEditField, setCatEditField] = useState<CatEditField>('flexibility');
 
   // Search
   const [search, setSearch] = useState('');
@@ -224,6 +228,36 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           load();
           setCatListCursor((c) => Math.max(0, c - 1));
         }
+        if (key.return && catDetails[catListCursor]) {
+          setCatEditField('flexibility');
+          setMode('edit-category');
+          return;
+        }
+      }
+    } else if (mode === 'edit-category') {
+      if (key.escape || key.return) { setMode('list'); return; }
+      if (key.upArrow || key.downArrow) {
+        setCatEditField((f) => f === 'flexibility' ? 'hidden' : 'flexibility');
+        return;
+      }
+      if (catEditField === 'flexibility' && (key.leftArrow || key.rightArrow)) {
+        const cat = catDetails[catListCursor];
+        if (cat) {
+          const idx = FLEX_CYCLE.indexOf(cat.flexibility);
+          const dir = key.leftArrow ? -1 : 1;
+          const next = FLEX_CYCLE[(idx + dir + FLEX_CYCLE.length) % FLEX_CYCLE.length];
+          setCategoryFlexibility(cat.name, next);
+          load();
+        }
+        return;
+      }
+      if (catEditField === 'hidden' && (input === ' ' || key.leftArrow || key.rightArrow)) {
+        const cat = catDetails[catListCursor];
+        if (cat) {
+          toggleHiddenCategory(cat.name, hiddenSet);
+          void getHiddenCategorySet().then(setHiddenSet);
+        }
+        return;
       }
     } else if (mode === 'add-pattern') {
       if (key.return) { if (newPattern) setMode('add-type'); return; }
@@ -328,7 +362,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       </Box>
       <Text dimColor>
         {section === 'categories'
-          ? (showHints ? '[a] add  [n] rename  [x] delete  [v] hidden  [f] flexibility  ·  [Tab] switch' : '')
+          ? (showHints ? '[a] add  [n] rename  [x] delete  ·  Enter edit  ·  [Tab] switch' : '')
           : (showHints ? '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch' : '[/] search')}
       </Text>
 
@@ -451,6 +485,31 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       )}
 
       {statusMsg && <Text color={C_POSITIVE} bold>{statusMsg}</Text>}
+
+      {mode === 'edit-category' && catDetails[catListCursor] && (() => {
+        const cat = catDetails[catListCursor];
+        const isHidden = hiddenSet.has(cat.name);
+        const flexColor = cat.flexibility ? FLEX_COLORS[cat.flexibility] : undefined;
+        return (
+          <ModalPanel title={`Edit: ${cat.name}`}>
+            <Box marginTop={1} flexDirection="column" gap={1}>
+              <Box gap={2}>
+                <Text color={catEditField === 'flexibility' ? C_ACCENT : C_NEUTRAL}>{'Flexibility'.padEnd(12)}</Text>
+                <Text color={catEditField === 'flexibility' ? C_ACCENT : (flexColor ?? C_DIM)}>
+                  {'← '}{cat.flexibility ?? '—'}{'  →'}
+                </Text>
+              </Box>
+              <Box gap={2}>
+                <Text color={catEditField === 'hidden' ? C_ACCENT : C_NEUTRAL}>{'Hidden'.padEnd(12)}</Text>
+                <Text color={catEditField === 'hidden' ? C_ACCENT : (isHidden ? C_WARNING : C_DIM)}>
+                  {isHidden ? 'yes' : 'no'}{'  (space to toggle)'}
+                </Text>
+              </Box>
+            </Box>
+            <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter/Esc close</Text></Box>
+          </ModalPanel>
+        );
+      })()}
 
       {mode === 'add-pattern' && (
         <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Rule — Pattern`}>

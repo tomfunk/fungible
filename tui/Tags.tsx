@@ -55,8 +55,8 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
-  // [sel=2] gap [name] gap [count text~18] — 2 gaps of 2
-  const tagNameW = Math.max(10, inner - 24);
+  // [sel=2] gap [name] gap [count=6] gap [inflow=10] gap [outflow=10] — 4 gaps of 2
+  const tagNameW = Math.max(10, inner - 36);
 
   useInput((input, key) => {
     if (mode === 'search') {
@@ -230,7 +230,9 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
                     <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                       {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
                     </Text>
-                    <Text dimColor>{t.count} transaction{t.count !== 1 ? 's' : ''}</Text>
+                    <Text dimColor>{(t.count + ' tx').padEnd(6)}</Text>
+                    <Text color={C_POSITIVE} dimColor={!isSelected}>{fmt(t.inflow).padStart(10)}</Text>
+                    <Text color={C_NEGATIVE} dimColor={!isSelected}>{fmt(t.outflow).padStart(10)}</Text>
                   </SelectableRow>
                 );
               })}
