@@ -2,6 +2,7 @@
 *.db
 *.sqlite
 node_modules/
+dist/
 memory/
 PLANS.md
 scripts/seed-rules.ts

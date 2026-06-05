@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmt, fmtSigned, fmtPct, fmtMonths } from '../core/fmt.js';
+import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact } from '../core/fmt.js';
 import { bar, truncate } from '../tui/charUtils.js';
 
 describe('fmt', () => {
@@ -64,6 +64,29 @@ describe('fmtMonths', () => {
 
   it('returns ∞ for NaN', () => {
     expect(fmtMonths(NaN)).toBe('∞');
+  });
+});
+
+describe('fmtCompact', () => {
+  it('abbreviates millions', () => {
+    expect(fmtCompact(1_838_641.96)).toBe('$1.84M');
+    expect(fmtCompact(3_870_000)).toBe('$3.87M');
+  });
+
+  it('abbreviates ten-thousands and above as K', () => {
+    expect(fmtCompact(68_619.40)).toBe('$68.6K');
+    expect(fmtCompact(21_493.79)).toBe('$21.5K');
+  });
+
+  it('falls through to full fmt below 10K', () => {
+    expect(fmtCompact(5_000)).toBe('$5,000.00');
+    expect(fmtCompact(999)).toBe('$999.00');
+  });
+
+  it('preserves sign for negative values', () => {
+    expect(fmtCompact(-2_000_000)).toBe('-$2.00M');
+    expect(fmtCompact(-50_000)).toBe('-$50.0K');
+    expect(fmtCompact(-5_000)).toBe('-$5,000.00');
   });
 });
 
