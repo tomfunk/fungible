@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text } from 'ink';
-export { fmt, fmtSigned, fmtPct, fmtMonths } from '../core/fmt.js';
+export { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact } from '../core/fmt.js';
 export { BAR_WIDTH, bar, truncate } from './charUtils.js';
 
 export function Divider({ width }: { width?: number }) {

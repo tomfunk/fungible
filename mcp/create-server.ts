@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { executeTool, WRITE_TOOLS } from '../core/tools.js';
+import { loadCanvasContext } from '../core/canvas-agent.js';
+import { buildPriorCanvasesSection } from '../core/canvas-history.js';
 
 export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServer {
   async function run(name: string, input: Record<string, unknown>) {
@@ -317,6 +319,75 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       granularity: z.enum(['day', 'week', 'month', 'quarter', 'year']).default('month').describe('Time grouping (default: month)'),
     },
     (input) => run('get_net_worth_history', input),
+  );
+
+  // ── get_screen ──────────────────────────────────────────────────────────────
+
+  server.tool(
+    'get_screen',
+    'Return the current text content of the TUI exactly as the user sees it.',
+    {},
+    () => run('get_screen', {}),
+  );
+
+  // ── show_canvas ─────────────────────────────────────────────────────────────
+
+  server.tool(
+    'show_canvas',
+    'Render a CanvasSpec in the app\'s Canvas screen (screen 9) and save it to history. The TUI auto-navigates to canvas. Always pass the original user prompt so the canvas is findable later.',
+    {
+      spec:   z.string().describe('JSON-encoded CanvasSpec (title + elements array)'),
+      prompt: z.string().describe('The original user question that generated this canvas'),
+    },
+    (input) => run('show_canvas', input),
+  );
+
+  server.tool(
+    'list_canvases',
+    'List previously generated canvases from history. Optionally filter by title or prompt text.',
+    {
+      search: z.string().optional().describe('Filter by title or prompt (optional)'),
+    },
+    (input) => run('list_canvases', input),
+  );
+
+  server.tool(
+    'load_canvas',
+    'Load a previously generated canvas from history and display it on screen 9.',
+    {
+      id: z.string().describe('Canvas history ID from list_canvases'),
+    },
+    (input) => run('load_canvas', input),
+  );
+
+  server.tool(
+    'delete_canvas',
+    'Delete a canvas from history by ID.',
+    {
+      id: z.string().describe('Canvas history ID from list_canvases'),
+    },
+    (input) => run('delete_canvas', input),
+  );
+
+  // ── generate_canvas ─────────────────────────────────────────────────────────
+
+  server.tool(
+    'generate_canvas',
+    'Returns financial context, prior canvases on similar topics, and the render_canvas tool schema. Use the returned context to produce a CanvasSpec — building on an existing canvas if one covers the same type of problem.',
+    {
+      prompt: z.string().describe('Natural language question or scenario, e.g. "how long to pay off my mortgage?" or "what if I save $500 more per month?"'),
+    },
+    async ({ prompt }) => {
+      const { system, tool } = await loadCanvasContext();
+      const text = [
+        `## User prompt\n${prompt}`,
+        buildPriorCanvasesSection(prompt),
+        `## Canvas instructions\n${system}`,
+        `## render_canvas tool schema\n${JSON.stringify(tool, null, 2)}`,
+        `Now generate the CanvasSpec JSON by calling render_canvas.`,
+      ].filter(Boolean).join('\n\n');
+      return { content: [{ type: 'text' as const, text }] };
+    },
   );
 
   // ── calculate_tvm ───────────────────────────────────────────────────────────

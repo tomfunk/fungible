@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './paths.js';
+import { db } from './db.js';
 
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -17,7 +18,7 @@ export async function backupDb(): Promise<void> {
   const backupPath = path.join(BACKUP_DIR, `fungible.${today}.bak`);
 
   if (!fs.existsSync(backupPath)) {
-    await fs.promises.copyFile(DB_PATH, backupPath);
+    await db.execute({ sql: 'VACUUM INTO ?', args: [backupPath] });
   }
 
   const files = fs.readdirSync(BACKUP_DIR)
