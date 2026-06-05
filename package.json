@@ -27,12 +27,12 @@
     "fungible": "bin/fungible"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0",
+    "@anthropic-ai/sdk": "^0.100.1",
     "@libsql/client": "^0.17.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
     "ink": "^7.0.4",
-    "openai": "^6.39.0",
+    "openai": "^6.41.0",
     "plaid": "^42.2.0",
     "react": "^19.2.6",
     "tsx": "^4.22.4",
