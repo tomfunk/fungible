@@ -8,7 +8,8 @@ const SCHEMA = `
     subtype TEXT,
     institution_name TEXT,
     mask TEXT,
-    nickname TEXT
+    nickname TEXT,
+    apr REAL
   );
 
   CREATE TABLE transactions (

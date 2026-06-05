@@ -112,6 +112,7 @@ export async function initDb() {
     'ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER',
     'ALTER TABLE plaid_items ADD COLUMN days_requested INTEGER',
     'ALTER TABLE accounts ADD COLUMN nickname TEXT',
+    'ALTER TABLE accounts ADD COLUMN apr REAL',
   ];
   for (const sql of migrations) {
     try {
