@@ -9,19 +9,20 @@ import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
-  updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
+  updateAccountTypeSubtype, updateAccountNickname, updateAccountApr, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
+import { handleNavKey } from './nav.js';
+import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
+import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'confirm-delete';
-type EditField = 'type' | 'subtype';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
+type EditField = 'nickname' | 'type' | 'subtype' | 'apr';
 
 type AddStep =
   | 'landing'
@@ -77,8 +78,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [editField, setEditField] = useState<EditField>('type');
   const [editType, setEditType] = useState('');
   const [editSubtype, setEditSubtype] = useState('');
-  const [acctMsg, setAcctMsg] = useState('');
-  const [acctErr, setAcctErr] = useState('');
+  const { statusMsg: acctMsg, showStatus: showAcctMsg } = useStatusMessage(2500);
+  const { statusMsg: acctErr, showStatus: showAcctErr } = useStatusMessage(3000);
 
   // Sync state (shared)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done'>('idle');
@@ -128,8 +129,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [updateValueInput, setUpdateValueInput] = useState('');
   const [updateValueError, setUpdateValueError] = useState('');
 
-  // Nickname mode state
-  const [nicknameInput, setNicknameInput] = useState('');
+  // Unified edit panel state
+  const [editNickname, setEditNickname] = useState('');
+  const [editApr, setEditApr] = useState('');
 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
@@ -137,7 +139,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
-  const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'update-value']);
+  const TEXT_INPUT_MODES = new Set<AcctMode>(['edit', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
   }, [addStep, acctMode]);
@@ -159,30 +161,27 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function openEdit(acct: LinkedAccount) {
     const type = acct.type;
     const subtypes = SUBTYPES[type] ?? [];
-    // Snap to a known subtype if possible, otherwise first option
     const currentSub = acct.subtype ?? '';
     const snapped = subtypes.includes(currentSub) ? currentSub : (subtypes[0] ?? '');
     setEditType(type);
     setEditSubtype(snapped);
-    setEditField('type');
+    setEditNickname(acct.nickname ?? '');
+    setEditApr(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
+    setEditField('nickname');
     setAcctMode('edit');
-  }
-
-  // Surface a write failure in red; clears itself after a few seconds (mirrors syncMsg).
-  function showAcctErr(msg: string) {
-    setAcctErr(msg);
-    setTimeout(() => setAcctErr(''), 3000);
   }
 
   async function saveEdit() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
+    const isDebt = editType === 'credit' || editType === 'loan';
+    const aprVal = editApr.trim() ? parseFloat(editApr) : null;
     try {
       await updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
+      await updateAccountNickname(acct.id, editNickname.trim() || null);
+      if (isDebt) await updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
       setAcctMode('list');
-      setAcctErr('');
-      setAcctMsg(`Updated ${acct.name}`);
-      setTimeout(() => setAcctMsg(''), 2500);
+      showAcctMsg(`Updated ${editNickname.trim() || acct.name}`);
       loadAccounts();
     } catch {
       showAcctErr(`Failed to update ${acct.name}`);
@@ -234,29 +233,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       await deleteAccount(acct.id);
       setAcctMode('list');
       setAcctCursor((c) => Math.max(0, c - 1));
-      setAcctErr('');
-      setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
-      setTimeout(() => setAcctMsg(''), 2500);
+      showAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
       loadAccounts();
     } catch {
       setAcctMode('list');
       showAcctErr(`Failed to delete ${acct.nickname ?? acct.name}`);
-    }
-  }
-
-  async function saveNickname() {
-    const acct = linkedAccounts[acctCursor];
-    if (!acct) return;
-    const nickname = nicknameInput.trim() || null;
-    try {
-      await updateAccountNickname(acct.id, nickname);
-      setAcctMode('list');
-      setAcctErr('');
-      setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
-      setTimeout(() => setAcctMsg(''), 2500);
-      loadAccounts();
-    } catch {
-      showAcctErr('Failed to save nickname');
     }
   }
 
@@ -268,9 +249,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     try {
       await updateAccountValue(acct.id, value);
       setAcctMode('list');
-      setAcctErr('');
-      setAcctMsg(`Updated value for ${acct.name}`);
-      setTimeout(() => setAcctMsg(''), 2500);
+      showAcctMsg(`Updated value for ${acct.name}`);
       loadAccounts();
     } catch {
       setUpdateValueError('Failed to update value — please try again');
@@ -371,29 +350,41 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (acctMode === 'edit') {
         if (key.escape) { setAcctMode('list'); return; }
         if (key.return) { void saveEdit(); return; }
-        if (key.tab) {
-          setEditField((f) => f === 'type' ? 'subtype' : 'type');
+        const isDebt = editType === 'credit' || editType === 'loan';
+        const editFields: EditField[] = isDebt ? ['nickname', 'type', 'subtype', 'apr'] : ['nickname', 'type', 'subtype'];
+        if (key.upArrow) {
+          setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.max(0, i - 1)]; });
           return;
         }
-        if (editField === 'type') {
-          if (key.leftArrow || key.rightArrow) {
-            const idx = ACCOUNT_TYPES.indexOf(editType as typeof ACCOUNT_TYPES[number]);
-            const dir = key.leftArrow ? -1 : 1;
-            const nextType = ACCOUNT_TYPES[(idx + dir + ACCOUNT_TYPES.length) % ACCOUNT_TYPES.length];
-            setEditType(nextType);
-            setEditSubtype(SUBTYPES[nextType]?.[0] ?? '');
-          }
+        if (key.downArrow) {
+          setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.min(editFields.length - 1, i + 1)]; });
+          return;
+        }
+        if (editField === 'type' && (key.leftArrow || key.rightArrow)) {
+          const idx = ACCOUNT_TYPES.indexOf(editType as typeof ACCOUNT_TYPES[number]);
+          const dir = key.leftArrow ? -1 : 1;
+          const nextType = ACCOUNT_TYPES[(idx + dir + ACCOUNT_TYPES.length) % ACCOUNT_TYPES.length];
+          setEditType(nextType);
+          setEditSubtype(SUBTYPES[nextType]?.[0] ?? '');
           return;
         }
         if (editField === 'subtype') {
           const subtypes = SUBTYPES[editType] ?? [];
-          if (subtypes.length > 0) {
-            if (key.leftArrow || key.rightArrow) {
-              const idx = subtypes.indexOf(editSubtype);
-              const dir = key.leftArrow ? -1 : 1;
-              setEditSubtype(subtypes[(idx + dir + subtypes.length) % subtypes.length]);
-            }
+          if (subtypes.length > 0 && (key.leftArrow || key.rightArrow)) {
+            const idx = subtypes.indexOf(editSubtype);
+            const dir = key.leftArrow ? -1 : 1;
+            setEditSubtype(subtypes[(idx + dir + subtypes.length) % subtypes.length]);
           }
+          return;
+        }
+        if (editField === 'nickname') {
+          if (key.backspace || key.delete) { setEditNickname((v) => v.slice(0, -1)); return; }
+          if (input && !key.ctrl && !key.meta) { setEditNickname((v) => v + input); return; }
+          return;
+        }
+        if (editField === 'apr') {
+          if (key.backspace || key.delete) { setEditApr((v) => v.slice(0, -1)); return; }
+          if (input && /^[\d.]$/.test(input) && !key.ctrl && !key.meta) { setEditApr((v) => v + input); return; }
           return;
         }
         return;
@@ -404,14 +395,6 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (key.return) { void saveUpdatedValue(); return; }
         if (key.backspace || key.delete) { setUpdateValueInput((v) => v.slice(0, -1)); setUpdateValueError(''); return; }
         if (input && !key.ctrl && !key.meta) { setUpdateValueInput((v) => v + input); setUpdateValueError(''); return; }
-        return;
-      }
-
-      if (acctMode === 'nickname') {
-        if (key.escape) { setAcctMode('list'); setNicknameInput(''); return; }
-        if (key.return) { void saveNickname(); return; }
-        if (key.backspace || key.delete) { setNicknameInput((v) => v.slice(0, -1)); return; }
-        if (input && !key.ctrl && !key.meta) { setNicknameInput((v) => v + input); return; }
         return;
       }
 
@@ -426,13 +409,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('add-data'); return; }
       if (key.upArrow)   { setAcctCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
-      if (input === 'e' && linkedAccounts[acctCursor]) {
+      if (key.return && linkedAccounts[acctCursor]) {
         openEdit(linkedAccounts[acctCursor]);
-        return;
-      }
-      if (input === 'n' && linkedAccounts[acctCursor]) {
-        setNicknameInput(linkedAccounts[acctCursor].nickname ?? '');
-        setAcctMode('nickname');
         return;
       }
       if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
@@ -632,11 +610,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      {/* Header */}
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="accounts" showHints={showHints} />
-      </Box>
+      <PageHeader current="accounts" showHints={showHints} />
 
       <Box marginTop={1}>
         <Box gap={3}>
@@ -651,9 +625,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
+            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
-            ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
+            ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
@@ -678,10 +652,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 const label = (SUBTYPE_DISPLAY[raw] ?? raw).padEnd(14);
                 const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
                 return (
-                  <Box key={acct.id} gap={2}>
-                    <Text color={isSelected ? C_ACCENT : undefined}>
-                      {isSelected ? '▶ ' : '  '}
-                    </Text>
+                  <SelectableRow key={acct.id} selected={isSelected}>
                     <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                       {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
@@ -695,7 +666,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         : <Text color={C_WARNING}>not synced</Text>
                       }
                     </Text>
-                  </Box>
+                  </SelectableRow>
                 );
               })}
             </Box>
@@ -709,7 +680,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           {/* Confirm-delete panel */}
           {acctMode === 'confirm-delete' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_NEGATIVE} paddingX={2} paddingY={1}>
+            <ModalPanel borderColor={C_NEGATIVE}>
               <Text bold color={C_NEGATIVE}>Delete account — this cannot be undone</Text>
               <Box marginTop={1} flexDirection="column">
                 <Text><Text color={C_ACCENT}>{selectedAcct.nickname ?? selectedAcct.name}</Text>  {selectedAcct.mask ? `···${selectedAcct.mask}` : ''}</Text>
@@ -722,61 +693,33 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 <Text color={C_NEGATIVE}>[y] Yes, delete</Text>
                 <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
               </Box>
-            </Box>
-          )}
-
-          {/* Nickname panel */}
-          {acctMode === 'nickname' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
-              <Text bold>Nickname: {selectedAcct.name}</Text>
-              <Text dimColor>Leave empty to clear nickname</Text>
-              <Box marginTop={1}>
-                <Text>Nickname: </Text>
-                <Text color={C_WARNING}>{nicknameInput}</Text>
-                <Text color={C_ACCENT}>{CURSOR}</Text>
-              </Box>
-              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
-            </Box>
+            </ModalPanel>
           )}
 
           {/* Update-value panel */}
           {acctMode === 'update-value' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
-              <Text bold>Update value: {selectedAcct.name}</Text>
-              <Box marginTop={1}>
-                <Text>New value: $</Text>
-                <Text color={C_WARNING}>{updateValueInput}</Text>
-                <Text color={C_ACCENT}>█</Text>
-              </Box>
+            <ModalPanel title={`Update value: ${selectedAcct.name}`} borderColor={C_WARNING}>
+              <Box marginTop={1} gap={1}><Text>New value: $</Text><TextInput value={updateValueInput} color={C_WARNING} /></Box>
               {updateValueError && <Text color={C_NEGATIVE}>{updateValueError}</Text>}
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
-            </Box>
+            </ModalPanel>
           )}
 
-          {/* Edit panel */}
-          {acctMode === 'edit' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
-              <Text bold>Edit: {selectedAcct.name}{selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}</Text>
-              <Box marginTop={1} flexDirection="column" gap={1}>
-                <Box gap={2}>
-                  <Text color={editField === 'type' ? C_ACCENT : C_NEUTRAL}>
-                    {editField === 'type' ? '▶ ' : '  '}Type
-                  </Text>
-                  <Text color={editField === 'type' ? C_ACCENT : undefined}>
-                    {'← '}{editType}{'  →'}
-                  </Text>
+          {/* Unified edit panel */}
+          {acctMode === 'edit' && selectedAcct && (() => {
+            const isDebt = editType === 'credit' || editType === 'loan';
+            return (
+              <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
+                <Box marginTop={1} flexDirection="column" gap={1}>
+                  <EditTextField label="Nickname" labelWidth={10} active={editField === 'nickname'} value={editNickname} color={C_WARNING} placeholder="none" emptyText="none" />
+                  <EditToggleField label="Type" labelWidth={10} active={editField === 'type'} value={editType} />
+                  <EditToggleField label="Subtype" labelWidth={10} active={editField === 'subtype'} value={editSubtype || '—'} valueColor={C_DIM} />
+                  {isDebt && <EditTextField label="APR %" labelWidth={10} active={editField === 'apr'} value={editApr} color={C_WARNING} placeholder="0.0" />}
                 </Box>
-                <Box gap={2}>
-                  <Text color={editField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
-                    {editField === 'subtype' ? '▶ ' : '  '}Subtype
-                  </Text>
-                  <Text color={editField === 'subtype' ? C_ACCENT : C_DIM}>
-                    {'← '}{editSubtype || '—'}{'  →'}
-                  </Text>
-                </Box>
-              </Box>
-            </Box>
-          )}
+                <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
+              </ModalPanel>
+            );
+          })()}
         </>
       )}
 
@@ -835,10 +778,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text bold>Transaction History Window</Text>
               <Text dimColor>How many days of history should Plaid fetch? (30–{MAX_DAYS_REQUESTED}, default {defaultDays})</Text>
               <Text dimColor>Default comes from the start date set during setup (plus a small buffer for timezone safety). This is locked in when the bank is linked and can only be changed if you recreate the link later.</Text>
-              <Box>
-                <Text>Days: </Text>
-                <Text>{daysInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text>
-              </Box>
+              <Box gap={1}><Text>Days: </Text><TextInput value={daysInput} /></Box>
               {daysError && <Text color={C_NEGATIVE}>{daysError}</Text>}
               <Text dimColor>Enter to continue · Esc back</Text>
             </Box>
@@ -862,10 +802,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'file' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text dimColor>Enter the path to your CSV file:</Text>
-              <Box>
-                <Text>Path: </Text>
-                <Text color={C_WARNING}>{filePath}<Text color={C_ACCENT}>█</Text></Text>
-              </Box>
+              <Box gap={1}><Text>Path: </Text><TextInput value={filePath} color={C_WARNING} /></Box>
               {fileError && <Text color={C_NEGATIVE}>{fileError}</Text>}
               <Text dimColor>Press Enter to load · Esc back</Text>
             </Box>
@@ -885,13 +822,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 {headers.map((h, i) => {
                   const sample = csvRows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(', ');
                   return (
-                    <Box key={i} gap={2}>
+                    <SelectableRow key={i} selected={i === colCursor}>
                       <Text color={i === colCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== colCursor}>
-                        {i === colCursor ? '▶ ' : '  '}
                         {h.padEnd(24)}
                         <Text dimColor>  {truncate(sample, 36)}</Text>
                       </Text>
-                    </Box>
+                    </SelectableRow>
                   );
                 })}
               </Box>
@@ -927,12 +863,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text dimColor>↑↓ select · Enter confirm · [n] new account</Text>
               <Box flexDirection="column" marginTop={1}>
                 {csvAccounts.map((acct, i) => (
-                  <Box key={acct.id} gap={2}>
+                  <SelectableRow key={acct.id} selected={i === csvAccountCursor}>
                     <Text color={i === csvAccountCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== csvAccountCursor}>
-                      {i === csvAccountCursor ? '▶ ' : '  '}{acct.name}
+                      {acct.name}
                       <Text dimColor>  {acct.mask ? `···${acct.mask}` : ''}</Text>
                     </Text>
-                  </Box>
+                  </SelectableRow>
                 ))}
               </Box>
               {csvAccounts.length === 0 && <Text dimColor>No accounts yet — press [n] to create one.</Text>}
@@ -943,11 +879,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>New Account — Name</Text>
               <Text dimColor>Type a name for this account (e.g. "Venture X", "Freedom Unlimited")</Text>
-              <Box marginTop={1}>
-                <Text>Name: </Text>
-                <Text color={C_WARNING}>{newAcctName}</Text>
-                <Text color={C_ACCENT}>█</Text>
-              </Box>
+              <Box marginTop={1} gap={1}><Text>Name: </Text><TextInput value={newAcctName} color={C_WARNING} /></Box>
               <Text dimColor>Enter to continue · Esc back</Text>
             </Box>
           )}
@@ -1021,11 +953,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Manual Asset — Name</Text>
               <Text dimColor>Type a name for this asset (e.g. "House", "Car")</Text>
-              <Box marginTop={1}>
-                <Text>Name: </Text>
-                <Text color={C_WARNING}>{manualName}</Text>
-                <Text color={C_ACCENT}>█</Text>
-              </Box>
+              <Box marginTop={1} gap={1}><Text>Name: </Text><TextInput value={manualName} color={C_WARNING} /></Box>
               <Text dimColor>Enter to continue · Esc cancel</Text>
             </Box>
           )}
@@ -1034,11 +962,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Manual Asset — Current Value</Text>
               <Text dimColor>Asset: <Text color={C_ACCENT}>{manualName}</Text></Text>
-              <Box marginTop={1}>
-                <Text>Value: $</Text>
-                <Text color={C_WARNING}>{manualValue}</Text>
-                <Text color={C_ACCENT}>█</Text>
-              </Box>
+              <Box marginTop={1} gap={1}><Text>Value: $</Text><TextInput value={manualValue} color={C_WARNING} /></Box>
               {manualValueError && <Text color={C_NEGATIVE}>{manualValueError}</Text>}
               <Text dimColor>Enter to save · Esc back</Text>
             </Box>

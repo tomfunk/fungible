@@ -26,14 +26,18 @@ export type BalanceSummary = {
   totalAssets: number;
   totalLiabilities: number;
   netWorth: number;
-  cash: number;       // depository only
-  liquid: number;     // depository + non-retirement brokerage
+  cash: number;        // depository only
+  liquid: number;      // depository + taxable brokerage
+  retirement: number;  // 401k / IRA / Roth / HSA
+  loanDebt: number;    // mortgage / auto / student loans
 };
 
 export type FinancialHealth = {
   netWorth: number;
   cash: number;
   liquid: number;
+  retirement: number;
+  loanDebt: number;
   avgMonthlyExpenses: number;
   avgMonthlySavings: number;
   cashRunwayMonths: number;
@@ -101,12 +105,22 @@ export async function getBalances(): Promise<BalanceSummary> {
     .filter((a) => a.type === 'depository')
     .reduce((s, a) => s + a.balance, 0);
 
-  const LIQUID_SUBTYPES = new Set(['brokerage', 'cash isa', 'non-taxable brokerage account']);
+  const LIQUID_SUBTYPES     = new Set(['brokerage', 'cash isa', 'non-taxable brokerage account']);
+  const RETIREMENT_SUBTYPES = new Set(['ira', '401k', 'roth', '403b', '457b', 'hsa', 'roth 401k', 'simple ira', 'sep ira', 'pension']);
+
   const liquid = accounts
     .filter((a) =>
       a.type === 'depository' ||
       (a.type === 'investment' && LIQUID_SUBTYPES.has((a.subtype ?? '').toLowerCase()))
     )
+    .reduce((s, a) => s + a.balance, 0);
+
+  const retirement = accounts
+    .filter((a) => a.type === 'investment' && RETIREMENT_SUBTYPES.has((a.subtype ?? '').toLowerCase()))
+    .reduce((s, a) => s + a.balance, 0);
+
+  const loanDebt = accounts
+    .filter((a) => a.type === 'loan')
     .reduce((s, a) => s + a.balance, 0);
 
   return {
@@ -116,6 +130,8 @@ export async function getBalances(): Promise<BalanceSummary> {
     netWorth: totalAssets - totalLiabilities,
     cash,
     liquid,
+    retirement,
+    loanDebt,
   };
 }
 
@@ -160,6 +176,8 @@ export async function getFinancialHealth(
     netWorth: balances.netWorth,
     cash: balances.cash,
     liquid: balances.liquid,
+    retirement: balances.retirement,
+    loanDebt: balances.loanDebt,
     avgMonthlyExpenses,
     avgMonthlySavings,
     cashRunwayMonths,

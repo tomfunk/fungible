@@ -8,6 +8,8 @@ import { streamResponse, makeAssistantMessage, detectProvider, getProviderModel 
 import type { Message, ContentBlock, ToolDef } from './llm-provider.js';
 import { APP_CONTEXT } from './agent-context.js';
 import { TOOL_DEFS, WRITE_TOOLS, describeToolCall, executeTool } from './tools.js';
+import { loadCanvasContext } from './canvas-agent.js';
+import { buildPriorCanvasesSection } from './canvas-history.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -63,11 +65,11 @@ Model in use: ${model}
 
 const SHOW_TOOL: ToolDef = {
   name: 'show',
-  description: 'Navigate the app UI to display a specific screen or filtered view. Use this to show the user relevant data visually.',
+  description: 'Navigate the app UI to display a specific screen or filtered view. Use this to show the user relevant data visually. For "canvas", pass the generated CanvasSpec as a JSON string in canvasSpec.',
   parameters: {
     type: 'object',
     properties: {
-      screen:      { type: 'string', description: 'Screen to navigate to', enum: ['dashboard', 'transactions', 'trends', 'networth', 'tags', 'rules', 'accounts', 'health'] },
+      screen:      { type: 'string', description: 'Screen to navigate to', enum: ['dashboard', 'transactions', 'trends', 'networth', 'tags', 'rules', 'accounts', 'health', 'canvas'] },
       category:    { type: 'string', description: 'Filter transactions by category' },
       from:        { type: 'string', description: 'Start date YYYY-MM-DD' },
       to:          { type: 'string', description: 'End date YYYY-MM-DD' },
@@ -77,12 +79,25 @@ const SHOW_TOOL: ToolDef = {
       search:      { type: 'string', description: 'Pre-fill the search box on the transactions screen (regex)' },
       range:       { type: 'string', description: 'Time range to show on dashboard or trends', enum: ['week', 'month', 'quarter', 'year', 'alltime'] },
       anchor:      { type: 'string', description: 'Which period to land on — any date within it, YYYY-MM-DD (e.g. "2026-03-01" for March 2026)' },
+      canvasSpec:  { type: 'string', description: 'JSON-encoded CanvasSpec (required when screen is "canvas")' },
     },
     required: ['screen'],
   },
 };
 
-const AGENT_TOOL_DEFS: ToolDef[] = [...TOOL_DEFS, SHOW_TOOL];
+const GENERATE_CANVAS_TOOL: ToolDef = {
+  name: 'generate_canvas',
+  description: 'Load live financial data and the canvas schema. Returns context needed to build a CanvasSpec — including any prior canvases that cover a similar problem, so you can build on them rather than starting from scratch. After calling this, generate the CanvasSpec JSON following the returned instructions, then call show_canvas({ spec: JSON.stringify(spec), prompt: "<original user question>" }) to render and save it.',
+  parameters: {
+    type: 'object',
+    properties: {
+      prompt: { type: 'string', description: 'The user\'s canvas question, used to search for relevant prior canvases' },
+    },
+    required: ['prompt'],
+  },
+};
+
+const AGENT_TOOL_DEFS: ToolDef[] = [...TOOL_DEFS, SHOW_TOOL, GENERATE_CANVAS_TOOL];
 
 // ─── Tool dispatch (agent layer: show + confirmation wrapper) ──────────────────
 
@@ -91,18 +106,29 @@ async function dispatchTool(
   input: Record<string, unknown>,
   callbacks: AgentCallbacks,
 ): Promise<string> {
+  // Load canvas context — agent generates spec, then calls show_canvas
+  if (name === 'generate_canvas') {
+    const prompt = String(input.prompt ?? '');
+    const { system, tool } = await loadCanvasContext();
+    return [
+      `## User prompt\n${prompt}`,
+      buildPriorCanvasesSection(prompt),
+      `## Canvas instructions\n${system}`,
+      `## render_canvas tool schema\n${JSON.stringify(tool, null, 2)}`,
+      `Now generate the CanvasSpec JSON following these instructions, then call show_canvas({ spec: JSON.stringify(spec), prompt: ${JSON.stringify(prompt)} }).`,
+    ].filter(Boolean).join('\n\n');
+  }
+
   // UI navigation — agent-only, no confirmation
   if (name === 'show') {
-    const { screen, ...rest } = input as Record<string, string>;
+    const { screen, canvasSpec, ...rest } = input as Record<string, string>;
     const filter: Record<string, string> = {};
     for (const [k, v] of Object.entries(rest)) {
       if (v !== undefined && v !== null) filter[k] = String(v);
     }
+    if (canvasSpec) filter['canvasSpec'] = canvasSpec;
     callbacks.onNavigate(screen, filter);
-    const desc = Object.keys(filter).length
-      ? `${screen} (${Object.entries(filter).map(([k, v]) => `${k}: ${v}`).join(', ')})`
-      : screen;
-    return `Navigated to ${desc}`;
+    return `Navigated to ${screen}`;
   }
 
   // Write tools — confirm before executing

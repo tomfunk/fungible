@@ -4,8 +4,9 @@ import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../cor
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
-import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
+import { handleNavKey } from './nav.js';
+import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
+import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 
@@ -17,7 +18,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
   const [newName, setNewName] = useState('');
-  const [statusMsg, setStatusMsg] = useState('');
+  const { statusMsg, showStatus } = useStatusMessage();
   const [search, setSearch] = useState('');
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
@@ -54,8 +55,8 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
-  // [sel=2] gap [name] gap [count text~18] — 2 gaps of 2
-  const tagNameW = Math.max(10, inner - 24);
+  // [sel=2] gap [name] gap [count=6] gap [inflow=10] gap [outflow=10] — 4 gaps of 2
+  const tagNameW = Math.max(10, inner - 36);
 
   useInput((input, key) => {
     if (mode === 'search') {
@@ -143,8 +144,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
     if (input === 'x' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
       deleteTag(tag.id);
-      setStatusMsg(`Deleted "${tag.name}"`);
-      setTimeout(() => setStatusMsg(''), 2000);
+      showStatus(`Deleted "${tag.name}"`);
       setCursor((c) => Math.max(0, c - 1));
       load();
       return;
@@ -164,14 +164,11 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={C_ACCENT}>fungible</Text>
-        <NavHints current="tags" showHints={showHints} />
-      </Box>
+      <PageHeader current="tags" showHints={showHints} />
 
       {mode === 'detail' && tag && tagSummary ? (
         <>
-          <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
+          <Box flexDirection="column" marginTop={1} marginBottom={1}>
             <Text bold>Tags <Text dimColor>— # {tag.name}  ← {cursor + 1} / {tags.length} →</Text></Text>
             {showHints && <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>}
           </Box>
@@ -179,30 +176,16 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
           <Divider />
 
           <Box gap={6} marginY={1}>
-            <Box flexDirection="column">
-              <Text dimColor>Income</Text>
-              <Text color={C_POSITIVE} bold>{fmt(tagSummary.income)}</Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text dimColor>Expenses</Text>
-              <Text color={C_NEGATIVE} bold>{fmt(tagSummary.expenses)}</Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text dimColor>Net</Text>
-              <Text color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} bold>
-                {tagSummary.net >= 0 ? '+' : '-'}{fmt(tagSummary.net)}
-              </Text>
-            </Box>
-            <Box flexDirection="column">
-              <Text dimColor>Transactions</Text>
-              <Text bold>{tag.count}</Text>
-            </Box>
+            <StatCard label="Income" value={fmt(tagSummary.income)} color={C_POSITIVE} />
+            <StatCard label="Expenses" value={fmt(tagSummary.expenses)} color={C_NEGATIVE} />
+            <StatCard label="Net" value={(tagSummary.net >= 0 ? '+' : '-') + fmt(tagSummary.net)} color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
+            <StatCard label="Transactions" value={String(tag.count)} />
           </Box>
 
           <Divider />
 
           <Box flexDirection="column" marginTop={1}>
-            <Text bold dimColor>SPENDING BY CATEGORY</Text>
+            <SectionHeader>SPENDING BY CATEGORY</SectionHeader>
             <Box flexDirection="column" marginTop={1}>
               {tagSummary.byCategory.length === 0 ? (
                 <Text dimColor>No expense data for this tag.</Text>
@@ -210,14 +193,13 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
                 tagSummary.byCategory.map((row, i) => {
                   const isSelected = catCursor === i;
                   return (
-                    <Box key={row.category} gap={2}>
+                    <SelectableRow key={row.category} selected={isSelected}>
                       <Text color={isSelected ? C_ACCENT : undefined}>
-                        {isSelected ? '▶ ' : '  '}
                         {truncate(row.category, 20).padEnd(20)}
                       </Text>
                       <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
                       <Text color={C_ACCENT} dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>
-                    </Box>
+                    </SelectableRow>
                   );
                 })
               )}
@@ -226,35 +208,35 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
         </>
       ) : (
         <>
-          <Box justifyContent="space-between" marginTop={1}>
+          <Box marginTop={1}>
             <Text bold>Tags{search ? <Text color={C_WARNING}>  /{search}</Text> : null}</Text>
-            {showHints && <Text dimColor>[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
-          {mode === 'search' && (
-            <Box marginTop={1}>
-              <Text color={C_ACCENT}>/</Text>
-              <Text color={C_WARNING}>{search}</Text>
-              <Text color={C_ACCENT}>█</Text>
-              <Text dimColor>  Esc cancel</Text>
-            </Box>
-          )}
+          <Text dimColor>
+            {showHints
+              ? '[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions'
+              : '[/] search'}
+          </Text>
+          {mode === 'search' && <SearchBar value={search} />}
           <Box marginTop={1}><Divider /></Box>
 
           {visibleTags.length === 0 ? (
             <Box marginTop={1}><Text dimColor>{search ? `No tags matching "${search}".` : 'No tags yet. [a] to create one.'}</Text></Box>
           ) : (
-            visibleTags.map((t, i) => {
-              const isSelected = i === cursor;
-              return (
-                <Box key={t.id} gap={2} marginTop={i === 0 ? 1 : 0}>
-                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
-                    {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
-                  </Text>
-                  <Text dimColor>{t.count} transaction{t.count !== 1 ? 's' : ''}</Text>
-                </Box>
-              );
-            })
+            <Box flexDirection="column" marginTop={1}>
+              {visibleTags.map((t, i) => {
+                const isSelected = i === cursor;
+                return (
+                  <SelectableRow key={t.id} selected={isSelected}>
+                    <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
+                      {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
+                    </Text>
+                    <Text dimColor>{(t.count + ' tx').padEnd(6)}</Text>
+                    <Text color={C_POSITIVE} dimColor={!isSelected}>{fmt(t.inflow).padStart(10)}</Text>
+                    <Text color={C_NEGATIVE} dimColor={!isSelected}>{fmt(t.outflow).padStart(10)}</Text>
+                  </SelectableRow>
+                );
+              })}
+            </Box>
           )}
 
           <Box marginTop={1}><Divider /></Box>
@@ -262,26 +244,22 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
           {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
           {mode === 'add' && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
-              <Text bold>New Tag</Text>
+            <ModalPanel title="New Tag">
               <Text dimColor>Type name · Enter save · Esc cancel</Text>
-              <Box marginTop={1}>
+              <Box marginTop={1} gap={1}>
                 <Text>Name: </Text>
-                <Text color={C_WARNING}>{newName}</Text>
-                <Text color={C_ACCENT}>{CURSOR}</Text>
+                <TextInput value={newName} color={C_WARNING} />
               </Box>
-            </Box>
+            </ModalPanel>
           )}
           {mode === 'rename' && visibleTags[cursor] && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
-              <Text bold>Rename Tag</Text>
+            <ModalPanel title="Rename Tag" borderColor={C_WARNING}>
               <Text dimColor>Enter save · Esc cancel</Text>
-              <Box marginTop={1}>
+              <Box marginTop={1} gap={1}>
                 <Text>Name: </Text>
-                <Text color={C_WARNING}>{newName}</Text>
-                <Text color={C_ACCENT}>{CURSOR}</Text>
+                <TextInput value={newName} color={C_WARNING} />
               </Box>
-            </Box>
+            </ModalPanel>
           )}
         </>
       )}
