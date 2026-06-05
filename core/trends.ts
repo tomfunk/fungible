@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { MONTHS, addDays, weekLabel, type TrendsRange } from './dateUtils.js';
+import { buildSearchRe } from './queries.js';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const Q_FROM = ['01', '04', '07', '10'];
@@ -207,4 +208,65 @@ export async function getPeriodTotals(view: View, range: TrendsRange): Promise<P
   const rawRows = rawResult.rows as unknown as any[];
   const actual = new Map<string, PeriodRow>(rawRows.map((r) => { const row = toActual(r); return [row.from, row]; }));
   return allPeriods.map((p) => actual.get(p.from) ?? zeroRow(p));
+}
+
+function periodFrom(date: string, range: TrendsRange): string {
+  if (range === 'month') return date.slice(0, 7) + '-01';
+  if (range === 'quarter') {
+    const m = parseInt(date.slice(5, 7));
+    return date.slice(0, 4) + '-' + Q_FROM[Math.floor((m - 1) / 3)] + '-01';
+  }
+  if (range === 'year') return date.slice(0, 4) + '-01-01';
+  const dt = new Date(date + 'T12:00:00');
+  const dow = (dt.getDay() + 6) % 7;
+  const mon = new Date(dt);
+  mon.setDate(dt.getDate() - dow);
+  return mon.toISOString().slice(0, 10);
+}
+
+export async function getSearchPeriodTotals(search: string, range: TrendsRange): Promise<PeriodRow[]> {
+  if (!search) return [];
+  const result = await db.execute(`
+    SELECT COALESCE(display_name, name) as display, merchant_name, date, amount
+    FROM transactions WHERE pending = 0 AND ignored = 0
+  `);
+  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string; amount: number }[];
+  const re = buildSearchRe(search);
+  const periodMap = new Map<string, { income: number; expenses: number }>();
+  for (const row of rows) {
+    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    const from = periodFrom(row.date, range);
+    const existing = periodMap.get(from) ?? { income: 0, expenses: 0 };
+    const amt = Number(row.amount);
+    if (amt < 0) existing.income += Math.abs(amt); else existing.expenses += amt;
+    periodMap.set(from, existing);
+  }
+  const allPeriods = await generateAllPeriods(range);
+  return allPeriods
+    .filter((p) => periodMap.has(p.from))
+    .map((p) => {
+      const { income, expenses } = periodMap.get(p.from)!;
+      return { ...p, income, expenses, total: income - expenses };
+    });
+}
+
+export async function getSearchMatchingPeriods(
+  search: string,
+  range: TrendsRange,
+): Promise<{ periods: Set<string>; count: number }> {
+  if (!search) return { periods: new Set(), count: 0 };
+  const result = await db.execute(`
+    SELECT COALESCE(display_name, name) as display, merchant_name, date
+    FROM transactions WHERE pending = 0 AND ignored = 0
+  `);
+  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string }[];
+  const re = buildSearchRe(search);
+  const periods = new Set<string>();
+  let count = 0;
+  for (const row of rows) {
+    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    count++;
+    periods.add(periodFrom(row.date, range));
+  }
+  return { periods, count };
 }

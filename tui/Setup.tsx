@@ -7,6 +7,7 @@ import { seedRules } from '../core/seed-rules.js';
 import { DATA_DIR } from '../core/paths.js';
 import { getSetting, setSetting, daysFromStartDate, DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, START_DATE_BUFFER_DAYS } from '../core/settings.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
+import { TextInput } from './components/index.js';
 
 type Step =
   | 'welcome'
@@ -272,8 +273,7 @@ export function Setup() {
           <Text dimColor>Found in your Plaid dashboard under Team Settings → Keys</Text>
           <Box marginTop={1}>
             <Text>Client ID: </Text>
-            <Text color={C_WARNING}>{clientId}</Text>
-            <Text color={C_ACCENT}>█</Text>
+            <TextInput value={clientId} color={C_WARNING} />
           </Box>
           <Text dimColor>Enter to continue · Esc back</Text>
         </Box>
@@ -285,8 +285,7 @@ export function Setup() {
           <Text dimColor>The secret key for your chosen environment</Text>
           <Box marginTop={1}>
             <Text>Secret: </Text>
-            <Text color={C_WARNING}>{'*'.repeat(secret.length)}</Text>
-            <Text color={C_ACCENT}>█</Text>
+            <TextInput value={'*'.repeat(secret.length)} color={C_WARNING} />
           </Box>
           <Text dimColor>Enter to continue · Esc back</Text>
         </Box>
@@ -320,8 +319,7 @@ export function Setup() {
           </Text>
           <Box marginTop={1}>
             <Text>Start date (YYYY-MM-DD): </Text>
-            <Text color={C_WARNING}>{startDateInput}</Text>
-            <Text color={C_ACCENT}>█</Text>
+            <TextInput value={startDateInput} color={C_WARNING} />
           </Box>
           {startDateRequestedDays != null && (
             <Text dimColor>= {startDateRequestedDays} days of history requested (incl. {START_DATE_BUFFER_DAYS}-day buffer)</Text>

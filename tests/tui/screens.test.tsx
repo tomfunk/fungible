@@ -19,8 +19,14 @@ import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
 import { Health } from '../../tui/Health.js';
+import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
+
+vi.mock('../../core/profile.js', () => ({
+  loadProfile: () => null,
+  saveProfile: () => {},
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -345,6 +351,115 @@ describe('Transactions', () => {
     r.stdin.write('4'); // networth
     expect(onNavigate).toHaveBeenCalledWith('networth');
   });
+
+  it('Enter opens the edit panel for the selected transaction', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Name');
+      expect(f).toContain('Category');
+    });
+  });
+
+  it('↓ in edit panel moves to Category, ← → cycles categories', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // edit panel open (toggle arrows unique to panel)
+    r.stdin.write('\x1b[B'); // ↓ → move to category field
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // name inactive = category active
+    const before = frame(r);
+    r.stdin.write('\x1b[C'); // → cycle to next category
+    await waitFor(() => expect(frame(r)).not.toEqual(before));
+  });
+
+  it('Esc in edit panel cancels without saving', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Name'));
+    r.stdin.write('\x1b'); // Esc
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Name\n'); // panel gone
+      expect(f).toContain('Trader Joes');
+    });
+  });
+
+  it('typing a name in edit panel and Enter saves the display name', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Name')); // panel open, Name field active
+    r.stdin.write('TJ');
+    await waitFor(() => expect(frame(r)).toContain('TJ'));
+    r.stdin.write('\r'); // save
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('TJ');
+      expect(f).not.toContain('Trader Joes');
+    });
+  });
+
+  it('edit panel shows Pattern and Match type fields', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Pattern');
+      expect(f).toContain('Match type');
+    });
+  });
+
+  it('↓↓ navigates to Pattern field and typing shows match count', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    r.stdin.write('\x1b[B'); // name → category
+    r.stdin.write('\x1b[B'); // category → pattern
+    await waitFor(() => expect(frame(r)).toContain('optional')); // Pattern field active (placeholder)
+    for (const ch of 'Trader') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('transactions match'));
+  });
+
+  it('↓↓↓ navigates to Match type, ← → toggles to regex', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    r.stdin.write('\x1b[B'); // name → category
+    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // pattern → type
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // name inactive = type field reached
+    r.stdin.write('\x1b[C'); // → toggle name → regex
+    await waitFor(() => expect(frame(r)).toContain('regex'));
+  });
+
+  it('Enter with pattern saves as a category rule', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    // Change category to Income (→ cycles Grocery index 2 → Income index 3)
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[C'); // cycle Grocery → Income
+    // Navigate to Pattern and type a pattern
+    r.stdin.write('\x1b[B'); // category → pattern
+    await waitFor(() => expect(frame(r)).toContain('optional'));
+    for (const ch of 'Trader') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('transactions match'));
+    r.stdin.write('\r'); // save as rule
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('optional'); // panel closed
+      expect(f).toContain('Saved:');
+    });
+  });
 });
 
 // ── Trends ────────────────────────────────────────────────────────────────────
@@ -392,6 +507,226 @@ describe('Trends', () => {
       <W><Trends onNavigate={onNavigate} showHints={false} /></W>,
     );
     await waitFor(() => expect(frame(r)).toContain('Trends'));
+    r.stdin.write('1');
+    // Trends passes search (undefined when empty) as second arg
+    expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined);
+  });
+
+  it('right arrow cycles through the base views in order', async () => {
+    const r = trends();
+    const viewLabels = ['Expenses', 'Income', 'Net', 'Flexibility', 'Fixed', 'Flexible', 'Discretionary'];
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    for (let i = 1; i < viewLabels.length; i++) {
+      r.stdin.write('\x1B[C');
+      await waitFor(() => expect(frame(r)).toContain(viewLabels[i]));
+    }
+  });
+
+  it('Net view shows expense/income direction headers', async () => {
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    r.stdin.write('\x1B[C'); // Income
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('\x1B[C'); // Net
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Net');
+      expect(f).toContain('expenses');
+      expect(f).toContain('income');
+    });
+  });
+
+  it('Flexibility view shows fixed/flexible/discr column headers', async () => {
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    for (let i = 0; i < 3; i++) r.stdin.write('\x1B[C'); // Expenses→Income→Net→Flexibility
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Flexibility');
+      expect(f).toContain('fixed');
+      expect(f).toContain('flexible');
+    });
+  });
+
+  it('shows both seeded periods and Enter navigates to the selected period', async () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Trends onNavigate={onNavigate} showHints={false} /></W>);
+    // Both Apr and May periods must appear
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Apr 2026');
+      expect(f).toContain('May 2026');
+    });
+    // Cursor starts on the last period (May); Enter navigates to its transactions
+    r.stdin.write('\r');
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({ from: '2026-05-01' }));
+    });
+  });
+
+  it('search filter from initialFilter shows indicator in header', async () => {
+    const r = trends({ initialFilter: { search: 'Whole Foods' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Whole Foods');
+    });
+  });
+
+  it('search filters to only periods containing matching transactions', async () => {
+    // Amazon only appears in May — April should be hidden
+    const r = trends({ initialFilter: { search: 'Amazon' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('May 2026');
+      expect(f).not.toContain('Apr 2026');
+    });
+  });
+
+  it('search that matches both periods shows both', async () => {
+    // Whole Foods appears in both April and May
+    const r = trends({ initialFilter: { search: 'Whole Foods' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Apr 2026');
+      expect(f).toContain('May 2026');
+    });
+  });
+
+  it('pressing 1 passes active search back to dashboard', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W><Trends onNavigate={onNavigate} showHints={false} initialFilter={{ search: 'Amazon' }} /></W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Trends'));
+    r.stdin.write('1');
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledWith('dashboard', { search: 'Amazon' });
+    });
+  });
+
+  it('pressing 2 passes active search and period into Transactions', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W><Trends onNavigate={onNavigate} showHints={false} initialFilter={{ search: 'Amazon' }} /></W>,
+    );
+    // Wait until filter is applied: Amazon-only May visible, April gone
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('May 2026');
+      expect(f).not.toContain('Apr 2026');
+    });
+    r.stdin.write('2');
+    await waitFor(() => {
+      expect(onNavigate).toHaveBeenCalledWith(
+        'transactions',
+        expect.objectContaining({ search: 'Amazon', from: '2026-05-01' }),
+      );
+    });
+  });
+
+  it('no-match search shows empty state message', async () => {
+    const r = trends({ initialFilter: { search: 'zzznomatch' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('No periods match');
+    });
+  });
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+describe('Settings', () => {
+  function settings(overrides?: Partial<Parameters<typeof Settings>[0]>) {
+    return render(
+      <W>
+        <Settings onNavigate={noop} showHints={false} {...overrides} />
+      </W>,
+    );
+  }
+
+  it('renders Settings heading and section labels', () => {
+    const r = settings();
+    const f = frame(r);
+    expect(f).toContain('Settings');
+    expect(f).toContain('HOUSEHOLD');
+    expect(f).toContain('SPOUSE');
+    expect(f).toContain('CHILDREN');
+    expect(f).toContain('Your name');
+    expect(f).toContain('Birth year');
+  });
+
+  it('Enter on a field opens edit mode showing cursor', async () => {
+    const r = settings();
+    expect(frame(r)).not.toContain('▊');
+    r.stdin.write('\r'); // Enter on "Your name" (cursor starts at row 0)
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+  });
+
+  it('typing in edit mode accumulates in the buffer', async () => {
+    const r = settings();
+    r.stdin.write('\r');       // open edit on "Your name"
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Tom');
+    await waitFor(() => {
+      expect(frame(r)).toContain('Tom');
+      expect(frame(r)).toContain('▊');
+    });
+  });
+
+  it('Enter commits the edit and exits edit mode', async () => {
+    const r = settings();
+    r.stdin.write('\r');       // open
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Alice');
+    await waitFor(() => expect(frame(r)).toContain('Alice')); // wait for buffer to render
+    r.stdin.write('\r');       // commit with fresh closure
+    await waitFor(() => {
+      expect(frame(r)).toContain('Alice');
+      expect(frame(r)).not.toContain('▊');
+    });
+  });
+
+  it('Esc cancels edit without committing', async () => {
+    const r = settings();
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Alice');
+    r.stdin.write('\x1b');    // cancel
+    await waitFor(() => {
+      expect(frame(r)).not.toContain('Alice');
+      expect(frame(r)).not.toContain('▊');
+    });
+  });
+
+  it('[a] adds spouse fields when no spouse exists', async () => {
+    const r = settings();
+    expect(frame(r)).not.toContain('Spouse name');
+    r.stdin.write('a');       // [a] adds spouse from any cursor position
+    await waitFor(() => expect(frame(r)).toContain('Spouse name'));
+  });
+
+  it('[d] on spouse row removes spouse', async () => {
+    const r = settings();
+    r.stdin.write('a');                 // add spouse
+    await waitFor(() => expect(frame(r)).toContain('Spouse name'));
+    r.stdin.write('\x1B[B');            // ↓ to row 1 (self-year)
+    r.stdin.write('\x1B[B');            // ↓ to row 2 (spouse-name)
+    // Wait for re-render to commit cursor position before pressing 'd'
+    await waitFor(() => expect(frame(r)).toContain('[d] remove spouse'));
+    r.stdin.write('d');                 // remove spouse
+    await waitFor(() => expect(frame(r)).not.toContain('Spouse name'));
+  });
+
+  it('Esc navigates back to dashboard', async () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Settings onNavigate={onNavigate} showHints={false} /></W>);
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+  });
+
+  it('pressing a nav number calls onNavigate', () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Settings onNavigate={onNavigate} showHints={false} /></W>);
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
@@ -486,6 +821,48 @@ describe('Tags', () => {
     await waitFor(() => expect(frame(r)).toContain('New Tag'));
   });
 
+  it('[n] opens rename panel pre-filled with the tag name', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Rename Tag');
+      expect(f).toContain('travel');
+    });
+  });
+
+  it('typing a suffix and Enter in rename panel renames the tag', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Rename Tag'));
+    for (const ch of '-edited') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('travel-edited'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Rename Tag');
+      expect(f).toContain('travel-edited');
+    });
+  });
+
+  it('Esc in rename panel cancels without saving', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Rename Tag'));
+    for (const ch of 'xyz') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('travelxyz'));
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Rename Tag');
+      expect(f).not.toContain('travelxyz');
+      expect(f).toContain('travel');
+    });
+  });
+
   it('pressing nav number calls onNavigate', async () => {
     const onNavigate = vi.fn();
     const r = render(
@@ -545,6 +922,111 @@ describe('Rules', () => {
       const f = frame(r);
       expect(f).toContain('Grocery');
       expect(f).toContain('Dining');
+    });
+  });
+
+  it('[a] opens new category rule form', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods')); // rules loaded
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Category Rule');
+      expect(f).toContain('Pattern');
+    });
+  });
+
+  it('typing pattern and Enter in rule-form saves the rule', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Category Rule'));
+    for (const ch of 'Starbucks') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Starbucks'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('New Category Rule');
+      expect(f).toContain('Starbucks');
+    });
+  });
+
+  it('Enter on existing rule opens edit form pre-filled with its pattern', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Edit Category Rule');
+      expect(f).toContain('Whole Foods');
+    });
+  });
+
+  it('[a] in Name Rules section opens new name rule form', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t'); // switch to Name Rules
+    await waitFor(() => expect(frame(r)).toContain('No name rules'));
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Name Rule');
+      expect(f).toContain('Pattern');
+      expect(f).toContain('Replace with');
+    });
+  });
+
+  it('typing pattern + replacement in name-rule-form and Enter saves the rule', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('No name rules'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Name Rule'));
+    for (const ch of 'amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('amazon'));
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // navigate to replacement
+    // Wait for React to commit the field navigation before typing (avoids stale closure)
+    await waitFor(() => expect(frame(r)).toContain('display name'));
+    for (const ch of 'Amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Amazon'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('New Name Rule');
+      expect(f).toContain('amazon');
+      expect(f).toContain('Amazon');
+    });
+  });
+
+  it('Enter in categories section opens the edit panel', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    r.stdin.write('\t'); // categories section
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Edit: Bills & Utilities');
+      expect(f).toContain('Name');
+      expect(f).toContain('Flexibility');
+    });
+  });
+
+  it('Esc in categories edit panel closes without navigating away', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Edit: Bills & Utilities'));
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Edit: Bills & Utilities');
+      expect(f).toContain('Bills & Utilities');
     });
   });
 
@@ -627,14 +1109,14 @@ describe('Accounts', () => {
     const r = accounts();
     // Cursor starts on the first account (depository sorts first = Test Checking).
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
-    r.stdin.write('n');                 // open nickname editor
-    await waitFor(() => expect(frame(r)).toContain('Leave empty to clear nickname'));
-    r.stdin.write('Vacation Fund');     // type the nickname
+    r.stdin.write('\r');                // open unified edit panel
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
+    r.stdin.write('Vacation Fund');     // type the nickname (cursor starts on Nickname field)
     await waitFor(() => expect(frame(r)).toContain('Vacation Fund'));
-    r.stdin.write('\r');                // save (separate chunk so it isn't merged with the text)
+    r.stdin.write('\r');                // save
     // The list row now shows the nickname in place of the account name. Asserting
     // the original name is gone proves the list reloaded with post-write data (the
-    // status toast that mentions the nickname never contains the original name).
+    // status toast shows the nickname, not the original name).
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Vacation Fund');
@@ -669,17 +1151,17 @@ describe('Accounts', () => {
 
     const r = accounts();
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
-    r.stdin.write('n');
-    await waitFor(() => expect(frame(r)).toContain('Leave empty to clear nickname'));
+    r.stdin.write('\r');                 // open unified edit panel
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
     r.stdin.write('Vacation Fund');
     await waitFor(() => expect(frame(r)).toContain('Vacation Fund'));
     r.stdin.write('\r');                 // save → write rejects
     // A failed write must show an error rather than a (false) success, and the
     // account must keep its original name.
-    await waitFor(() => expect(frame(r)).toContain('Failed to save nickname'));
+    await waitFor(() => expect(frame(r)).toContain('Failed to update'));
     const f = frame(r);
     expect(f).toContain('Test Checking');
-    expect(f).not.toContain('Nickname set to');
+    expect(f).not.toContain('Updated Vacation Fund');
   });
 });
 
@@ -730,6 +1212,39 @@ describe('Health', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('Enter opens dial edit mode showing cursor', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    expect(frame(r)).not.toContain('▊');
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+  });
+
+  it('Esc cancels dial edit mode', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).not.toContain('▊'));
+  });
+
+  it('typing and Enter commit a new dial value', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('\r');         // open edit on spend dial (pre-fills current value)
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    // Write digits one at a time — Health's handler uses /^[\d.-]$/ (single-char regex)
+    for (const ch of '4000') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('4000'));
+    r.stdin.write('\r');         // commit with fresh closure
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('4,000'); // formatted value appears in dial
+      expect(f).not.toContain('▊');
+    });
+  });
 });
 
 // ── App smoke test ────────────────────────────────────────────────────────────
@@ -768,5 +1283,12 @@ describe('App', () => {
     // hints off by default — pressing h shows them
     r.stdin.write('h');
     await waitFor(() => expect(frame(r)).toContain('[h]'));
+  });
+
+  it('pressing 0 switches to Settings screen', async () => {
+    const r = render(<App />);
+    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
+    r.stdin.write('0');
+    await waitFor(() => expect(frame(r)).toContain('Settings'));
   });
 });

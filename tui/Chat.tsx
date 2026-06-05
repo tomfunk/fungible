@@ -5,6 +5,7 @@ import type { Message } from '../core/llm-provider.js';
 import { detectProvider, getProviderModel } from '../core/llm-provider.js';
 import { truncate } from './fmt.js';
 import { CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT, C_DIM } from './ui.js';
+import { TextInput } from './components/index.js';
 import type { Screen, TxFilter } from './App.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -260,8 +261,7 @@ export function Chat({
       {isActive && !confirm && (
         <Box>
           <Text color={C_ACCENT}>› </Text>
-          <Text>{input}</Text>
-          {!isStreaming && <Text color={C_ACCENT}>{CURSOR}</Text>}
+          <TextInput value={input} showCursor={!isStreaming} />
         </Box>
       )}
     </Box>
