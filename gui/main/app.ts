@@ -39,10 +39,7 @@ if (!app.requestSingleInstanceLock()) {
       rebuildDisplayNames().catch((err) => console.error('[gui] display-name rebuild failed:', err));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const hint = /hrana|stream/i.test(msg)
-        ? '\n\nThis usually means another fungible process (TUI or MCP server) is syncing the same Turso replica. Close it and relaunch, or run against a local data dir (npm run gui:demo).'
-        : '';
-      dialog.showErrorBox('fungible — database error', msg + hint);
+      dialog.showErrorBox('fungible — database error', msg);
       app.quit();
       return;
     }
