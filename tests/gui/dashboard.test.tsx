@@ -40,10 +40,13 @@ describe('GUI Dashboard', () => {
     renderScreen(<Dashboard />, { txFilter: MAY_FILTER, navigate });
     await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
     await userEvent.click(screen.getByText('Grocery'));
-    // The category lands in the shared filter; nav carries period + drillFrom.
+    // The category lands in the shared filter; nav carries period (range +
+    // anchor=from) and drillFrom so Esc can restore the same month.
     expect(navigate).toHaveBeenCalledWith(
       'transactions',
-      expect.objectContaining({ from: '2026-05-01', to: '2026-05-31', drillFrom: 'dashboard' }),
+      expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01', drillFrom: 'dashboard',
+      }),
     );
   });
 
@@ -54,5 +57,22 @@ describe('GUI Dashboard', () => {
     await waitFor(() => expect(screen.getByText('Fixed')).toBeTruthy());
     expect(screen.getByText('Flexible')).toBeTruthy();
     expect(screen.getByText('Discretionary')).toBeTruthy();
+  });
+
+  it('flex tier click outbound payload carries range + anchor', async () => {
+    const navigate = vi.fn();
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER, navigate });
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Flexibility' }));
+    await waitFor(() => expect(screen.getByText('Flexible')).toBeTruthy());
+    await userEvent.click(screen.getByText('Flexible'));
+    // No selectedAccount → no drillFrom, but range/anchor still travel so
+    // Esc preserves the dashboard's month.
+    expect(navigate).toHaveBeenCalledWith(
+      'transactions',
+      expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01', flex: 'flexible',
+      }),
+    );
   });
 });

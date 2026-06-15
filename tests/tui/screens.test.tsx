@@ -269,6 +269,110 @@ describe('Dashboard', () => {
     expect(onNavigate).toHaveBeenCalledWith('trends');
   });
 
+  // Outbound drill payloads carry the period (range + anchor=from) so the
+  // dashboard can restore the same month when Esc reverses the drill. The
+  // Transactions-side tests check the return trip; these pin the originating
+  // payloads so a regression on the Dashboard side can't pass silently.
+  it('category drill outbound payload carries range + anchor', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\r'); // Enter on top category (Grocery)
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01', drillFrom: 'dashboard',
+      })),
+    );
+  });
+
+  it('flex drill outbound payload carries range + anchor', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\t'); // → flex view
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY FLEXIBILITY'));
+    r.stdin.write('\r');
+    // No selectedAccount → no drillFrom, but range/anchor still travel.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
+      })),
+    );
+  });
+
+  it('account drill outbound payload carries range + anchor', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\t'); // flex
+    r.stdin.write('\t'); // account
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\r');
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01', drillFrom: 'dashboard',
+      })),
+    );
+  });
+
+  it('merchant drill outbound payload carries range + anchor=merchantDrill.from', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('m');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\r');
+    // The merchant drill site uniquely sources `anchor` from merchantDrill.from
+    // (the captured drill date) rather than the dashboard's current `from` —
+    // both land on '2026-05-01' here, but the variant is exercised.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
+        search: 'Whole Foods', drillFrom: 'dashboard',
+      })),
+    );
+  });
+
+  it("'2' shortcut outbound payload carries range + anchor", async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('2');
+    expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+      from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
+    }));
+  });
+
   it('shows period label for the anchored month', async () => {
     const r = dash();
     await waitFor(() => {
