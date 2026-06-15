@@ -107,6 +107,35 @@ describe('GUI App navigation', () => {
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
   });
 
+  it('toggling a category in the panel live-previews the screen behind it', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Transactions' }));
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByText(/⚲ Filter/));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Grocery' })).toBeTruthy());
+    // Toggle Grocery off — the underlying transaction list should repaint
+    // before Apply is clicked (debounce is 120ms, well under waitFor's window).
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Grocery' }));
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    expect(screen.queryByText('Trader Joes')).toBeNull();
+  });
+
+  it('Cancel reverts the live preview without committing', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Transactions' }));
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByText(/⚲ Filter/));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Grocery' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Grocery' }));
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    // Preview clears on unmount → list reverts to the committed (empty) filter.
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    expect(screen.queryByText(/Filter: \d+ categories/)).toBeNull();
+  });
+
   it('agent drawer collapsed bar shows no-key state and expands', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText(/no API key set/)).toBeTruthy());

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { Modal } from './Modal.js';
@@ -10,14 +10,21 @@ import {
   selectionFromDim,
   invertSelection,
   invertTagModes,
+  filtersEqual,
   type Filter,
   type TagPredicate,
 } from '../../../../core/filters.js';
 import type { FilterOptions } from '../../../../core/queries.js';
 import styles from './FilterBar.module.css';
 
+// Debounce window for publishing the live preview. Toggling many checkboxes in
+// quick succession (or hitting all/none/invert) mutates the draft repeatedly;
+// coalescing them collapses the burst into one query round-trip per pause
+// instead of one per keystroke. Mirrors PREVIEW_DEBOUNCE_MS in tui/FilterPanel.
+const PREVIEW_DEBOUNCE_MS = 120;
+
 export function FilterBar() {
-  const { filter, setFilter } = useFilter();
+  const { filter, committed, setFilter } = useFilter();
   const [open, setOpen] = useState(false);
   const active = isFilterActive(filter);
 
@@ -32,7 +39,13 @@ export function FilterBar() {
         </button>
       )}
       <span className={`dim ${styles.hint}`}>applies to Dashboard, Transactions & Trends</span>
-      {open && <FilterPanel filter={filter} onApply={(f) => { setFilter(f); setOpen(false); }} onClose={() => setOpen(false)} />}
+      {open && (
+        <FilterPanel
+          committed={committed}
+          onApply={(f) => { setFilter(f); setOpen(false); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -40,14 +53,15 @@ export function FilterBar() {
 type TagMode = 'has' | 'lacks' | null;
 
 function FilterPanel({
-  filter,
+  committed,
   onApply,
   onClose,
 }: {
-  filter: Filter;
+  committed: Filter;
   onApply: (f: Filter) => void;
   onClose: () => void;
 }) {
+  const { setPreview } = useFilter();
   const [opts, setOpts] = useState<FilterOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -58,34 +72,59 @@ function FilterPanel({
 
   // Load universes via getFilterOptions (same source as the TUI panel), then
   // hydrate drafts: an absent dimension means "everything selected" (no
-  // constraint) per core/filters.ts semantics.
+  // constraint) per core/filters.ts semantics. We hydrate from `committed`,
+  // not the live `filter` (== preview ?? committed) — reading the live value
+  // would re-seed the draft from the panel's own preview, a feedback loop.
   useEffect(() => {
     void api.queries.getFilterOptions().then((o) => {
       setOpts(o);
-      setSelCats(selectionFromDim(filter.categories, o.categories));
-      setSelAccts(selectionFromDim(filter.accounts, o.accounts.map((a) => a.id)));
-      setSelOwners(selectionFromDim(filter.owners, o.owners));
-      setTagModes(new Map((filter.tags ?? []).map((t: TagPredicate) => [t.name, t.mode])));
+      setSelCats(selectionFromDim(committed.categories, o.categories));
+      setSelAccts(selectionFromDim(committed.accounts, o.accounts.map((a) => a.id)));
+      setSelOwners(selectionFromDim(committed.owners, o.owners));
+      setTagModes(new Map((committed.tags ?? []).map((t: TagPredicate) => [t.name, t.mode])));
     }).catch((e: unknown) => {
       setLoadError(e instanceof Error ? e.message : String(e));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function apply() {
-    if (!opts) return;
+  // Serialized draft, recomputed as the user adjusts selections. Published as
+  // a live preview below, and committed verbatim by apply() on Apply.
+  const draftFilter = useMemo<Filter | null>(() => {
+    if (!opts) return null;
     const tags: TagPredicate[] = [...tagModes.entries()]
       .filter(([, mode]) => mode !== null)
       .map(([name, mode]) => ({ name, mode: mode as 'has' | 'lacks' }));
     const cats = selectionToDim(selCats, opts.categories);
     const accts = selectionToDim(selAccts, opts.accounts.map((a) => a.id));
     const owners = selectionToDim(selOwners, opts.owners);
-    onApply({
+    return {
       ...(cats !== undefined ? { categories: cats } : {}),
       ...(accts !== undefined ? { accounts: accts } : {}),
       ...(owners !== undefined ? { owners } : {}),
       ...(tags.length ? { tags } : {}),
-    });
+    };
+  }, [opts, selCats, selAccts, selOwners, tagModes]);
+
+  // Publish the draft as a live preview (debounced), collapsing back to "no
+  // preview" once the draft matches the committed filter so the bar reverts.
+  useEffect(() => {
+    if (!draftFilter) return;
+    const id = setTimeout(() => {
+      setPreview(filtersEqual(draftFilter, committed) ? null : draftFilter);
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [draftFilter, committed, setPreview]);
+
+  // On unmount (Apply or Cancel), force the preview back to null so screens
+  // fall back to the committed filter. Distinct from the debounce cleanup
+  // above: that only cancels a pending timer, which would otherwise strand a
+  // previously-published (non-null) preview if we close before it fires.
+  useEffect(() => () => setPreview(null), [setPreview]);
+
+  function apply() {
+    if (!opts || !draftFilter) return;
+    onApply(draftFilter);
   }
 
   function toggle<T>(set: Set<T>, value: T, update: (s: Set<T>) => void) {
