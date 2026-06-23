@@ -102,7 +102,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   async function handleDeleteRule(id: number) {
     const count = await deleteCategoryRule(id);
-    showStatus(`Rule deleted · recategorized ${count} transactions`, 3000);
+    showStatus(`Rule deleted · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
     load();
   }
 
@@ -122,7 +122,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       editingId: editingRuleId,
     });
     setEditingRuleId(null);
-    showStatus(`Rule saved · recategorized ${count} transactions`, 3000);
+    showStatus(`Rule saved · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
     setNewPattern('');
     setMode('list');
     load();
