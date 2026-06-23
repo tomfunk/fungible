@@ -1359,6 +1359,30 @@ describe('Rules', () => {
     });
   });
 
+  it('[x] deletes the rule and surfaces the recategorized count in the status', async () => {
+    // Self-contained: clear seeded transactions/rules so the count pins to exactly 1.
+    // Mirrors the GUI delete test (tests/gui/rules.test.tsx) and locks the singular
+    // pluralization of the status message ("1 transaction", not "1 transactions").
+    await db.execute('DELETE FROM category_rules');
+    await db.execute('DELETE FROM transactions');
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-tj', 'test-credit', '2026-05-15', 'Trader Joes', 50.00, 'Grocery', 0, 0)`,
+    );
+    await db.execute(
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Trader Joes', 'Grocery')",
+    );
+
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('x');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toMatch(/Rule deleted · recategorized 1 transaction\b/); // \b rejects trailing 's'
+      expect(f).not.toContain('Trader Joes'); // rule gone from the list
+    });
+  });
+
   it('[a] in Name Rules section opens new name rule form', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Category Rules'));
