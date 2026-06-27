@@ -99,6 +99,7 @@ export function Accounts() {
                       <td className={styles.tdName}>
                         {acct.nickname ?? acct.name}
                         {acct.nickname && <span className="manual" title={`Nickname for ${acct.name}`}> ✎</span>}
+                        {acct.excluded && <span className="dim" title="Excluded from net worth"> ⊘ excl</span>}
                       </td>
                       <td className="num dim">{acct.mask ? `···${acct.mask}` : ''}</td>
                       <td className="dim">{SUBTYPE_DISPLAY[raw] ?? raw}</td>
@@ -447,6 +448,7 @@ function EditAccountModal({
     initialSubtypes.includes(acct.subtype ?? '') ? (acct.subtype ?? '') : (initialSubtypes[0] ?? ''),
   );
   const [apr, setApr] = useState(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
+  const [excluded, setExcluded] = useState(acct.excluded);
 
   const isDebt = type === 'credit' || type === 'loan';
   const subtypes = SUBTYPES[type] ?? [];
@@ -457,6 +459,7 @@ function EditAccountModal({
     await api.accounts.updateAccountNickname(acct.id, nickname.trim() || null);
     await api.accounts.updateAccountOwner(acct.id, owner.trim() || null);
     if (isDebt) await api.accounts.updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
+    await api.accounts.updateAccountExcluded(acct.id, excluded);
     onSaved(nickname.trim() || acct.name);
   }
 
@@ -517,6 +520,11 @@ function EditAccountModal({
             <input value={apr} onChange={(e) => setApr(e.target.value.replace(/[^\d.]/g, ''))} placeholder="0.0" />
           </>
         )}
+        <label>Net worth</label>
+        <label className={styles.checkboxRow}>
+          <input type="checkbox" checked={excluded} onChange={(e) => setExcluded(e.target.checked)} />
+          <span>Exclude from net worth</span>
+        </label>
       </div>
       <div className={styles.modalActions}>
         <button className={styles.btnSecondary} onClick={onClose}>

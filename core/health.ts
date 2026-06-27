@@ -36,6 +36,7 @@ export async function loadHealthData(): Promise<HealthData> {
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.type = 'depository'
+        AND a.excluded = 0
         AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
     db.execute(`
@@ -47,6 +48,7 @@ export async function loadHealthData(): Promise<HealthData> {
         OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, ''))
             IN ('brokerage', 'cash isa', 'non-taxable brokerage account'))
       )
+      AND a.excluded = 0
       AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
     db.execute(`
@@ -58,6 +60,7 @@ export async function loadHealthData(): Promise<HealthData> {
           'ira', '401k', 'roth', '403b', '457b', 'hsa',
           'roth 401k', 'simple ira', 'sep ira', 'pension'
         )
+        AND a.excluded = 0
         AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
     db.execute(`
@@ -65,6 +68,7 @@ export async function loadHealthData(): Promise<HealthData> {
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.type = 'credit'
+        AND a.excluded = 0
         AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
     db.execute(`
@@ -72,6 +76,7 @@ export async function loadHealthData(): Promise<HealthData> {
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.type = 'loan'
+        AND a.excluded = 0
         AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
     db.execute(`
@@ -80,7 +85,8 @@ export async function loadHealthData(): Promise<HealthData> {
         COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
-      WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
+      WHERE a.excluded = 0
+        AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
   ]);
 

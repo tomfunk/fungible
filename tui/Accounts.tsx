@@ -10,7 +10,7 @@ import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount 
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
-  updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountValue,
+  updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountExcluded, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
@@ -23,7 +23,7 @@ import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, Edi
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
 type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
-type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr';
+type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr' | 'excluded';
 
 type AddStep =
   | 'landing'
@@ -137,6 +137,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [editOwner, setEditOwner] = useState('');
   const [ownerMembers, setOwnerMembers] = useState<string[]>([]);
   const [editApr, setEditApr] = useState('');
+  const [editExcluded, setEditExcluded] = useState(false);
 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
@@ -176,6 +177,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     setEditNickname(acct.nickname ?? '');
     setEditOwner(acct.owner ?? '');
     setEditApr(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
+    setEditExcluded(acct.excluded);
     setEditField('nickname');
     setAcctMode('edit');
   }
@@ -189,6 +191,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       await updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
       await updateAccountNickname(acct.id, editNickname.trim() || null);
       await updateAccountOwner(acct.id, editOwner.trim() || null);
+      await updateAccountExcluded(acct.id, editExcluded);
       if (isDebt) await updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
       setAcctMode('list');
       showAcctMsg(`Updated ${editNickname.trim() || acct.name}`);
@@ -367,6 +370,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           ...(ownerMembers.length > 0 ? ['owner'] as const : []),
           'type', 'subtype',
           ...(isDebt ? ['apr'] as const : []),
+          'excluded',
         ];
         if (key.upArrow) {
           setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.max(0, i - 1)]; });
@@ -410,6 +414,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (editField === 'apr') {
           if (key.backspace || key.delete) { setEditApr((v) => v.slice(0, -1)); return; }
           if (input && /^[\d.]$/.test(input) && !key.ctrl && !key.meta) { setEditApr((v) => v + input); return; }
+          return;
+        }
+        if (editField === 'excluded') {
+          if (key.leftArrow || key.rightArrow || input === ' ') { setEditExcluded((v) => !v); return; }
           return;
         }
         return;
@@ -692,6 +700,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                       }
                     </Text>
                     {acct.owner && <Text color={isSelected ? C_MANUAL : undefined} dimColor={!isSelected}>{acct.owner}</Text>}
+                    {acct.excluded && <Text dimColor>⊘ excl</Text>}
                   </SelectableRow>
                 );
               })}
@@ -749,6 +758,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <EditToggleField label="Type" labelWidth={10} active={editField === 'type'} value={editType} />
                   <EditToggleField label="Subtype" labelWidth={10} active={editField === 'subtype'} value={editSubtype || '—'} valueColor={C_DIM} />
                   {isDebt && <EditTextField label="APR %" labelWidth={10} active={editField === 'apr'} value={editApr} color={C_WARNING} placeholder="0.0" />}
+                  <EditToggleField label="Net worth" labelWidth={10} active={editField === 'excluded'} value={editExcluded ? 'Excluded' : 'Included'} valueColor={editExcluded ? C_DIM : C_POSITIVE} />
                 </Box>
                 <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
               </ModalPanel>

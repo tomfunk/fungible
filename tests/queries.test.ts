@@ -15,6 +15,9 @@ import {
   getOwnerRows,
   hasAccounts,
   getTransactions,
+  getNetWorthHistory,
+  getAccountsWithBalances,
+  getLinkedAccounts,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -535,5 +538,39 @@ describe('getOwnerRows', () => {
     await insertTx({ accountId: 'a1', amount: 999, date: '2024-12-31' });  // out of range, excluded
     const rows = await getOwnerRows(...RANGE);
     expect(rows).toEqual([{ owner: 'Mark', spending: 100 }]);
+  });
+});
+
+describe('excluded accounts', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    // One counted brokerage, one excluded 529 — same balance.
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('brk', 'Brokerage', 'investment', 'brokerage', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('529', '529 Plan', 'investment', '529', 1)", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('brk', 100000, '2025-01-31')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('529', 60000, '2025-01-31')", args: [] });
+  });
+
+  it('drops excluded accounts from getNetWorthHistory totals', async () => {
+    const hist = await getNetWorthHistory('month');
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(100000);     // 529 omitted
+    expect(hist[0].net_worth).toBe(100000);
+  });
+
+  it('keeps excluded accounts in getAccountsWithBalances (flagged) but out of the history series', async () => {
+    const { accounts, history } = await getAccountsWithBalances();
+    expect(accounts.map((a) => a.name).sort()).toEqual(['529 Plan', 'Brokerage']);
+    expect(accounts.find((a) => a.name === '529 Plan')!.excluded).toBe(true);
+    expect(accounts.find((a) => a.name === 'Brokerage')!.excluded).toBe(false);
+    // History time series counts only the non-excluded account.
+    expect(history.at(-1)!.assets).toBe(100000);
+  });
+
+  it('returns the excluded flag from getLinkedAccounts', async () => {
+    const linked = await getLinkedAccounts();
+    expect(linked.find((a) => a.id === '529')!.excluded).toBe(true);
+    expect(linked.find((a) => a.id === 'brk')!.excluded).toBe(false);
   });
 });

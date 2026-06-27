@@ -551,16 +551,18 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null };
+export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr, a.excluded,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
   `);
-  return result.rows as unknown as LinkedAccount[];
+  return (result.rows as unknown as (Omit<LinkedAccount, 'excluded'> & { excluded: number })[]).map((r) => ({
+    ...r, excluded: toBool(r.excluded),
+  }));
 }
 
 export type CsvAccount = { id: string; name: string; mask: string | null };
@@ -570,7 +572,10 @@ export async function getCsvAccounts(): Promise<CsvAccount[]> {
   return result.rows as unknown as CsvAccount[];
 }
 
-export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number };
+export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
+
+// SQLite has no boolean type — integer 0/1 columns are coerced here.
+const toBool = (v: unknown): boolean => Number(v) === 1;
 export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };
 export type NetWorthPeriod    = { period: string; assets: number; liabilities: number; net_worth: number };
 export type NetWorthGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
@@ -609,7 +614,7 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
       END) AS net_worth
     FROM period_last pl
     JOIN accounts a ON a.id = pl.account_id
-    WHERE pl.rn = 1
+    WHERE pl.rn = 1 AND a.excluded = 0
     GROUP BY pl.period
     ORDER BY pl.period ASC
   `);
@@ -624,7 +629,7 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
 export async function getAccountsWithBalances(): Promise<{ accounts: AccountBalance[]; history: HistoryRow[] }> {
   const [acctResult, histResult] = await Promise.all([
     db.execute(`
-      SELECT a.name, a.nickname, a.type, a.subtype, bh.balance
+      SELECT a.name, a.nickname, a.type, a.subtype, a.excluded, bh.balance
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
@@ -636,10 +641,13 @@ export async function getAccountsWithBalances(): Promise<{ accounts: AccountBala
         SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
       FROM balance_history bh
       JOIN accounts a ON a.id = bh.account_id
+      WHERE a.excluded = 0
       GROUP BY bh.date ORDER BY bh.date
     `),
   ]);
-  const accounts = acctResult.rows as unknown as AccountBalance[];
+  const accounts = (acctResult.rows as unknown as (Omit<AccountBalance, 'excluded'> & { excluded: number })[]).map((r) => ({
+    ...r, excluded: toBool(r.excluded),
+  }));
   const history = (histResult.rows as unknown as { date: string; assets: number; liabilities: number }[]).map((r) => ({
     ...r, assets: Number(r.assets), liabilities: Number(r.liabilities), net: Number(r.assets) - Number(r.liabilities),
   }));

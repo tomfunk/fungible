@@ -15,6 +15,7 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtSigned, fmtCompact } from '../../../../core/fmt.js';
 import type { AccountBalance, NetWorthGranularity } from '../../../../core/queries.js';
+import { isAssetAccount, isLiabilityAccount } from '../../../../core/account-class.js';
 import { CHART, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
 import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
@@ -68,12 +69,19 @@ export function NetWorth() {
   const history = useQuery(() => api.queries.getNetWorthHistory(range), [range]);
 
   const accounts = balances?.accounts ?? [];
-  const assets = accounts.filter((a) => a.type === 'depository' || a.type === 'investment' || (a.type === 'other' && a.balance > 0));
-  const liabilities = accounts.filter((a) => a.type === 'credit');
+  const included = accounts.filter((a) => !a.excluded);
+  const excluded = accounts.filter((a) => a.excluded);
+
+  const assets = included.filter(isAssetAccount);
+  const liabilities = included.filter(isLiabilityAccount);
 
   const totalAssets = assets.reduce((s, a) => s + a.balance, 0);
   const totalLiabilities = liabilities.reduce((s, a) => s + a.balance, 0);
   const netWorth = totalAssets - totalLiabilities;
+
+  const exclNet =
+    excluded.filter(isAssetAccount).reduce((s, a) => s + a.balance, 0) -
+    excluded.filter(isLiabilityAccount).reduce((s, a) => s + a.balance, 0);
 
   const chartData = (history ?? []).map((r) => ({
     label: periodLabel(r.period, range),
@@ -187,6 +195,30 @@ export function NetWorth() {
               )}
             </section>
           </div>
+
+          {excluded.length > 0 && (
+            <section className={styles.panel}>
+              <div className={styles.panelHeader}>
+                <h2 className="dim">Excluded (not in net worth)</h2>
+              </div>
+              <table className={styles.table}>
+                <tbody>
+                  {excluded.map((a) => (
+                    <tr key={a.name + a.balance} className="dim">
+                      <td className={styles.tdName}>{a.nickname ?? a.name}</td>
+                      <td className="num">{fmt(a.balance)}</td>
+                      <td className={`dim ${styles.tdSub}`}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</td>
+                    </tr>
+                  ))}
+                  <tr className={styles.totalRow}>
+                    <td className={styles.tdName}>Excluded total</td>
+                    <td className="num dim">{fmtSigned(exclNet)}</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          )}
         </>
       )}
     </div>

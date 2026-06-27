@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
  */
 
 // Pure modules the renderer imports directly — no bridging needed.
-const PURE_MODULES = new Set(['fmt', 'dateUtils', 'filters', 'canvas-spec']);
+const PURE_MODULES = new Set(['fmt', 'dateUtils', 'filters', 'canvas-spec', 'account-class']);
 
 // TUI files that are out of GUI scope.
 const SKIP_FILES = new Set(['Setup.tsx', 'index.tsx']);

@@ -6,6 +6,7 @@
 
 import { db } from './db.js';
 import { yearsToFire } from './health.js';
+import { isAssetAccount, isLiabilityAccount } from './account-class.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,7 +73,8 @@ export async function getBalances(): Promise<BalanceSummary> {
       bh.balance
     FROM accounts a
     JOIN balance_history bh ON bh.account_id = a.id
-    WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
+    WHERE a.excluded = 0
+      AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     ORDER BY
       CASE a.type
         WHEN 'depository'  THEN 0
@@ -88,9 +90,8 @@ export async function getBalances(): Promise<BalanceSummary> {
   const accounts: AccountWithBalance[] = rows.map((r) => ({
     ...r,
     balance: Number(r.balance),
-    isAsset: r.type === 'depository' || r.type === 'investment'
-      || (r.type === 'other' && Number(r.balance) > 0),
-    isLiability: r.type === 'credit',
+    isAsset: isAssetAccount({ type: r.type, balance: Number(r.balance) }),
+    isLiability: isLiabilityAccount(r),
   }));
 
   const totalAssets = accounts

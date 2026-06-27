@@ -10,7 +10,8 @@ const SCHEMA = `
     mask TEXT,
     nickname TEXT,
     owner TEXT,
-    apr REAL
+    apr REAL,
+    excluded INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE transactions (

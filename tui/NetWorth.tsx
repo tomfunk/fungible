@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getAccountsWithBalances, getNetWorthHistory, type AccountBalance, type NetWorthPeriod } from '../core/queries.js';
+import { isAssetAccount, isLiabilityAccount } from '../core/account-class.js';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
@@ -76,12 +77,19 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     handleNavKey(input, 'networth', onNavigate);
   }, { isActive: isActive !== false });
 
-  const assets      = accounts.filter((a) => a.type === 'depository' || a.type === 'investment' || (a.type === 'other' && a.balance > 0));
-  const liabilities = accounts.filter((a) => a.type === 'credit');
+  const included = accounts.filter((a) => !a.excluded);
+  const excluded = accounts.filter((a) => a.excluded);
+
+  const assets      = included.filter(isAssetAccount);
+  const liabilities = included.filter(isLiabilityAccount);
 
   const totalAssets      = assets.reduce((s, a) => s + a.balance, 0);
   const totalLiabilities = liabilities.reduce((s, a) => s + a.balance, 0);
   const netWorth         = totalAssets - totalLiabilities;
+
+  const exclNet =
+    excluded.filter(isAssetAccount).reduce((s, a) => s + a.balance, 0) -
+    excluded.filter(isLiabilityAccount).reduce((s, a) => s + a.balance, 0);
 
   const maxNet     = Math.max(...rows.map((r) => Math.abs(r.net_worth)), 1);
   const hasHistory = rows.length > 0;
@@ -165,6 +173,27 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text bold color={C_NEGATIVE}>{fmt(totalLiabilities).padStart(AMT_W)}</Text>
             </Box>
           </Box>
+
+          {/* Excluded accounts — carved out, not counted in net worth */}
+          {excluded.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold dimColor>Excluded (not in net worth)</Text>
+              {excluded.map((a) => (
+                <Box key={a.name + a.balance} gap={2}>
+                  <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W).padEnd(NAME_W)}</Text>
+                  <Text dimColor>{fmt(a.balance).padStart(AMT_W)}</Text>
+                  <Text dimColor>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</Text>
+                </Box>
+              ))}
+              <Box gap={2}>
+                <Text dimColor>{'─'.repeat(NAME_W)}</Text>
+              </Box>
+              <Box gap={2}>
+                <Text dimColor>{'Excluded total'.padEnd(NAME_W)}</Text>
+                <Text dimColor>{fmtSigned(exclNet).padStart(AMT_W)}</Text>
+              </Box>
+            </Box>
+          )}
 
           {/* History */}
           {hasHistory && (
