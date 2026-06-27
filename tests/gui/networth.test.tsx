@@ -65,4 +65,22 @@ describe('GUI NetWorth', () => {
     renderScreen(<NetWorth />);
     await waitFor(() => expect(screen.getByText(/No balance data yet/)).toBeTruthy());
   });
+
+  it('carves excluded accounts into their own section, out of the headline total', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('acct-529', 'College 529', 'investment', '529', 1)");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('acct-529', 12345.00, '2026-05-20')");
+    renderScreen(<NetWorth />);
+    await waitFor(() => expect(screen.getByText('Excluded (not in net worth)')).toBeTruthy());
+    expect(screen.getByText('College 529')).toBeTruthy();
+    expect(screen.getByText('+$12,345.00')).toBeTruthy(); // Excluded total (signed)
+    // The 529 is an investment asset; were it counted, Total assets would read
+    // $17,345.00 (5,000 + 12,345). It must stay out of the headline.
+    expect(screen.queryByText('$17,345.00')).toBeNull();
+  });
+
+  it('omits the excluded section entirely when no account is excluded', async () => {
+    renderScreen(<NetWorth />);
+    await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
+    expect(screen.queryByText('Excluded (not in net worth)')).toBeNull();
+  });
 });

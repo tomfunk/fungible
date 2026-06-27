@@ -50,6 +50,21 @@ describe('GUI Accounts', () => {
     });
   });
 
+  it('edit modal toggles "exclude from net worth", persisted with the ⊘ marker', async () => {
+    renderScreen(<Accounts />);
+    await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
+    await userEvent.click(screen.getByText('Test Checking'));
+    await waitFor(() => expect(screen.getByRole('checkbox')).toBeTruthy());
+    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+    await userEvent.click(screen.getByRole('checkbox'));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByText('Updated Test Checking')).toBeTruthy());
+    await waitFor(() => {
+      const cell = screen.getAllByText(/Test Checking/).find((el) => el.closest('tr'));
+      expect(cell?.closest('tr')!.textContent).toContain('excl');
+    });
+  });
+
   it('add-data tab shows the four cards with Plaid unconfigured', async () => {
     renderScreen(<Accounts />);
     await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
