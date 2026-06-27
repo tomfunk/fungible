@@ -1183,6 +1183,25 @@ describe('NetWorth', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('shows an excluded account in a carved-out section, out of Total assets', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('acct-529', 'College 529', 'investment', '529', 1)");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('acct-529', 12345.00, '2026-05-20')");
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Excluded (not in net worth)'));
+    const f = frame(r);
+    expect(f).toContain('College 529');
+    expect(f).toContain('Excluded total');
+    // The 529 is an investment asset; were it counted, Total assets would read
+    // $17,345.00 (5,000 + 12,345). It must stay out of the headline.
+    expect(f).not.toContain('17,345');
+  });
+
+  it('omits the excluded section when no account is excluded', async () => {
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    expect(frame(r)).not.toContain('Excluded (not in net worth)');
+  });
 });
 
 // ── Tags ──────────────────────────────────────────────────────────────────────
@@ -1543,6 +1562,28 @@ describe('Accounts', () => {
       expect(f).toContain('Vacation Fund');
       expect(f).not.toContain('Test Checking');
     });
+  });
+
+  it('toggling "exclude from net worth" refreshes the list with the excl marker', async () => {
+    const real = accountsApi.updateAccountExcluded;
+    vi.spyOn(accountsApi, 'updateAccountExcluded').mockImplementation(delayWrite(real));
+
+    const r = accounts();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\r');                            // open unified edit panel (cursor on Nickname)
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
+    expect(frame(r)).toContain('Included');         // Net-worth toggle defaults to Included
+    // Fields for a depository with no household members: Nickname, Type, Subtype, Net worth.
+    r.stdin.write('\x1b[B');                         // ↓ Nickname → Type
+    r.stdin.write('\x1b[B');                         // ↓ Type → Subtype
+    r.stdin.write('\x1b[B');                         // ↓ Subtype → Net worth
+    // Let the field-change commit before toggling: the toggle reads editField from
+    // its closure, which is stale if the right-arrow runs in the same input batch.
+    await new Promise((res) => setTimeout(res, 60));
+    r.stdin.write('\x1b[C');                         // → toggle to Excluded
+    await waitFor(() => expect(frame(r)).toContain('Excluded'));
+    r.stdin.write('\r');                             // save
+    await waitFor(() => expect(frame(r)).toContain('excl')); // ⊘ excl row marker after reload
   });
 
   it('deleting an account refreshes the list to drop it', async () => {
