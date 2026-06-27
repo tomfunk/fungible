@@ -520,18 +520,21 @@ async function executeToolImpl(
 
     case 'list_accounts': {
       const result = await db.execute(
-        'SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name FROM accounts'
+        'SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name, excluded FROM accounts'
       );
       const rows = result.rows as unknown as {
-        name: string; type: string; subtype: string; mask: string | null; institution_name: string | null;
+        name: string; type: string; subtype: string; mask: string | null; institution_name: string | null; excluded: number;
       }[];
       if (!rows.length) return 'No accounts connected.';
-      return rows.map((a) => `${a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`).join('\n');
+      return rows.map((a) =>
+        `${a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
+        + (Number(a.excluded) === 1 ? ' · excluded from net worth' : '')
+      ).join('\n');
     }
 
     case 'get_balances': {
       const b = await getBalances();
-      if (!b.accounts.length) return 'No balance data available. Sync accounts first.';
+      if (!b.accounts.length && !b.excludedAccounts.length) return 'No balance data available. Sync accounts first.';
       return [
         'Assets:',
         ...b.accounts.filter((a) => a.isAsset).map((a) => `  ${a.name}: ${fmt(a.balance)} (${a.subtype ?? a.type})`),
@@ -542,6 +545,10 @@ async function executeToolImpl(
         `Net worth: ${b.netWorth >= 0 ? '' : '-'}${fmt(b.netWorth)}`,
         `Cash (checking/savings): ${fmt(b.cash)}`,
         `Liquid (incl. brokerage): ${fmt(b.liquid)}`,
+        ...(b.excludedAccounts.length ? [
+          'Excluded (not in net worth):',
+          ...b.excludedAccounts.map((a) => `  ${a.name}: ${fmt(a.balance)} (${a.subtype ?? a.type})`),
+        ] : []),
       ].join('\n');
     }
 
