@@ -1378,6 +1378,37 @@ describe('Rules', () => {
     });
   });
 
+  it('Esc from search preserves cursor on the highlighted rule (not the unfiltered top)', async () => {
+    // Regression: pressing Esc in search used to reset cursor to its pre-search
+    // numeric index, so the highlighted (filtered) rule could differ from what
+    // 'x' then deleted. Now the cursor re-anchors to that rule by id.
+    await db.execute('DELETE FROM category_rules');
+    await db.batch([
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Aaa Coffee', 'Dining')",
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Bbb Diner',  'Dining')",
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Zzz Lounge', 'Dining')",
+    ], 'write');
+
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Aaa Coffee'));
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc clear')); // search bar visible
+    for (const ch of 'Zzz') r.stdin.write(ch);
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Zzz Lounge');
+      expect(f).not.toContain('Aaa Coffee'); // filter is active
+    });
+    r.stdin.write('\x1b');         // Esc clears search
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Aaa Coffee'); // full list back
+      // ▶ cursor marker should sit on the Zzz row, not the top.
+      const zzzLine = f.split('\n').find((l) => l.includes('Zzz Lounge'))!;
+      expect(zzzLine.includes('▶')).toBe(true);
+    });
+  });
+
   it('[x] deletes the rule and surfaces the recategorized count in the status', async () => {
     // Self-contained: clear seeded transactions/rules so the count pins to exactly 1.
     // Mirrors the GUI delete test (tests/gui/rules.test.tsx) and locks the singular
