@@ -25,7 +25,8 @@
     "api": "node --import tsx/esm api/server.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer",
     "test": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest run",
-    "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest"
+    "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest",
+    "test:e2e": "electron-vite build && playwright test"
   },
   "license": "MIT",
   "engines": {
@@ -50,6 +51,7 @@
     "@noble/hashes": "1.8.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.9.1",

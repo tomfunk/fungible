@@ -9,3 +9,5 @@ scripts/seed-rules.ts
 .claude/
 out/
 release/
+test-results/
+playwright-report/

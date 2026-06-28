@@ -22,6 +22,29 @@ jobs:
 
       - run: node --no-warnings ./node_modules/.bin/vitest run
 
+  # Boot the real Electron app and assert it comes up. Complements the unit suite
+  # (which stubs window.__bridge entirely) by exercising what only a live process
+  # can: main-process boot, @libsql native-binding loading, the electron-vite
+  # build-output wiring, the sandboxed-preload contextBridge, and the real
+  # ipcRenderer→ipcMain serialization in gui/main/bridge.ts.
+  gui-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci
+
+      # Electron's renderer is Chromium and needs the same system libraries; this
+      # installs that dependency set on the bare runner image.
+      - run: npx playwright install-deps chromium
+
+      # xvfb-run gives Electron the virtual X display the headless runner lacks.
+      - run: xvfb-run -a npm run test:e2e
+
   # Smoke-build the unpacked Electron app on each platform when something is
   # about to land on main — catches packaging regressions (missing deps,
   # broken file filters, native-binding paths) before a release tag is cut.
@@ -36,7 +59,7 @@ jobs:
   # on PRs that don't target main — treat skipped as passing so dev PRs still
   # merge with just test green.
   ci-all-passed:
-    needs: [test, gui-build]
+    needs: [test, gui-e2e, gui-build]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -44,6 +67,10 @@ jobs:
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
             echo "::error::test job failed"
+            exit 1
+          fi
+          if [ "${{ needs.gui-e2e.result }}" != "success" ]; then
+            echo "::error::gui-e2e job failed"
             exit 1
           fi
           if [ "${{ needs.gui-build.result }}" != "success" ] && [ "${{ needs.gui-build.result }}" != "skipped" ]; then
