@@ -11,7 +11,7 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
-import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
+import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity } from './queries.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows } from './dateUtils.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
@@ -519,16 +519,11 @@ async function executeToolImpl(
     }
 
     case 'list_accounts': {
-      const result = await db.execute(
-        'SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name, excluded FROM accounts'
-      );
-      const rows = result.rows as unknown as {
-        name: string; type: string; subtype: string; mask: string | null; institution_name: string | null; excluded: number;
-      }[];
+      const rows = await getLinkedAccounts();
       if (!rows.length) return 'No accounts connected.';
       return rows.map((a) =>
-        `${a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
-        + (Number(a.excluded) === 1 ? ' · excluded from net worth' : '')
+        `${a.nickname ?? a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
+        + (a.excluded ? ' · excluded from net worth' : '')
       ).join('\n');
     }
 

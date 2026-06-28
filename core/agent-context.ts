@@ -20,7 +20,6 @@ export type AccountWithBalance = {
   balance: number;
   isAsset: boolean;
   isLiability: boolean;
-  excluded: boolean;
 };
 
 export type BalanceSummary = {
@@ -86,20 +85,19 @@ export async function getBalances(): Promise<BalanceSummary> {
       END,
       bh.balance DESC
   `);
-  const rows = result.rows as unknown as (Omit<AccountWithBalance, 'isAsset' | 'isLiability' | 'excluded'> & { excluded: number })[];
+  const rows = result.rows as unknown as (Omit<AccountWithBalance, 'isAsset' | 'isLiability'> & { excluded: number })[];
 
-  const all: AccountWithBalance[] = rows.map((r) => ({
+  const toAccount = ({ excluded: _excluded, ...r }: typeof rows[number]): AccountWithBalance => ({
     ...r,
     balance: Number(r.balance),
     isAsset: isAssetAccount({ type: r.type, balance: Number(r.balance) }),
     isLiability: isLiabilityAccount(r),
-    excluded: Number(r.excluded) === 1,
-  }));
+  });
 
   // Net-worth totals are computed on the included set; excluded accounts stay
   // visible (carved-out section in the UI and MCP) but never affect the totals.
-  const accounts = all.filter((a) => !a.excluded);
-  const excludedAccounts = all.filter((a) => a.excluded);
+  const accounts = rows.filter((r) => r.excluded !== 1).map(toAccount);
+  const excludedAccounts = rows.filter((r) => r.excluded === 1).map(toAccount);
 
   const totalAssets = accounts
     .filter((a) => a.isAsset)
