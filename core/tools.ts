@@ -17,6 +17,7 @@ import { getDriftWindows } from './dateUtils.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { applyCategoriesToAll } from './categorize.js';
+import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
 import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
@@ -784,8 +785,11 @@ async function executeToolImpl(
       const ruleResult = await db.execute({ sql: 'SELECT pattern, category FROM category_rules WHERE id = ?', args: [num('id')] });
       const rule = ruleResult.rows[0] as unknown as { pattern: string; category: string } | undefined;
       if (!rule) return `No rule with id ${num('id')}.`;
-      await db.execute({ sql: 'DELETE FROM category_rules WHERE id = ?', args: [num('id')] });
-      return `Deleted rule: "${rule.pattern}" → ${rule.category}`;
+      // deleteCategoryRule deletes the row AND re-evaluates affected transactions
+      // (reverting orphans to Uncategorized / a lower-priority rule), matching the
+      // TUI/GUI. Raw DELETE here would leave stale categorizations behind.
+      const count = await deleteCategoryRule(num('id'));
+      return `Deleted rule: "${rule.pattern}" → ${rule.category}\nRecategorized ${count} transactions.`;
     }
 
     case 'add_name_rule': {

@@ -7,6 +7,7 @@ vi.mock('../core/db.js', async () => {
 
 import { db } from '../core/db.js';
 import { deleteCategoryRule, saveCategoryRule } from '../core/rules.js';
+import { executeTool } from '../core/tools.js';
 
 let txId = 0;
 async function insertTx(name: string, manual_category?: string) {
@@ -70,5 +71,17 @@ describe('deleteCategoryRule re-evaluates transactions', () => {
     const count = await deleteCategoryRule(await ruleIdFor('Spotify'));
     expect(count).toBe(0);
     expect(await categoryOf(id)).toBe('Music');
+  });
+});
+
+describe('delete_rule MCP tool re-evaluates transactions', () => {
+  it('reverts a transaction to Uncategorized when the agent deletes its only matching rule', async () => {
+    const id = await insertTx('Spotify');
+    await saveCategoryRule({ pattern: 'Spotify', matchType: 'name', category: 'Entertainment', minAmount: null, maxAmount: null });
+    expect(await categoryOf(id)).toBe('Entertainment');
+
+    const out = await executeTool('delete_rule', { id: await ruleIdFor('Spotify') });
+    expect(out).toContain('Recategorized 1 transactions');
+    expect(await categoryOf(id)).toBe('Uncategorized');
   });
 });
