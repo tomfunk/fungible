@@ -126,6 +126,7 @@ export async function initDb() {
     'ALTER TABLE accounts ADD COLUMN owner TEXT',
     'ALTER TABLE accounts ADD COLUMN apr REAL',
     'ALTER TABLE accounts ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE accounts ADD COLUMN item_id TEXT',
     'ALTER TABLE category_rules ADD COLUMN account_id TEXT',
     'ALTER TABLE name_rules ADD COLUMN account_id TEXT',
   ];

@@ -1,4 +1,4 @@
-import { getPlaidClient } from './plaid.js';
+import { getPlaidClient, plaidErrorMessage } from './plaid.js';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyNameRulesWithRules, loadNameRules } from './rename.js';
@@ -38,10 +38,10 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     accountsResponse.data.accounts.flatMap((acct) => {
       const rows: { sql: string; args: (string | number | null)[] }[] = [
         {
-          sql: `INSERT INTO accounts (id, name, type, subtype, mask)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET name=excluded.name`,
-          args: [acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null],
+          sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name=excluded.name, item_id=excluded.item_id`,
+          args: [acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null, itemId],
         },
       ];
       const balance = acct.balances.current;
@@ -126,20 +126,37 @@ export async function syncTransactions(accessToken: string, itemId: string) {
 
 const DEBOUNCE_MS = 15 * 60 * 1000;
 
-export async function syncAll(force = false) {
+export type SyncItemResult = {
+  itemId: string;
+  added: number; modified: number; removed: number; dupes: number;
+  skipped: boolean;
+  // Set when this item failed to sync; carries the extracted Plaid/error message
+  // so callers can report which item broke and why. One item failing does not
+  // abort the others.
+  error?: string;
+};
+
+export async function syncAll(force = false): Promise<SyncItemResult[]> {
   const itemsRes = await db.execute('SELECT item_id, access_token, last_synced_at FROM plaid_items');
   const items = itemsRes.rows as unknown as {
     item_id: string; access_token: string; last_synced_at: number | null;
   }[];
 
-  const results = [];
+  const results: SyncItemResult[] = [];
   for (const item of items) {
     if (!force && item.last_synced_at && Date.now() - Number(item.last_synced_at) < DEBOUNCE_MS) {
       results.push({ itemId: item.item_id, added: 0, modified: 0, removed: 0, dupes: 0, skipped: true });
       continue;
     }
-    const result = await syncTransactions(decryptToken(item.access_token), item.item_id);
-    results.push({ itemId: item.item_id, ...result, skipped: false });
+    try {
+      const result = await syncTransactions(decryptToken(item.access_token), item.item_id);
+      results.push({ itemId: item.item_id, ...result, skipped: false });
+    } catch (err) {
+      results.push({
+        itemId: item.item_id, added: 0, modified: 0, removed: 0, dupes: 0,
+        skipped: false, error: plaidErrorMessage(err),
+      });
+    }
   }
   return results;
 }

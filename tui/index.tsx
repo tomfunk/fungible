@@ -9,6 +9,8 @@ import stripAnsi from 'strip-ansi';
 import { initDb } from '../core/db.js';
 import { backupDb } from '../core/backup.js';
 import { syncAll } from '../core/sync.js';
+import { setSyncResult } from '../core/sync-status.js';
+import { plaidErrorMessage } from '../core/plaid.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import { App } from './App.js';
 import { Setup } from './Setup.js';
@@ -44,7 +46,15 @@ if (process.argv.includes('--setup')) {
     await seedDemo();
   }
   await rebuildDisplayNames();
-  if (!isDemo) syncAll().catch(() => {});
+  if (!isDemo) {
+    // Startup sync runs in the background; feed its outcome to the shared store
+    // so failures surface (global banner + Accounts badges) instead of vanishing.
+    syncAll()
+      .then(setSyncResult)
+      .catch((err) => setSyncResult([
+        { itemId: '', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: plaidErrorMessage(err) },
+      ]));
+  }
 
   const mcpPort = parseInt(process.env.FUNGIBLE_MCP_PORT ?? '3741', 10);
   const apiPort = parseInt(process.env.FUNGIBLE_API_PORT ?? '3456', 10);

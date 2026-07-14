@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp } from 'ink';
 import { readFileSync } from 'node:fs';
 import { TypingContext } from './TypingContext.js';
 import { Dashboard } from './Dashboard.js';
@@ -14,8 +14,11 @@ import { Canvas } from './Canvas.js';
 import { Settings } from './Settings.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider, useRefreshKey } from './RefreshContext.js';
+import { SyncStatusProvider, useSyncStatus } from './SyncStatusContext.js';
 import { FilterProvider } from './FilterContext.js';
 import { FilterPanel } from './FilterPanel.js';
+import { getLinkedAccounts } from '../core/queries.js';
+import { C_NEGATIVE } from './ui.js';
 import type { CanvasSpec } from '../core/canvas-agent.js';
 import { CANVAS_SPEC_PATH } from '../core/canvas-history.js';
 
@@ -50,7 +53,23 @@ function AppInner() {
   const [filterOpen, setFilterOpen] = useState(false);
   const { exit } = useApp();
   const refreshKey = useRefreshKey();
+  const { failures } = useSyncStatus();
+  const [acctNames, setAcctNames] = useState<Record<string, string>>({});
   const lastSpecRef = useRef<string>('');
+
+  // Resolve failing item ids to account names for the banner. Only loads when
+  // there's something to show; falls back to the item id if a name is missing.
+  useEffect(() => {
+    if (failures.length === 0) return;
+    let live = true;
+    void getLinkedAccounts().then((accts) => {
+      if (!live) return;
+      const m: Record<string, string> = {};
+      for (const a of accts) if (a.item_id) m[a.item_id] = a.nickname ?? a.name;
+      setAcctNames(m);
+    });
+    return () => { live = false; };
+  }, [failures]);
 
   useEffect(() => {
     try {
@@ -114,6 +133,13 @@ function AppInner() {
           {currentScreen}
         </Box>
         {filterOpen && <FilterPanel isActive={filterOpen} onClose={() => setFilterOpen(false)} />}
+        {failures.length > 0 && screen !== 'accounts' && (
+          <Box paddingX={2}>
+            <Text color={C_NEGATIVE}>
+              ⚠ Sync failed — {failures.map((f) => `${acctNames[f.itemId] ?? (f.itemId || 'account')}: ${f.error}`).join('  ·  ')}  ·  open Accounts to retry
+            </Text>
+          </Box>
+        )}
         <Chat
           isActive={chatFocused}
           onActivate={() => setChatFocused(true)}
@@ -128,9 +154,11 @@ function AppInner() {
 export function App() {
   return (
     <RefreshProvider>
-      <FilterProvider>
-        <AppInner />
-      </FilterProvider>
+      <SyncStatusProvider>
+        <FilterProvider>
+          <AppInner />
+        </FilterProvider>
+      </SyncStatusProvider>
     </RefreshProvider>
   );
 }

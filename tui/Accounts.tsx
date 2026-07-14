@@ -3,7 +3,10 @@ import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll } from '../core/sync.js';
+import { syncAll, type SyncItemResult } from '../core/sync.js';
+import { setSyncResult } from '../core/sync-status.js';
+import { plaidErrorMessage } from '../core/plaid.js';
+import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
@@ -83,8 +86,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const { statusMsg: acctErr, showStatus: showAcctErr } = useStatusMessage(3000);
 
   // Sync state (shared)
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done'>('idle');
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
   const [syncMsg, setSyncMsg] = useState('');
+  // Item ids that failed the most recent sync (from either the startup or the
+  // user-triggered path), so their account rows can be badged. Session-only.
+  const { failingItems } = useSyncStatus();
 
   // Add-data / link state
   const [addStep, setAddStep] = useState<AddStep>('landing');
@@ -201,19 +207,41 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     }
   }
 
+  // Name the accounts behind a failed item so the status line points at the row,
+  // not an opaque item id. Falls back to the item id if accounts aren't loaded yet.
+  function describeSyncFailures(failed: SyncItemResult[]): string {
+    return failed.map((r) => {
+      const names = linkedAccounts.filter((a) => a.item_id === r.itemId).map((a) => a.nickname ?? a.name);
+      const who = names.length > 0 ? names.join(', ') : r.itemId;
+      return `${who} — ${r.error}`;
+    }).join('  ·  ');
+  }
+
   function forceSync() {
     setSyncStatus('syncing');
     setSyncMsg('Syncing…');
     syncAll(true).then((results) => {
-      const added = results.reduce((s, r) => s + r.added, 0);
-      setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
-      setSyncStatus('done');
+      const failed = results.filter((r) => r.error);
+      // Feed the shared store: updates the row badges here and the global banner.
+      // A clean run stores an empty set, clearing both.
+      setSyncResult(results);
       loadAccounts();
-      setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
-    }).catch(() => {
-      setSyncMsg('Sync failed');
-      setSyncStatus('done');
-      setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 3000);
+      if (failed.length > 0) {
+        // Errors stay put until the user presses a key (see useInput) — long
+        // enough to read, and there's a real problem to act on.
+        setSyncStatus('error');
+        setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
+      } else {
+        const added = results.reduce((s, r) => s + r.added, 0);
+        setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
+        setSyncStatus('done');
+        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+      }
+    }).catch((err) => {
+      // syncAll no longer throws on per-item failure, so this is a broader fault
+      // (e.g. Plaid not configured, DB error). Surface its real message.
+      setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
+      setSyncStatus('error');
     });
   }
 
@@ -351,6 +379,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // ─── Input handling ──────────────────────────────────────────────────────────
 
   useInput((input, key) => {
+    // A lingering sync error clears on the next keypress. The key still performs
+    // its normal action (dismiss + act), so pressing [s] here retries the sync.
+    if (syncStatus === 'error') { setSyncStatus('idle'); setSyncMsg(''); }
+
     // Global nav (only when not deep in a multi-step flow)
     const atTop = (mainView === 'accounts' && acctMode === 'list') || (mainView === 'add-data' && addStep === 'landing');
 
@@ -461,7 +493,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setAddStep('link-days');
         return;
       }
-      if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
+      if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
       return;
     }
 
@@ -496,7 +528,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (input === 'l') { setDaysInput(String(defaultDays)); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
-      if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
+      if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
       return;
     }
 
@@ -694,7 +726,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
                     <Text dimColor>
-                      {acct.last_synced
+                      {acct.item_id && failingItems.has(acct.item_id)
+                        ? <Text color={C_NEGATIVE}>⚠ sync failed</Text>
+                        : acct.last_synced
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
                         : <Text color={C_WARNING}>not synced</Text>
                       }
@@ -709,7 +743,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           <Box marginTop={1}><Divider /></Box>
           <Text dimColor>{linkedAccounts.length} account{linkedAccounts.length !== 1 ? 's' : ''}</Text>
-          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text>}
+          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}</Text>}
           {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
           {acctErr && <Text color={C_NEGATIVE}>{acctErr}</Text>}
 
@@ -812,7 +846,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
               </Box>
-              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text></Box>}
+              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}</Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
             </Box>
           )}

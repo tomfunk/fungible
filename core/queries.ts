@@ -593,11 +593,11 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
+export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; item_id: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr, a.excluded,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id, a.apr, a.excluded,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name

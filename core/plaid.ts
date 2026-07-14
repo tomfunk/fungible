@@ -36,6 +36,22 @@ export async function createLinkToken(userId: string, daysRequested?: number) {
   return response.data.link_token;
 }
 
+/**
+ * Extract a human-readable message from a rejected Plaid request. The Plaid SDK
+ * rejects with an Axios error whose useful payload lives at `err.response.data`
+ * ({ error_type, error_code, error_message, display_message }); the bare
+ * `err.message` is only "Request failed with status code 400". Prefer Plaid's
+ * user-facing `display_message`, fall back to `error_code: error_message`, then
+ * to the generic error message.
+ */
+export function plaidErrorMessage(err: unknown): string {
+  const data = (err as { response?: { data?: Record<string, string> } })?.response?.data;
+  if (data?.error_code) {
+    return data.display_message || `${data.error_code}: ${data.error_message}`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 export async function exchangePublicToken(publicToken: string) {
   const response = await getPlaidClient().itemPublicTokenExchange({ public_token: publicToken });
   return {

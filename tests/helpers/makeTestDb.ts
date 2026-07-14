@@ -11,7 +11,8 @@ const SCHEMA = `
     nickname TEXT,
     owner TEXT,
     apr REAL,
-    excluded INTEGER NOT NULL DEFAULT 0
+    excluded INTEGER NOT NULL DEFAULT 0,
+    item_id TEXT
   );
 
   CREATE TABLE transactions (
