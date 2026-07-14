@@ -3,6 +3,7 @@ import type { Screen, TxFilter } from '../../shared/nav.js';
 import { SCREEN_KEYS } from '../../shared/nav.js';
 import { api } from './api.js';
 import { RefreshProvider, useRefreshKey } from './hooks/useRefresh.js';
+import { SyncStatusProvider, useSyncStatus } from './hooks/useSyncStatus.js';
 import { NavContext } from './hooks/useNav.js';
 import { FilterProvider } from './hooks/useFilter.js';
 import { UiPrefsProvider } from './hooks/useUiPrefs.js';
@@ -28,7 +29,23 @@ function AppInner() {
   const [txFilter, setTxFilter] = useState<TxFilter>({});
   const [navKey, setNavKey] = useState(0);
   const refreshKey = useRefreshKey();
+  const { failures } = useSyncStatus();
+  const [acctNames, setAcctNames] = useState<Record<string, string>>({});
   const lastSpecRef = useRef('');
+
+  // Resolve failing item ids to account names for the banner; only loads when
+  // there's something to show, and falls back to the item id if a name is missing.
+  useEffect(() => {
+    if (failures.length === 0) return;
+    let live = true;
+    void api.queries.getLinkedAccounts().then((accts) => {
+      if (!live) return;
+      const m: Record<string, string> = {};
+      for (const a of accts) if (a.item_id) m[a.item_id] = a.nickname ?? a.name;
+      setAcctNames(m);
+    });
+    return () => { live = false; };
+  }, [failures]);
 
   function navigate(s: Screen, filter?: TxFilter) {
     setTxFilter(filter ?? {});
@@ -89,6 +106,11 @@ function AppInner() {
       <div className={styles.shell}>
         <SideNav active={screen} onSelect={navigate} />
         <div className={styles.main}>
+          {failures.length > 0 && screen !== 'accounts' && (
+            <div className={styles.syncBanner}>
+              ⚠ Sync failed — {failures.map((f) => `${acctNames[f.itemId] ?? (f.itemId || 'account')}: ${f.error}`).join('  ·  ')}  ·  open Accounts to retry
+            </div>
+          )}
           {filterableScreens.includes(screen) && <FilterBar />}
           <main className={styles.content}>
             <ErrorBoundary key={`${screen}:${navKey}`}>{current}</ErrorBoundary>
@@ -103,11 +125,13 @@ function AppInner() {
 export function App() {
   return (
     <RefreshProvider>
-      <FilterProvider>
-        <UiPrefsProvider>
-          <AppInner />
-        </UiPrefsProvider>
-      </FilterProvider>
+      <SyncStatusProvider>
+        <FilterProvider>
+          <UiPrefsProvider>
+            <AppInner />
+          </UiPrefsProvider>
+        </FilterProvider>
+      </SyncStatusProvider>
     </RefreshProvider>
   );
 }

@@ -6,8 +6,11 @@ import { initDb } from '../../core/db.js';
 import { backupDb } from '../../core/backup.js';
 import { rebuildDisplayNames } from '../../core/rename.js';
 import { syncAll } from '../../core/sync.js';
+import { setSyncResult } from '../../core/sync-status.js';
+import { plaidErrorMessage } from '../../core/plaid.js';
 import { registerBridge } from './bridge.js';
 import { registerRefreshPush } from './refresh-ipc.js';
+import { registerSyncStatusPush } from './sync-status-ipc.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
 import { cancelActivePlaidLink } from './plaid-link.js';
 import { buildMenu } from './menu.js';
@@ -46,11 +49,21 @@ if (!app.requestSingleInstanceLock()) {
 
     registerBridge();
     registerRefreshPush();
+    registerSyncStatusPush();
     registerAgentIpc();
     buildMenu();
     createWindow();
 
-    if (!isDemo) syncAll().catch((err) => console.error('[gui] background sync failed:', err));
+    // Background startup sync: record its outcome in the shared store so failures
+    // surface (banner + badges) instead of only logging to the main console.
+    if (!isDemo) {
+      syncAll()
+        .then(setSyncResult)
+        .catch((err) => {
+          console.error('[gui] background sync failed:', err);
+          setSyncResult([{ itemId: '', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: plaidErrorMessage(err) }]);
+        });
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

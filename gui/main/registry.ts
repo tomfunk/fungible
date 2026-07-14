@@ -90,6 +90,7 @@ import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import { syncAll } from '../../core/sync.js';
+import { setSyncResult, getSyncFailures } from '../../core/sync-status.js';
 import { loadHistory, deleteHistoryEntry, CANVAS_SPEC_PATH } from '../../core/canvas-history.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 import { writeEnvFile, type EnvUpdates } from '../../core/env-file.js';
@@ -212,7 +213,15 @@ export const registry = {
     },
   },
   sync: {
-    syncAll,
+    // Wrap so every user-triggered sync records its outcome in the shared store,
+    // which drives the renderer banner + row badges via the sync-status push.
+    syncAll: async (force?: boolean) => {
+      const results = await syncAll(force);
+      setSyncResult(results);
+      return results;
+    },
+    // Initial hydration for a renderer that mounts after a background sync failed.
+    getStatus: async () => getSyncFailures(),
   },
   config: {
     writeEnv: async (updates: EnvUpdates): Promise<{ written: string[] }> => {
