@@ -70,6 +70,17 @@ export async function seedRules(): Promise<{ rules: number; recategorized: numbe
     'write',
   );
 
+  // Register every category the seeded rules assign. Without this a rule can
+  // file transactions under a category the pickers never offer, because those
+  // read from the `categories` table.
+  await db.batch(
+    [...new Set(RULES.map((r) => r.category))].map((cat) => ({
+      sql: 'INSERT OR IGNORE INTO categories (name) VALUES (?)',
+      args: [cat],
+    })),
+    'write',
+  );
+
   const uncategorizedResult = await db.execute({
     sql: 'SELECT id, account_id, name, merchant_name, raw_category, amount FROM transactions WHERE category = ? AND manual_category IS NULL',
     args: ['Uncategorized'],
