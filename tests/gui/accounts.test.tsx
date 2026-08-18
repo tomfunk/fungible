@@ -17,7 +17,7 @@ import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 beforeEach(async () => {
   for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history',
-                     'household_members']) {
+                     'household_members', 'plaid_items']) {
     await db.execute(`DELETE FROM ${tbl}`);
   }
   await seedTuiData(db);
@@ -97,6 +97,38 @@ describe('GUI Accounts', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(screen.queryByText('Test Visa')).toBeNull());
     expect(screen.getByText('Deleted Test Visa')).toBeTruthy();
+  });
+
+  // getLinkedAccounts is shared with the TUI, so the GUI table sees the
+  // awaiting-first-sync placeholder rows too. It must not render them as a
+  // half-empty account row with working edit/delete affordances.
+  it('renders a linked-but-unsynced institution as an awaiting-first-sync row', async () => {
+    await db.execute({
+      sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
+      args: ['item-new', 'tok', 'Capital One'],
+    });
+    renderScreen(<Accounts />);
+    await waitFor(() => expect(screen.getByText('◷ awaiting first sync')).toBeTruthy());
+    const row = screen.getByText('◷ awaiting first sync').closest('tr')!;
+    expect(row.textContent).toContain('Capital One');
+    // No mask, no type, and none of the row actions.
+    expect(row.textContent).not.toContain('···');
+    expect(row.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('reports the item sync time for an account with no balance snapshot', async () => {
+    // Defect-4 guard in the GUI: no balance_history row, but the institution
+    // synced 5 minutes ago — the cell must show a time, not "not synced".
+    await db.execute('DELETE FROM balance_history');
+    await db.execute({
+      sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+      args: ['item-synced', 'tok', 'Test Bank', Date.now() - 5 * 60_000],
+    });
+    await db.execute("UPDATE accounts SET item_id = 'item-synced' WHERE id = 'test-checking'");
+    renderScreen(<Accounts />);
+    const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
+    expect(row.textContent).toContain('synced 5 min ago');
+    expect(row.textContent).not.toContain('not synced');
   });
 
   it('dupes tab shows the empty state', async () => {

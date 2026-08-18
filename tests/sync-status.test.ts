@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { setSyncResult, getSyncFailures, clearSyncFailures, onSyncStatus } from '../core/sync-status.js';
+import { setSyncResult, mergeSyncResult, getSyncFailures, clearSyncFailures, onSyncStatus } from '../core/sync-status.js';
 import type { SyncItemResult } from '../core/sync.js';
 
 const ok = (itemId: string): SyncItemResult => ({ itemId, added: 0, modified: 0, removed: 0, dupes: 0, skipped: false });
@@ -37,6 +37,45 @@ describe('sync-status store', () => {
     expect(getSyncFailures()).toEqual([]);
     expect(fn).toHaveBeenCalledTimes(1);
     clearSyncFailures();
+    expect(fn).toHaveBeenCalledTimes(1);
+    off();
+  });
+});
+
+describe('mergeSyncResult', () => {
+  it('replaces status for the attempted items only', () => {
+    setSyncResult([fail('a', 'stale')]);
+    mergeSyncResult([fail('a', 'fresh')], ['a']);
+    expect(getSyncFailures()).toEqual([{ itemId: 'a', error: 'fresh' }]);
+  });
+
+  it('clears an attempted item that now succeeds', () => {
+    setSyncResult([fail('a', 'x')]);
+    mergeSyncResult([ok('a')], ['a']);
+    expect(getSyncFailures()).toEqual([]);
+  });
+
+  // The whole point of the sibling: a scoped sync must not clear a badge for an
+  // institution it never touched.
+  it('preserves a failure recorded for an item not in the attempted list', () => {
+    setSyncResult([fail('a', 'ITEM_LOGIN_REQUIRED')]);
+    mergeSyncResult([ok('b')], ['b']);
+    expect(getSyncFailures()).toEqual([{ itemId: 'a', error: 'ITEM_LOGIN_REQUIRED' }]);
+  });
+
+  it('records a new failure alongside an untouched one', () => {
+    setSyncResult([fail('a', 'first')]);
+    mergeSyncResult([fail('b', 'second')], ['b']);
+    expect(getSyncFailures()).toEqual([
+      { itemId: 'a', error: 'first' },
+      { itemId: 'b', error: 'second' },
+    ]);
+  });
+
+  it('emits a status change', () => {
+    const fn = vi.fn();
+    const off = onSyncStatus(fn);
+    mergeSyncResult([ok('a')], ['a']);
     expect(fn).toHaveBeenCalledTimes(1);
     off();
   });

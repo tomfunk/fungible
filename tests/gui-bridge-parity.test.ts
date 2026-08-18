@@ -51,8 +51,27 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // Session-only sync-failure store (core/sync-status.ts) — the GUI will surface
   // sync status in its own layer (renderer state), not through the bridge.
   setSyncResult: 'GUI will surface sync status in its own layer',
+  mergeSyncResult: 'GUI will surface sync status in its own layer',
+  // Pure formatter for syncAll's onProgress steps. The callback itself can't
+  // cross the IPC bridge, so the GUI would push progress over a channel and
+  // format it renderer-side rather than calling this through the registry.
+  describeSyncProgress: 'progress callback cannot cross IPC; GUI will push steps over its own channel',
   getSyncFailures: 'GUI will surface sync status in its own layer',
   onSyncStatus: 'GUI will surface sync status in its own layer',
+
+  // The GUI bridges the composed action (sync.deleteCursorAndResync) rather than
+  // the bare cursor delete. On its own it leaves the item mid-operation until
+  // something resyncs, so main runs both steps together where they cannot be
+  // interleaved with another sync.
+  deleteSyncCursor: 'GUI bridges the composed sync.deleteCursorAndResync instead',
+
+  // On-demand /transactions/refresh (core/transactions-refresh.ts) — TUI-only for
+  // now. Bridging it needs more than a registry entry: the poll runs for minutes
+  // and streams progress, so the GUI needs a progress channel and a cancel path
+  // rather than a single request/response call. Remove these when that lands.
+  refreshTransactions: 'TUI-only; GUI needs a streaming progress + cancel channel, not a plain bridge call',
+  describeRefreshProgress: 'TUI-only; renderer will format its own progress once refresh is bridged',
+  describeRefreshResult: 'TUI-only; renderer will format its own result once refresh is bridged',
 
   // Generic settings access — GUI uses typed wrappers (settings.getPretaxMonthly /
   // settings.setPretaxMonthly) rather than the raw getSetting/setSetting functions.

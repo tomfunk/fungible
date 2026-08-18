@@ -8,11 +8,11 @@ import { registry } from './registry.js';
 const plaid = {
   isConfigured: async (): Promise<boolean> => isPlaidConfigured(),
   getDefaultDaysRequested,
-  linkBank: (daysRequested?: number) => runPlaidLink(daysRequested),
+  linkBank: (daysRequested?: number, updateItemId?: string) => runPlaidLink(daysRequested, updateItemId),
 };
 
 const files = {
-  pickCsv: async (): Promise<{ path: string; headers: string[]; rows: string[][] } | null> => {
+  pickCsv: async (): Promise<{ path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string } | null> => {
     const result = await dialog.showOpenDialog({
       title: 'Import CSV',
       filters: [{ name: 'CSV', extensions: ['csv'] }],

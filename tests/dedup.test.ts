@@ -6,14 +6,14 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
-import { deduplicateCsvVsPlaid } from '../core/dedup.js';
+import { deduplicateCsvVsPlaid, getCsvPlaidDupeCandidates } from '../core/dedup.js';
 
 let seq = 0;
 async function csvTx(opts: { name: string; amount: number; date?: string; accountId?: string }) {
   seq++;
   const id = `csv-${seq}`;
   await db.execute({
-    sql: 'INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    sql: "INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source) VALUES (?, ?, ?, ?, ?, 0, 0, 'csv')",
     args: [id, opts.accountId ?? 'acct1', opts.date ?? '2025-01-15', opts.name, opts.amount],
   });
   return id;
@@ -22,7 +22,7 @@ async function plaidTx(opts: { name: string; amount: number; date?: string; acco
   seq++;
   const id = `plaid-${seq}`;
   await db.execute({
-    sql: 'INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    sql: "INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source) VALUES (?, ?, ?, ?, ?, 0, 0, 'plaid')",
     args: [id, opts.accountId ?? 'acct1', opts.date ?? '2025-01-15', opts.name, opts.amount],
   });
   return id;
@@ -34,6 +34,7 @@ async function exists(id: string) {
 beforeEach(async () => {
   seq = 0;
   await db.execute('DELETE FROM transactions');
+  await db.execute('DELETE FROM accounts');
 });
 
 describe('deduplicateCsvVsPlaid', () => {
@@ -147,22 +148,108 @@ describe('deduplicateCsvVsPlaid', () => {
     });
   });
 
-  describe('ID prefix enforcement', () => {
-    it('only removes csv- prefixed transactions, never Plaid', async () => {
+  describe('source enforcement', () => {
+    it('only removes CSV-sourced transactions, never Plaid', async () => {
       const plaid = await plaidTx({ name: 'AMAZON', amount: 50 });
       await csvTx({ name: 'AMAZON', amount: 50 });
       await deduplicateCsvVsPlaid();
       expect(await exists(plaid)).toBe(true);
     });
 
-    it('handles multiple CSV duplicates of the same Plaid transaction', async () => {
+  });
+
+  // Every criterion in MATCH_SQL is satisfied by two genuinely separate visits to
+  // the same merchant in the same week, so the join is many-to-many and matching
+  // "everything that matched" throws away real transactions.
+  describe('one-to-one pairing', () => {
+    it('lets one Plaid row absorb only one of two identical CSV rows', async () => {
       const csv1 = await csvTx({ name: 'STARBUCKS', amount: 5 });
       const csv2 = await csvTx({ name: 'STARBUCKS', amount: 5 });
       await plaidTx({ name: 'STARBUCKS', amount: 5 });
-      const removed = await deduplicateCsvVsPlaid();
-      expect(removed).toBe(2);
+      expect(await deduplicateCsvVsPlaid()).toBe(1);
+      // Earliest CSV row is the one consumed, so the outcome is deterministic
+      // when a file contains literally identical rows.
+      expect(await exists(csv1)).toBe(false);
+      expect(await exists(csv2)).toBe(true);
+    });
+
+    it('absorbs both CSV rows when Plaid reported both purchases', async () => {
+      const csv1 = await csvTx({ name: 'STARBUCKS', amount: 5 });
+      const csv2 = await csvTx({ name: 'STARBUCKS', amount: 5 });
+      await plaidTx({ name: 'STARBUCKS', amount: 5 });
+      await plaidTx({ name: 'STARBUCKS', amount: 5 });
+      expect(await deduplicateCsvVsPlaid()).toBe(2);
       expect(await exists(csv1)).toBe(false);
       expect(await exists(csv2)).toBe(false);
+    });
+
+    it('leaves surplus Plaid rows alone when the CSV has fewer', async () => {
+      const csv = await csvTx({ name: 'STARBUCKS', amount: 5 });
+      const plaid1 = await plaidTx({ name: 'STARBUCKS', amount: 5 });
+      const plaid2 = await plaidTx({ name: 'STARBUCKS', amount: 5 });
+      expect(await deduplicateCsvVsPlaid()).toBe(1);
+      expect(await exists(csv)).toBe(false);
+      expect(await exists(plaid1)).toBe(true);
+      expect(await exists(plaid2)).toBe(true);
+    });
+
+    it('pairs the stronger name match ahead of the closer date', async () => {
+      const fuzzy = await csvTx({ name: 'STARBUCKS STORE 4471', amount: 5, date: '2025-01-15' });
+      const exact = await csvTx({ name: 'STARBUCKS', amount: 5, date: '2025-01-17' });
+      await plaidTx({ name: 'STARBUCKS', amount: 5, date: '2025-01-15' });
+      expect(await deduplicateCsvVsPlaid()).toBe(1);
+      expect(await exists(exact)).toBe(false);
+      expect(await exists(fuzzy)).toBe(true);
+    });
+
+    it('pairs the closer date when the names are equally strong', async () => {
+      const far  = await csvTx({ name: 'AMAZON', amount: 50, date: '2025-01-18' });
+      const near = await csvTx({ name: 'AMAZON', amount: 50, date: '2025-01-16' });
+      await plaidTx({ name: 'AMAZON', amount: 50, date: '2025-01-15' });
+      expect(await deduplicateCsvVsPlaid()).toBe(1);
+      expect(await exists(near)).toBe(false);
+      expect(await exists(far)).toBe(true);
+    });
+
+    it('reports the same pairing to the review list that it would delete', async () => {
+      const csv1 = await csvTx({ name: 'STARBUCKS', amount: 5 });
+      await csvTx({ name: 'STARBUCKS', amount: 5 });
+      await plaidTx({ name: 'STARBUCKS', amount: 5 });
+      const pairs = await getCsvPlaidDupeCandidates();
+      expect(pairs.map((p) => p.csvId)).toEqual([csv1]);
+    });
+  });
+
+  describe('candidate list', () => {
+    it('carries the account name', async () => {
+      await db.execute({
+        sql: "INSERT INTO accounts (id, name, type) VALUES ('acct1', 'Chase Sapphire', 'credit')",
+      });
+      await csvTx({ name: 'AMAZON', amount: 50 });
+      await plaidTx({ name: 'AMAZON', amount: 50 });
+      const pairs = await getCsvPlaidDupeCandidates();
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0].accountName).toBe('Chase Sapphire');
+    });
+
+    // The account row can go missing — deleteAccount cascades to transactions,
+    // but a half-finished delete or a restored backup can leave orphans behind.
+    // Those still deduplicate; they just have no name to show.
+    it('still reports rows whose account is missing', async () => {
+      await csvTx({ name: 'AMAZON', amount: 50 });
+      await plaidTx({ name: 'AMAZON', amount: 50 });
+      const pairs = await getCsvPlaidDupeCandidates();
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0].accountName).toBe('');
+    });
+
+    it('lists newest first', async () => {
+      const older = await csvTx({ name: 'AMAZON', amount: 50, date: '2025-01-10' });
+      const newer = await csvTx({ name: 'NETFLIX', amount: 15, date: '2025-02-10' });
+      await plaidTx({ name: 'AMAZON', amount: 50, date: '2025-01-10' });
+      await plaidTx({ name: 'NETFLIX', amount: 15, date: '2025-02-10' });
+      const pairs = await getCsvPlaidDupeCandidates();
+      expect(pairs.map((p) => p.csvId)).toEqual([newer, older]);
     });
   });
 

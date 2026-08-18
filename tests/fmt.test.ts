@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo } from '../core/fmt.js';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt } from '../core/fmt.js';
+import { MONTHS } from '../core/dateUtils.js';
 import { bar, truncate } from '../tui/charUtils.js';
 
 describe('fmt', () => {
@@ -171,5 +172,35 @@ describe('fmtTimeAgo', () => {
     const now = Date.now();
     vi.setSystemTime(now + 5 * 24 * 60 * 60_000);
     expect(fmtTimeAgo(now)).toBe('5 days ago');
+  });
+});
+
+describe('fmtSyncedAt', () => {
+  // A fixed clock keeps the day-boundary cases from drifting with the real date.
+  const NOW = new Date('2026-07-29T12:00:00Z').getTime();
+  const DAY = 24 * 60 * 60 * 1000;
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); });
+  afterEach(() => vi.useRealTimers());
+
+  it('returns "never" for null', () => {
+    expect(fmtSyncedAt(null)).toBe('never');
+  });
+
+  it('delegates to fmtTimeAgo within the last 24 hours', () => {
+    expect(fmtSyncedAt(NOW - 5 * 60_000)).toBe('5 min ago');
+    expect(fmtSyncedAt(NOW - 20 * 60 * 60_000)).toBe('20 hr ago');
+  });
+
+  it('switches to a plain date once "N days ago" stops being scannable', () => {
+    const dt = new Date(NOW - 3 * DAY);
+    expect(fmtSyncedAt(NOW - 3 * DAY)).toBe(`${MONTHS[dt.getMonth()]} ${dt.getDate()}`);
+    expect(fmtSyncedAt(NOW - 3 * DAY)).not.toContain('days ago');
+  });
+
+  it('picks the date arm exactly at the 24-hour boundary', () => {
+    const dt = new Date(NOW - DAY);
+    expect(fmtSyncedAt(NOW - DAY)).toBe(`${MONTHS[dt.getMonth()]} ${dt.getDate()}`);
+    // One millisecond inside the window is still relative.
+    expect(fmtSyncedAt(NOW - DAY + 1)).toBe('23 hr ago');
   });
 });

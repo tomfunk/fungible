@@ -1,3 +1,5 @@
+import { MONTHS } from './dateUtils.js';
+
 export function fmt(n: number, decimals = 2): string {
   return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }
@@ -47,6 +49,15 @@ export function fmtTimeAgo(ms: number | null): string {
   if (diffHr < 24) return `${diffHr} hr ago`;
   const diffDays = Math.floor(diffHr / 24);
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+}
+
+/** Sync recency for an Accounts row: relative within a day, then a plain date.
+ *  Mirrors fmtTimeAgo's null → 'never'. */
+export function fmtSyncedAt(ms: number | null): string {
+  if (ms === null) return 'never';
+  if (Date.now() - ms < 24 * 60 * 60 * 1000) return fmtTimeAgo(ms);
+  const dt = new Date(ms);
+  return `${MONTHS[dt.getMonth()]} ${dt.getDate()}`;
 }
 
 export function fmtSpan(earliest: string | null, latest: string | null): string {
