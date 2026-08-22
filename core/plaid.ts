@@ -29,15 +29,34 @@ export function getPlaidClient(): PlaidApi {
   return new PlaidApi(config);
 }
 
-export async function createLinkToken(userId: string, daysRequested?: number) {
+/**
+ * Creates a link_token for the Link flow.
+ *
+ * Passing `accessToken` puts Link in *update mode*, which re-authorizes an
+ * existing Item in place. This is the difference between updating a connection
+ * and replacing it: update mode keeps the Item's `item_id`, `account_id`s and
+ * `transaction_id`s, so nothing downstream sees new accounts or duplicate
+ * transactions. Creating a link_token without it always mints a brand-new Item,
+ * even when the user re-authenticates at the same bank.
+ *
+ * Update mode forbids `products` and every product-specific parameter, which
+ * includes `transactions.days_requested` — so `daysRequested` is ignored when
+ * updating. That window is fixed when the Item is created and cannot be
+ * widened later. See https://plaid.com/docs/link/update-mode/
+ */
+export async function createLinkToken(userId: string, daysRequested?: number, accessToken?: string) {
   const response = await getPlaidClient().linkTokenCreate({
     user: { client_user_id: userId },
     client_name: 'Fungible',
-    products: [Products.Transactions],
     country_codes: [CountryCode.Us],
     language: 'en',
-    // Omitting transactions lets Plaid apply its 90-day default
-    ...(daysRequested ? { transactions: { days_requested: daysRequested } } : {}),
+    ...(accessToken
+      ? { access_token: accessToken }
+      : {
+          products: [Products.Transactions],
+          // Omitting transactions lets Plaid apply its 90-day default
+          ...(daysRequested ? { transactions: { days_requested: daysRequested } } : {}),
+        }),
   });
   return response.data.link_token;
 }

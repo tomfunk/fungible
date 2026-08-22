@@ -203,7 +203,7 @@ export async function initDb() {
     'Income', 'Transfer', 'Food & Drink', 'Shopping', 'Transportation',
     'Travel', 'Bills & Utilities', 'Insurance', 'Medical', 'Personal Care',
     'Childcare', 'Entertainment', 'Home', 'Services', 'Fees',
-    'Government', 'Taxes', 'Loan Payment', 'Uncategorized',
+    'Government', 'Taxes', 'Loan Payment', 'Subscriptions', 'Uncategorized',
   ];
   await db.batch(
     defaultCategories.map((cat) => ({

@@ -37,7 +37,10 @@ export function Rules() {
   const catDetails = useQuery(() => api.rules.getCategoryDetails(), [reloadKey]) ?? [];
   const hiddenSet = useQuery(() => api.queries.getHiddenCategorySet(), [reloadKey]);
   const uncategorized = useQuery(() => api.rules.getTotalUncategorizedCount(), [reloadKey]) ?? 0;
-  const accounts = useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [];
+  // Not-yet-synced institution placeholders have no transactions — keep them out
+  // of the account picker.
+  const accounts = (useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [])
+    .filter((a) => !a.awaitingFirstSync);
   const accountLabel = (id: string | null): string => {
     if (!id) return '';
     const a = accounts.find((x) => x.id === id);

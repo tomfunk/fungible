@@ -119,7 +119,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     void getHiddenCategorySet().then(setHiddenSet);
     void getAllCategories().then(setCategories);
     void getCategoryDetails().then(setCatDetails);
-    void getLinkedAccounts().then(setAccounts);
+    // Drop not-yet-synced institution placeholders — they have no transactions,
+    // so they don't belong in an account picker.
+    void getLinkedAccounts().then((accts) => setAccounts(accts.filter((a) => !a.awaitingFirstSync)));
   }
 
   // Tag-rule form field order (pattern is hidden/ignored for match type 'all').
