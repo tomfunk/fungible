@@ -13,8 +13,15 @@ export function getPlaidClient(): PlaidApi {
   const env = process.env.PLAID_ENV ?? 'sandbox';
   const basePath = PlaidEnvironments[env as keyof typeof PlaidEnvironments];
   if (!basePath) {
+    // Plaid retired the "development" tier. Anyone whose linking appeared to work on
+    // that value was silently reaching production (the SDK's default basePath), so
+    // point them at production rather than letting them downgrade to sandbox data.
+    const hint =
+      env === 'development'
+        ? ' Plaid retired the "development" tier. If your bank connection was working before, you were reaching Plaid production — set PLAID_ENV=production to keep that access. Use "sandbox" only for test data.'
+        : '';
     throw new Error(
-      `PLAID_ENV="${env}" is not a valid Plaid environment. Valid values: ${Object.keys(PlaidEnvironments).join(', ')}.`
+      `PLAID_ENV="${env}" is not a valid Plaid environment. Valid values: ${Object.keys(PlaidEnvironments).join(', ')}.${hint}`
     );
   }
   const config = new Configuration({
