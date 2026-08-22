@@ -20,6 +20,7 @@ import {
   getNetWorthHistory,
   getAccountsWithBalances,
   getLinkedAccounts,
+  getLinkedItems,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -850,5 +851,103 @@ describe('getNetWorthHistory accountIds filter', () => {
   it('returns empty when accountIds is an empty array', async () => {
     const hist = await getNetWorthHistory('month', []);
     expect(hist).toHaveLength(0);
+  });
+});
+
+describe('getLinkedItems', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM plaid_items');
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM sync_state');
+  });
+
+  const addItem = (
+    itemId: string,
+    over: { institution?: string | null; lastSyncedAt?: number | null; daysRequested?: number | null } = {},
+  ) =>
+    db.execute({
+      sql: `INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested)
+            VALUES (?, 'tok', ?, ?, ?)`,
+      args: [itemId, over.institution ?? itemId, over.lastSyncedAt ?? null, over.daysRequested ?? null],
+    });
+
+  const addAccount = (id: string, itemId: string | null) =>
+    db.execute({
+      sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
+      args: [id, id, itemId],
+    });
+
+  const addCursor = (itemId: string) =>
+    db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: [itemId, 'cur'] });
+
+  it('returns one row per item, not per account', async () => {
+    await addItem('item-a', { institution: 'Chase' });
+    await addAccount('acct-1', 'item-a');
+    await addAccount('acct-2', 'item-a');
+
+    const rows = await getLinkedItems();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ item_id: 'item-a', institution_name: 'Chase', account_count: 2 });
+  });
+
+  it('counts only the accounts belonging to each item', async () => {
+    await addItem('item-a');
+    await addItem('item-b');
+    await addAccount('acct-1', 'item-a');
+    await addAccount('acct-2', 'item-b');
+    await addAccount('acct-3', 'item-b');
+    // A manual account has no item and must not inflate anyone's count.
+    await addAccount('manual-house', null);
+
+    const rows = await getLinkedItems();
+    expect(rows.map((r) => [r.item_id, r.account_count])).toEqual([['item-a', 1], ['item-b', 2]]);
+  });
+
+  it('reports an item with no accounts and no sync as awaiting its first sync', async () => {
+    await addItem('item-new', { institution: 'Capital One' });
+    const [row] = await getLinkedItems();
+    expect(row.awaitingFirstSync).toBe(true);
+    expect(row.account_count).toBe(0);
+    expect(row.last_synced_at).toBeNull();
+  });
+
+  it('does not call an item awaiting first sync once it has accounts', async () => {
+    await addItem('item-a');
+    await addAccount('acct-1', 'item-a');
+    const [row] = await getLinkedItems();
+    expect(row.awaitingFirstSync).toBe(false);
+  });
+
+  it('does not call an item awaiting first sync once a sync has completed', async () => {
+    // deleteAccount leaves plaid_items behind, so a synced item can legitimately
+    // have zero accounts — it must not read as "awaiting first sync" forever.
+    await addItem('item-a', { lastSyncedAt: 1_770_000_000_000 });
+    const [row] = await getLinkedItems();
+    expect(row.awaitingFirstSync).toBe(false);
+    expect(row.account_count).toBe(0);
+    expect(row.last_synced_at).toBe(1_770_000_000_000);
+  });
+
+  it('reports whether a sync cursor is stored', async () => {
+    await addItem('item-a');
+    await addItem('item-b');
+    await addCursor('item-a');
+
+    const rows = await getLinkedItems();
+    expect(rows.find((r) => r.item_id === 'item-a')!.hasCursor).toBe(true);
+    // No cursor means the next sync replays this item's whole history.
+    expect(rows.find((r) => r.item_id === 'item-b')!.hasCursor).toBe(false);
+  });
+
+  it('carries days_requested through, leaving the pre-column NULL alone', async () => {
+    await addItem('item-a', { daysRequested: 730 });
+    await addItem('item-b');
+    const rows = await getLinkedItems();
+    expect(rows.find((r) => r.item_id === 'item-a')!.days_requested).toBe(730);
+    expect(rows.find((r) => r.item_id === 'item-b')!.days_requested).toBeNull();
+  });
+
+  it('returns nothing when no items are linked', async () => {
+    expect(await getLinkedItems()).toEqual([]);
   });
 });

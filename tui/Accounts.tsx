@@ -9,7 +9,7 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
-import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import { getLinkedAccounts, getCsvAccounts, getLinkedItems, type LinkedAccount, type CsvAccount, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
@@ -26,7 +26,7 @@ import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, Edi
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type MainView = 'accounts' | 'add-data' | 'dupes';
+type MainView = 'accounts' | 'links' | 'add-data' | 'dupes';
 type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
 type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr' | 'excluded';
 
@@ -166,6 +166,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [editApr, setEditApr] = useState('');
   const [editExcluded, setEditExcluded] = useState(false);
 
+  // Links view state — one row per Plaid connection, not per account.
+  const [linkedItems, setLinkedItems] = useState<LinkedItem[]>([]);
+  const [itemCursor, setItemCursor] = useState(0);
+
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
@@ -221,6 +225,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   async function loadAccounts(): Promise<LinkedAccount[]> {
     const accts = await getLinkedAccounts();
     setLinkedAccounts(accts);
+    // Cheap item-level query; kept in step with the account list so a sync or a
+    // link updates both views at once.
+    void getLinkedItems().then((items) => {
+      setLinkedItems(items);
+      setItemCursor((c) => Math.min(c, Math.max(0, items.length - 1)));
+    });
     // Deliberately not awaited. The dupe scan is an unindexed self-join over the
     // whole transactions table — measured at 5s for 20k rows and 49s for 40k
     // once CSV imports are present. Nothing here needs it, and awaiting it after
@@ -502,7 +512,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (syncStatus === 'error') { setSyncStatus('idle'); setSyncMsg(''); }
 
     // Global nav (only when not deep in a multi-step flow)
-    const atTop = (mainView === 'accounts' && acctMode === 'list') || (mainView === 'add-data' && addStep === 'landing');
+    const atTop = (mainView === 'accounts' && acctMode === 'list')
+      || mainView === 'links'
+      || (mainView === 'add-data' && addStep === 'landing');
 
     if (atTop) {
       if (handleNavKey(input, 'accounts', onNavigate)) return;
@@ -589,7 +601,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       // list mode
       if (key.escape) { onNavigate('dashboard'); return; }
-      if (key.tab) { setMainView('add-data'); return; }
+      if (key.tab) { setMainView('links'); return; }
       if (key.upArrow)   { setAcctCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
       // A placeholder row has no accounts row behind it, so edit and delete
@@ -615,7 +627,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
 
-      if (input === 'r' && linkedAccounts[acctCursor]) {
+      if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
+      return;
+    }
+
+    // ── Links view ────────────────────────────────────────────────────────────
+    // Connection-level actions live here rather than on an account row: they all
+    // act on the item, and doing them from an account row implied a scope the
+    // action never had.
+    if (mainView === 'links') {
+      if (key.escape) { setMainView('accounts'); return; }
+      if (key.tab) { setMainView('add-data'); return; }
+      if (key.upArrow)   { setItemCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setItemCursor((c) => Math.min(linkedItems.length - 1, c + 1)); return; }
+      if (input === 'r' && linkedItems[itemCursor]) {
         setMainView('add-data');
         setDaysInput(String(defaultDays));
         setDaysError('');
@@ -813,6 +838,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       <Box marginTop={1}>
         <Box gap={3}>
           <Text bold color={mainView === 'accounts' ? C_ACCENT : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
+          <Text bold color={mainView === 'links' ? C_ACCENT : undefined} dimColor={mainView !== 'links'}>
+            Links{failingItems.size > 0 ? <Text color={C_NEGATIVE}> ⚠</Text> : ''}
+          </Text>
           <Text bold color={mainView === 'add-data' ? C_ACCENT : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
           <Text bold color={mainView === 'dupes' ? C_ACCENT : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupesLoading && dupes.length === 0 ? ' …' : dupes.length > 0 ? ` (${dupes.length})` : ''}
@@ -823,9 +851,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
+            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : ''}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
+            : mainView === 'links'
+            ? '↑↓ select  ·  [r] repair link  ·  [s] sync'
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
@@ -948,6 +978,62 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             );
           })()}
         </>
+      )}
+
+      {/* ── Links view ────────────────────────────────────────────────── */}
+      {mainView === 'links' && (
+        <Box flexDirection="column" marginTop={1}>
+          {linkedItems.length === 0 ? (
+            <>
+              <Text dimColor>No bank connections yet.</Text>
+              <Text dimColor>Tab → Add Data → [l] link a bank.</Text>
+            </>
+          ) : (
+            <>
+              {linkedItems.map((item, i) => {
+                const isSelected = i === itemCursor;
+                const failing = failingItems.has(item.item_id);
+                return (
+                  <SelectableRow key={item.item_id} selected={isSelected}>
+                    <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
+                      {truncate(item.institution_name ?? '(unknown institution)', 24).padEnd(24)}
+                    </Text>
+                    <Text dimColor>
+                      {`${item.account_count} account${item.account_count !== 1 ? 's' : ''}`.padEnd(12)}
+                    </Text>
+                    <Text dimColor>
+                      {/* Locked at link time — the only way to widen it is a new item. */}
+                      {(item.days_requested ? `${item.days_requested}d history` : '90d (default)').padEnd(16)}
+                    </Text>
+                    <Text dimColor>
+                      {failing
+                        ? <Text color={C_NEGATIVE}>⚠ sync failed</Text>
+                        : item.awaitingFirstSync
+                        ? <Text color={C_WARNING}>◷ awaiting first sync</Text>
+                        : item.last_synced_at !== null
+                        ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(item.last_synced_at)}</Text></Text>
+                        : <Text color={C_WARNING}>never synced</Text>}
+                    </Text>
+                    {/* No cursor means the next sync replays the item's whole history. */}
+                    {!item.hasCursor && !item.awaitingFirstSync && <Text dimColor>· full replay pending</Text>}
+                  </SelectableRow>
+                );
+              })}
+
+              <Box marginTop={1}><Divider /></Box>
+              <Text dimColor>
+                {linkedItems.length} connection{linkedItems.length !== 1 ? 's' : ''}
+                {failingItems.size > 0 && <Text color={C_NEGATIVE}>  ·  {failingItems.size} failing</Text>}
+              </Text>
+              {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text>}
+
+              <Box marginTop={1} flexDirection="column">
+                <Text dimColor>[r] repair link  — reconnect this institution through Plaid</Text>
+                <Text dimColor>[s] sync        — re-sync every connection now</Text>
+              </Box>
+            </>
+          )}
+        </Box>
       )}
 
       {/* ── Dupes view ────────────────────────────────────────────────── */}

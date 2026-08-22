@@ -1619,6 +1619,29 @@ describe('Accounts', () => {
     );
   }
 
+  /**
+   * Tab from Accounts to a named view, so tests don't hard-code how many tabs
+   * sit between them. Asserting on view-specific content matters here: every
+   * tab's label is in the header on every view, so waiting for "Add Data" would
+   * pass without having navigated anywhere.
+   */
+  const VIEW_MARKER = {
+    links: 'connection',                 // Links panel footer, or its empty state
+    'add-data': '[l] Link a bank account',
+    dupes: 'duplicate',                  // "No duplicate candidates found." / "Checking for duplicates…"
+  } as const;
+
+  async function tabTo(r: ReturnType<typeof render>, view: keyof typeof VIEW_MARKER) {
+    const order = ['links', 'add-data', 'dupes'] as const;
+    for (let i = 0; i <= order.indexOf(view); i++) {
+      r.stdin.write('\t');
+      // Consecutive writes coalesce into one chunk, which ink reads as a single
+      // Tab — the gap keeps each press its own input event.
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    await waitFor(() => expect(flat(r)).toContain(VIEW_MARKER[view]));
+  }
+
   it('renders app title and Accounts tab', () => {
     const r = accounts();
     const f = frame(r);
@@ -1828,8 +1851,7 @@ describe('Accounts', () => {
 
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('Test Checking'));
-      r.stdin.write('\t');                                  // → Add Data
-      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      await tabTo(r, 'add-data');
       r.stdin.write('l');                                   // → history-window prompt
       await waitFor(() => expect(flat(r)).toContain('days'));
       r.stdin.write('\r');                                  // → starts the link
@@ -1857,8 +1879,7 @@ describe('Accounts', () => {
 
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('Test Checking'));
-      r.stdin.write('\t');
-      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      await tabTo(r, 'add-data');
       r.stdin.write('l');
       await waitFor(() => expect(flat(r)).toContain('days'));
       r.stdin.write('\r');
@@ -1892,8 +1913,7 @@ describe('Accounts', () => {
 
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('Test Checking'));
-      r.stdin.write('\t');
-      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      await tabTo(r, 'add-data');
       r.stdin.write('l');
       await waitFor(() => expect(flat(r)).toContain('days'));
       r.stdin.write('\r');
@@ -1911,8 +1931,7 @@ describe('Accounts', () => {
 
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('Test Checking'));
-      r.stdin.write('\t');
-      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      await tabTo(r, 'add-data');
       r.stdin.write('l');
       await waitFor(() => expect(flat(r)).toContain('days'));
       r.stdin.write('\r');
@@ -1934,9 +1953,7 @@ describe('Accounts', () => {
 
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('Test Checking'));
-      r.stdin.write('\t');                                   // → Add Data
-      await waitFor(() => expect(flat(r)).toContain('Add Data'));
-      r.stdin.write('\t');                                   // → Dupes
+      await tabTo(r, 'dupes');
       await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
       expect(flat(r)).not.toContain('No duplicate candidates found.');
     });
@@ -1948,9 +1965,7 @@ describe('Accounts', () => {
 
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('Test Checking'));
-      r.stdin.write('\t');
-      await waitFor(() => expect(flat(r)).toContain('Add Data'));
-      r.stdin.write('\t');
+      await tabTo(r, 'dupes');
       await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
 
       finish([]);
@@ -2118,6 +2133,107 @@ describe('Accounts', () => {
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('House'));
       expect(flat(r)).toContain('synced Jun 12');
+    });
+  });
+
+  // ── Links tab ──────────────────────────────────────────────────────────────
+  // Connection-level view: one row per Plaid item, not per account. The actions
+  // that belong to an item (repair now, update mode and replace later) live here
+  // rather than on an account row, where they implied a scope they never had.
+  describe('links tab', () => {
+    beforeEach(async () => {
+      await db.execute('DELETE FROM accounts');
+      await db.execute('DELETE FROM plaid_items');
+      await db.execute('DELETE FROM sync_state');
+    });
+
+    const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+      db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+        args: [itemId, 'tok', institution, lastSyncedAt],
+      });
+
+    const addAccount = (id: string, itemId: string) =>
+      db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
+        args: [id, id, itemId],
+      });
+
+    it('lists one row per connection, with its account count', async () => {
+      await addItem('item-chase', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-chase');
+      await addAccount('acct-2', 'item-chase');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      const f = flat(r);
+      // Two accounts, one row — the whole point of the view.
+      expect(f).toContain('Chase');
+      expect(f).toContain('2 accounts');
+      expect(f).toContain('1 connection');
+    });
+
+    it('shows the history window, and names the default when none was recorded', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      // days_requested is NULL here, which means Plaid's 90-day default applied.
+      expect(flat(r)).toContain('90d (default)');
+    });
+
+    it('flags a connection awaiting its first sync', async () => {
+      await addItem('item-new', 'Capital One', null);
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('awaiting first sync');
+    });
+
+    it('flags a connection with no stored cursor as due a full replay', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('full replay pending');
+    });
+
+    it('does not flag a replay once a cursor is stored', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+      await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: ['item-a', 'cur'] });
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).not.toContain('full replay pending');
+    });
+
+    it('[r] opens the link flow from the Links view', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      r.stdin.write('r');
+      await waitFor(() => expect(flat(r)).toContain('Transaction History Window'));
+    });
+
+    it('empty state points at Add Data', async () => {
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('No bank connections yet.');
+    });
+
+    it('repair is no longer offered from an account row', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts({ showHints: true });
+      await waitFor(() => expect(flat(r)).toContain('acct-1'));
+      // It moved to the Links tab; the accounts hint must not still advertise it.
+      expect(flat(r)).not.toContain('[r] repair link');
     });
   });
 });

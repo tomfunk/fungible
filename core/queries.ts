@@ -687,6 +687,59 @@ export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   return [...placeholders, ...accounts];
 }
 
+/**
+ * One row per Plaid connection, for the Links view.
+ *
+ * Deliberately item-shaped rather than account-shaped: the things this view
+ * exists to manage — the sync cursor, the history window, credential repair,
+ * replacing a connection — are all properties of the item, not of the accounts
+ * hanging off it. getLinkedAccounts answers a different question and flattens
+ * the item away.
+ */
+export type LinkedItem = {
+  item_id: string;
+  institution_name: string | null;
+  // Epoch ms of the last sync that ran to completion, written last in
+  // syncTransactions. NULL means no sync has ever finished for this item.
+  last_synced_at: number | null;
+  // Locked in at link time and unchangeable afterwards — Plaid rejects a wider
+  // window on an item that already has Transactions. NULL predates the column,
+  // in which case Plaid's 90-day default applied.
+  days_requested: number | null;
+  account_count: number;
+  // Linked, but the first sync has not landed. Same two-clause rule as
+  // getLinkedAccounts uses for its placeholder rows, and load-bearing for the
+  // same reasons: last_synced_at alone would mislabel an item whose sync
+  // succeeded but returned no accounts, and the count alone would resurrect an
+  // item whose accounts were deleted (deleteAccount leaves plaid_items behind).
+  awaitingFirstSync: boolean;
+  // Whether a /transactions/sync cursor is stored. No cursor means the next
+  // sync replays the item's full history from the start.
+  hasCursor: boolean;
+};
+
+export async function getLinkedItems(): Promise<LinkedItem[]> {
+  const result = await db.execute(`
+    SELECT pi.item_id, pi.institution_name, pi.last_synced_at, pi.days_requested,
+           (SELECT COUNT(*) FROM accounts a WHERE a.item_id = pi.item_id) as account_count,
+           (SELECT COUNT(*) FROM sync_state s WHERE s.account_id = pi.item_id) as cursor_count
+    FROM plaid_items pi
+    ORDER BY pi.institution_name, pi.item_id
+  `);
+  return (result.rows as unknown as {
+    item_id: string; institution_name: string | null; last_synced_at: number | null;
+    days_requested: number | null; account_count: number; cursor_count: number;
+  }[]).map((r) => ({
+    item_id: r.item_id,
+    institution_name: r.institution_name,
+    last_synced_at: r.last_synced_at === null ? null : Number(r.last_synced_at),
+    days_requested: r.days_requested === null ? null : Number(r.days_requested),
+    account_count: Number(r.account_count),
+    awaitingFirstSync: r.last_synced_at === null && Number(r.account_count) === 0,
+    hasCursor: Number(r.cursor_count) > 0,
+  }));
+}
+
 export type CsvAccount = { id: string; name: string; mask: string | null };
 
 export async function getCsvAccounts(): Promise<CsvAccount[]> {
