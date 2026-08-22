@@ -219,8 +219,8 @@ export const registry = {
   sync: {
     // Wrap so every user-triggered sync records its outcome in the shared store,
     // which drives the renderer banner + row badges via the sync-status push.
-    syncAll: async (force?: boolean) => {
-      const results = await syncAll(force);
+    syncAll: async (force?: boolean, itemIds?: string[]) => {
+      const results = await syncAll(force, itemIds);
       setSyncResult(results);
       return results;
     },

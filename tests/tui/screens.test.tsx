@@ -810,6 +810,58 @@ describe('Transactions', () => {
       expect(f).toContain('Saved:');
     });
   });
+
+  // The tag panel titles itself with whatever row the cursor is on, so its
+  // applied-tag marks have to track that row too. Under a "lacks" filter the
+  // row leaves the list the moment it's tagged and the next one slides into
+  // the same index — the marks must re-read for the new row instead of still
+  // showing the tag that was just applied to the old one.
+  const LACKS_BOTH = { tags: [{ name: 'travel', mode: 'lacks' as const }, { name: 'work', mode: 'lacks' as const }] };
+
+  it('tag panel re-reads the tags when tagging drops the row out of a lacks filter', async () => {
+    const r = render(
+      <W>
+        <FilterProvider initial={LACKS_BOTH}>
+          <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row
+    r.stdin.write('g');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Space/Enter toggle'); // panel open
+      expect(f).toContain('○ travel');
+    });
+    r.stdin.write(' '); // apply 'travel' → the row no longer satisfies the filter
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Trader Joes'); // dropped from the list and the panel title
+      expect(f).toContain('Amazon');          // next row slid into the cursor
+      expect(f).toContain('○ travel');        // ...and it does not carry the tag
+    });
+  });
+
+  it('tag panel closes when tagging empties the list', async () => {
+    const r = render(
+      <W>
+        <FilterProvider initial={LACKS_BOTH}>
+          <Transactions onNavigate={noop} showHints={false} initialFilter={{ from: '2026-05-14', to: '2026-05-14' }} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('g');
+    await waitFor(() => expect(frame(r)).toContain('Space/Enter toggle'));
+    r.stdin.write(' '); // the only row leaves the filter
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('0 transactions');
+      expect(f).not.toContain('Space/Enter toggle'); // panel gone
+    });
+    r.stdin.write('/'); // ...and list-mode keys work again rather than typing into the panel
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
+  });
 });
 
 // ── Trends ────────────────────────────────────────────────────────────────────

@@ -484,7 +484,11 @@ export function Accounts() {
             showStatus(`Connected ${institution ?? 'bank'} — syncing…`, 4000);
             reload();
             setTab('accounts');
-            void forceSync();
+            // Trigger scoped sync for newly linked institution
+            void api.queries.getLinkedAccounts().then((accts) => {
+              const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
+              if (itemIds.length > 0) void api.sync.syncAll(true, itemIds);
+            });
           }}
         />
       )}
