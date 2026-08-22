@@ -93,7 +93,7 @@ npm run gui
 
 The GUI reads/writes the same `~/.fungible/` database as the TUI — switch freely.
 
-For first-launch caveats on unsigned installers (Gatekeeper, SmartScreen) and packaging details, see [`docs/gui.md`](docs/gui.md).
+For first-launch caveats on the un-notarized installers (Gatekeeper, SmartScreen) and packaging details, see [`docs/gui.md`](docs/gui.md).
 
 ### Storage
 

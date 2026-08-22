@@ -27,6 +27,15 @@ asarUnpack:
 npmRebuild: false
 
 mac:
+  # Without this, electron-builder finds no Developer ID cert in CI, skips
+  # signing entirely, and ships the .app carrying only the linker-signed ad-hoc
+  # signature Electron's prebuilt binary came with. That signature no longer
+  # matches the repacked bundle, so Gatekeeper rejects a quarantined download
+  # outright with "damaged and can't be opened" — a dead end with no "Open
+  # Anyway" escape hatch (issue #144). '-' re-signs the finished bundle ad-hoc,
+  # which verifies cleanly; the download still warns (unnotarized), but the
+  # warning is the dismissable kind. Real fix is a Developer ID + notarization.
+  identity: '-'
   target:
     - target: dmg
       arch: [arm64, x64]
