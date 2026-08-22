@@ -673,6 +673,14 @@ function LinkBankModal({
     });
   }, []);
 
+  /** Closing while the browser flow is open abandons it, so tell main to tear it
+   *  down — otherwise it holds the single link slot until it times out and the
+   *  user can't start another link, or update a broken one, until then. */
+  function close() {
+    if (running) void api.plaid.cancelLink();
+    onClose();
+  }
+
   async function start() {
     let n: number | undefined;
     if (!updateItem) {
@@ -694,7 +702,7 @@ function LinkBankModal({
   }
 
   return (
-    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={onClose}>
+    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={close}>
       {running ? (
         <div>
           <p className="accent">⟳ Complete the Plaid flow in your browser, then return here.</p>

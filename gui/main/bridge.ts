@@ -2,13 +2,17 @@ import { dialog, ipcMain } from 'electron';
 import { parseCSV } from '../../core/csv.js';
 import { isPlaidConfigured } from '../../core/plaid.js';
 import { getDefaultDaysRequested } from '../../core/settings.js';
-import { runPlaidLink } from './plaid-link.js';
+import { cancelActivePlaidLink, runPlaidLink } from './plaid-link.js';
 import { registry } from './registry.js';
 
 const plaid = {
   isConfigured: async (): Promise<boolean> => isPlaidConfigured(),
   getDefaultDaysRequested,
   linkBank: (daysRequested?: number, updateItemId?: string) => runPlaidLink(daysRequested, updateItemId),
+  // Closing the link dialog abandons the flow. Without telling main, the flow
+  // stays in flight for its full 10-minute timeout and refuses every other link
+  // or update the user tries in the meantime.
+  cancelLink: async (): Promise<void> => cancelActivePlaidLink(),
 };
 
 const files = {

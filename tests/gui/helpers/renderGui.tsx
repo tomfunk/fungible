@@ -17,6 +17,7 @@ const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
     linkBank: async () => {
       throw new Error('plaid link not available in tests');
     },
+    cancelLink: async () => {},
   },
   files: { pickCsv: async () => null },
 };

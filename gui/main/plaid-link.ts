@@ -11,10 +11,18 @@ import { isPlaidConfigured } from '../../core/plaid.js';
 // The pages and the persistence live in core/plaid-link-flow.ts, shared with
 // scripts/link.ts; only the server lifecycle below is Electron-specific.
 
+type LinkParams = { daysRequested?: number; updateItemId?: string };
+
 let activeLink: Promise<{ institutionName: string | null; updateMode: boolean }> | null = null;
+// The parameters `activeLink` was started with. Load-bearing: coalescing onto an
+// in-flight flow is only safe when the new call means the same thing.
+let activeParams: LinkParams | null = null;
 let cancelActive: (() => void) | null = null;
 
 const MAX_CALLBACK_BODY = 1_000_000;
+
+const sameFlow = (a: LinkParams, b: LinkParams) =>
+  a.updateItemId === b.updateItemId && a.daysRequested === b.daysRequested;
 
 /** Abort an in-progress link flow (e.g. window closed): closes the callback
  *  server, rejects the pending promise, and allows a fresh retry. */
@@ -28,16 +36,32 @@ export function cancelActivePlaidLink() {
  *
  * Passing `updateItemId` updates the credentials on that existing connection
  * instead of adding a new one, keeping its accounts and transactions intact.
+ *
+ * Only one flow runs at a time. A repeat of the flow already running (a double
+ * click) rides along on it; a *different* flow is refused rather than silently
+ * handed the wrong promise — returning an add-mode flow to an update-mode caller
+ * would exchange the public token with no `updateItemId`, creating a second Item
+ * and duplicating every account and transaction on the connection the user was
+ * trying to repair.
  */
 export function runPlaidLink(
   daysRequested?: number,
   updateItemId?: string,
 ): Promise<{ institutionName: string | null; updateMode: boolean }> {
-  if (activeLink) return activeLink;
+  const params: LinkParams = { daysRequested, updateItemId };
+  if (activeLink) {
+    if (activeParams && sameFlow(activeParams, params)) return activeLink;
+    return Promise.reject(new Error(
+      'Another bank connection is already in progress — finish it in your browser, or close that dialog, before starting this one.',
+    ));
+  }
   if (!isPlaidConfigured()) {
     return Promise.reject(new Error('Plaid is not configured — set PLAID_CLIENT_ID and PLAID_SECRET in ~/.fungible/.env'));
   }
 
+  // Set before the executor runs, so the `finish`/`catch` teardown below always
+  // clears a value that was already there rather than racing this assignment.
+  activeParams = params;
   activeLink = new Promise((resolve, reject) => {
     void (async () => {
       const days = daysRequested !== undefined ? clampDaysRequested(daysRequested) : undefined;
@@ -95,6 +119,7 @@ export function runPlaidLink(
         clearTimeout(timeout);
         setTimeout(() => server.close(), 1000);
         activeLink = null;
+        activeParams = null;
         cancelActive = null;
       }
 
@@ -117,6 +142,7 @@ export function runPlaidLink(
       });
     })().catch((err) => {
       activeLink = null;
+      activeParams = null;
       cancelActive = null;
       reject(err);
     });
