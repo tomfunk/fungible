@@ -4,7 +4,7 @@ import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
 import { Modal } from '../components/Modal.js';
-import type { LinkedAccount, CsvAccount } from '../../../../core/queries.js';
+import type { LinkedAccount, CsvAccount, LinkedItem } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
@@ -42,6 +42,9 @@ export function Accounts() {
   const [manualOpen, setManualOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  // The connection whose credentials are being updated, if any. Distinct from
+  // linkOpen: that adds a new item, this re-authorizes an existing one.
+  const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
@@ -239,10 +242,10 @@ export function Accounts() {
                     <td className={styles.tdActions}>
                       <button
                         className={styles.rowBtn}
-                        title="Reconnect this institution through Plaid"
-                        onClick={() => setLinkOpen(true)}
+                        title="Update creds for link, keeping its accounts and transactions"
+                        onClick={() => setUpdateItem(item)}
                       >
-                        repair
+                        update link
                       </button>
                     </td>
                   </tr>
@@ -446,6 +449,22 @@ export function Accounts() {
         />
       )}
 
+      {updateItem && (
+        <LinkBankModal
+          updateItem={updateItem}
+          onClose={() => setUpdateItem(null)}
+          onLinked={(institution) => {
+            setUpdateItem(null);
+            // Syncing here is what clears the ⚠ badge: the item's last recorded
+            // sync is the failure that prompted the update, and nothing else
+            // refreshes that state.
+            showStatus(`Updated ${institution ?? 'link'} — syncing…`, 4000);
+            reload();
+            void forceSync();
+          }}
+        />
+      )}
+
       {statusEl}
     </div>
   );
@@ -456,9 +475,14 @@ export function Accounts() {
 function LinkBankModal({
   onClose,
   onLinked,
+  updateItem,
 }: {
   onClose: () => void;
   onLinked: (institution: string | null) => void;
+  /** Set to update an existing connection's credentials instead of adding one.
+   *  Update mode keeps the item's accounts and transactions, and cannot change
+   *  the history window — so the days field is not offered. */
+  updateItem?: LinkedItem;
 }) {
   const [days, setDays] = useState('');
   const [defaultDays, setDefaultDays] = useState(730);
@@ -473,30 +497,57 @@ function LinkBankModal({
   }, []);
 
   async function start() {
-    const n = parseInt(days, 10);
-    if (isNaN(n) || n < 30 || n > 730) {
-      setError('Enter a whole number from 30 to 730');
-      return;
+    let n: number | undefined;
+    if (!updateItem) {
+      n = parseInt(days, 10);
+      if (isNaN(n) || n < 30 || n > 730) {
+        setError('Enter a whole number from 30 to 730');
+        return;
+      }
     }
     setError('');
     setRunning(true);
     try {
-      const { institutionName } = await api.plaid.linkBank(n);
-      onLinked(institutionName);
+      const { institutionName } = await api.plaid.linkBank(n, updateItem?.item_id);
+      onLinked(institutionName ?? updateItem?.institution_name ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Link failed');
+      setError(e instanceof Error ? e.message : updateItem ? 'Update failed' : 'Link failed');
       setRunning(false);
     }
   }
 
   return (
-    <Modal title="Link a bank" onClose={onClose}>
+    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={onClose}>
       {running ? (
         <div>
           <p className="accent">⟳ Complete the Plaid flow in your browser, then return here.</p>
-          <p className="dim">This window updates automatically once the bank is connected.</p>
+          <p className="dim">
+            {updateItem
+              ? 'Sign in with the same bank. Your existing accounts and transactions are kept.'
+              : 'This window updates automatically once the bank is connected.'}
+          </p>
           {error && <p className="neg">{error}</p>}
         </div>
+      ) : updateItem ? (
+        <>
+          <p>
+            Update creds for <strong>{updateItem.institution_name ?? 'this link'}</strong>, keeping its accounts and
+            transactions.
+          </p>
+          <p className="dim">
+            Plaid reopens this connection so you can sign in again. Nothing is re-downloaded and no new accounts are
+            created — the history window stays at {updateItem.days_requested ? `${updateItem.days_requested} days` : 'its default'}.
+          </p>
+          {error && <p className="neg">{error}</p>}
+          <div className={styles.modalActions}>
+            <button className={styles.btnSecondary} onClick={onClose}>
+              Cancel
+            </button>
+            <button className={styles.btnPrimary} onClick={() => void start()}>
+              Open Plaid in browser
+            </button>
+          </div>
+        </>
       ) : (
         <>
           <div className={styles.formGrid}>

@@ -691,7 +691,7 @@ export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
  * One row per Plaid connection, for the Links view.
  *
  * Deliberately item-shaped rather than account-shaped: the things this view
- * exists to manage — the sync cursor, the history window, credential repair,
+ * exists to manage — the sync cursor, the history window, updating credentials,
  * replacing a connection — are all properties of the item, not of the accounts
  * hanging off it. getLinkedAccounts answers a different question and flattens
  * the item away.

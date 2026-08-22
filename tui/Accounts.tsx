@@ -117,6 +117,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Last stderr text from the link subprocess. Read from the long-lived close
   // handler, so it's a ref rather than state.
   const linkErrRef = useRef('');
+  // Whether the Plaid panel is adding a connection or updating an existing
+  // one's credentials — the two flows share the panel but not the wording.
+  const [linkMode, setLinkMode] = useState<'add' | 'update'>('add');
   const [daysInput, setDaysInput] = useState(String(MAX_DAYS_REQUESTED));
   const [daysError, setDaysError] = useState('');
   // Default history window derived from the start date set during setup.
@@ -331,10 +334,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   /** Sync just the given items — used right after a link so the new institution
    *  syncs immediately. Mirrors forceSync but merges its outcome so another
    *  institution's failure badge survives a scoped run. */
-  function syncItems(itemIds: string[]) {
+  function syncItems(itemIds: string[], startMsg = 'Syncing new institution…') {
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
-    setSyncMsg('Syncing new institution…');
+    setSyncMsg(startMsg);
     syncAll(true, itemIds, reportProgress).then((results) => {
       const failed = results.filter((r) => r.error);
       mergeSyncResult(results, itemIds);
@@ -406,7 +409,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     }
   }
 
-  function startPlaidLink(days = 730) {
+  // `updateItemId` re-authorizes that Item in place (Plaid update mode) instead
+  // of linking a new one, which is what keeps its accounts and transactions
+  // intact. The history window can't be changed on an update, so `days` is only
+  // meaningful when adding.
+  function startPlaidLink(days = 730, updateItemId?: string) {
+    setLinkMode(updateItemId ? 'update' : 'add');
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
     setLinkUrl('');
@@ -419,7 +427,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       script,
     ], {
       cwd: new URL('..', import.meta.url).pathname,
-      env: { ...process.env, PLAID_DAYS_REQUESTED: String(days) },
+      env: {
+        ...process.env,
+        PLAID_DAYS_REQUESTED: String(days),
+        ...(updateItemId ? { PLAID_UPDATE_ITEM_ID: updateItemId } : {}),
+      },
     });
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString();
@@ -439,15 +451,26 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     child.on('close', (code: number) => {
       if (code === 0) {
         setLinkStatus('done');
-        setLinkMsg('Bank connected! Press Enter to continue.');
-        // The reload surfaces the institution's placeholder row immediately —
-        // that alone answers "did it work?" even if the sync is slow. The
-        // placeholders *are* the items needing a first sync, so the ids come
-        // from the loaded list rather than out of the link subprocess's stdout.
-        void loadAccounts().then((accts) => {
-          const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
-          if (itemIds.length > 0 && syncStatusRef.current !== 'syncing') syncItems(itemIds);
-        });
+        if (updateItemId) {
+          // The item almost certainly got here by failing to sync, so its badge
+          // and the global banner still show state from before the update.
+          // Syncing just this item clears them and picks up whatever was missed
+          // while the credentials were stale — mergeSyncResult scopes the clear
+          // to the attempted item, leaving other items' failures alone.
+          setLinkMsg('Link updated! Press Enter to continue.');
+          void loadAccounts();
+          if (syncStatusRef.current !== 'syncing') syncItems([updateItemId], 'Syncing updated link…');
+        } else {
+          setLinkMsg('Bank connected! Press Enter to continue.');
+          // The reload surfaces the institution's placeholder row immediately —
+          // that alone answers "did it work?" even if the sync is slow. The
+          // placeholders *are* the items needing a first sync, so the ids come
+          // from the loaded list rather than out of the link subprocess's stdout.
+          void loadAccounts().then((accts) => {
+            const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
+            if (itemIds.length > 0 && syncStatusRef.current !== 'syncing') syncItems(itemIds);
+          });
+        }
       } else if (code !== null) {
         setLinkStatus('error');
         // Keep the stderr reason if we captured one — it says *why* the link
@@ -640,11 +663,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('add-data'); return; }
       if (key.upArrow)   { setItemCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setItemCursor((c) => Math.min(linkedItems.length - 1, c + 1)); return; }
-      if (input === 'r' && linkedItems[itemCursor]) {
+      // Update link goes straight to Plaid in update mode: it re-authorizes this
+      // connection, so there's no history window to ask about (that's fixed when
+      // the item is created) and no new accounts or transactions to create.
+      if (input === 'u' && linkedItems[itemCursor]) {
         setMainView('add-data');
-        setDaysInput(String(defaultDays));
-        setDaysError('');
-        setAddStep('link-days');
+        setAddStep('link-plaid');
+        startPlaidLink(defaultDays, linkedItems[itemCursor].item_id);
         return;
       }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
@@ -855,7 +880,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             : mainView === 'accounts' && acctMode === 'edit'
             ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
             : mainView === 'links'
-            ? '↑↓ select  ·  [r] repair link  ·  [s] sync'
+            ? '↑↓ select  ·  [u] update link  ·  [s] sync'
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
@@ -1028,8 +1053,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text>}
 
               <Box marginTop={1} flexDirection="column">
-                <Text dimColor>[r] repair link  — reconnect this institution through Plaid</Text>
-                <Text dimColor>[s] sync        — re-sync every connection now</Text>
+                <Text dimColor>[u] update link  — update creds for link, keeping its accounts and transactions</Text>
+                <Text dimColor>[s] sync         — re-sync every connection now</Text>
               </Box>
             </>
           )}
@@ -1101,7 +1126,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           {addStep === 'link-plaid' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
-              <Text bold>Link Bank Account</Text>
+              <Text bold>{linkMode === 'update' ? 'Update Link Credentials' : 'Link Bank Account'}</Text>
               <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
                 {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}<Text dimColor>{linkElapsed}</Text>
               </Text>
@@ -1110,6 +1135,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               )}
               {linkStatus === 'running' && (
                 <Text dimColor>Complete the Plaid flow in your browser, then return here.</Text>
+              )}
+              {linkStatus === 'running' && linkMode === 'update' && (
+                <Text dimColor>Your existing accounts and transactions are kept — sign in with the same bank.</Text>
               )}
               {/* The post-link sync runs while this panel is still on screen, so
                   its steps have to be reported here too — otherwise the panel
