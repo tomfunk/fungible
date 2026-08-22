@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
 import { DATA_DIR } from '../core/paths.js';
-import { getSetting, setSetting, daysFromStartDate, DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, START_DATE_BUFFER_DAYS } from '../core/settings.js';
+import { getSetting, setSetting, getDefaultDaysRequested, daysFromStartDate, DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, START_DATE_BUFFER_DAYS } from '../core/settings.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 import { TextInput } from './components/index.js';
 
@@ -89,16 +89,24 @@ export function Setup() {
     process.env['PLAID_ENV'] = PLAID_ENVS[plaidEnvIdx];
   }
 
-  function startLink() {
+  async function startLink() {
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
+    // The history window is locked when Plaid creates the Item, so the start
+    // date saved above has to reach the link script here — it can't be widened
+    // afterwards. Without PLAID_DAYS_REQUESTED the script omits days_requested
+    // entirely and Plaid falls back to 90 days.
+    const days = await getDefaultDaysRequested().catch(() => MAX_DAYS_REQUESTED);
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
       '--no-warnings',
       '--import', 'tsx/esm',
       script,
-    ], { cwd: new URL('..', import.meta.url).pathname });
+    ], {
+      cwd: new URL('..', import.meta.url).pathname,
+      env: { ...process.env, PLAID_DAYS_REQUESTED: String(days) },
+    });
     child.stdout.on('data', (data: Buffer) => {
       const line = data.toString().trim().split('\n').pop() ?? '';
       if (line) setLinkMsg(line);
@@ -195,7 +203,7 @@ export function Setup() {
     }
 
     if (step === 'link-choice') {
-      if (input === 'y') { setStep('linking'); startLink(); return; }
+      if (input === 'y') { setStep('linking'); void startLink(); return; }
       if (input === 'n') { setStep('seed-choice'); return; }
       return;
     }
