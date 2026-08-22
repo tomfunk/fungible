@@ -528,8 +528,12 @@ async function executeToolImpl(
       const rows = await getLinkedAccounts();
       if (!rows.length) return 'No accounts connected.';
       return rows.map((a) =>
-        `${a.nickname ?? a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
-        + (a.excluded ? ' · excluded from net worth' : '')
+        // A just-linked institution has no accounts row yet — say so instead of
+        // printing a row of placeholder nulls.
+        a.awaitingFirstSync
+          ? `${a.institution_name ?? 'New institution'} — linked, awaiting first sync`
+          : `${a.nickname ?? a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
+            + (a.excluded ? ' · excluded from net worth' : '')
       ).join('\n');
     }
 

@@ -117,3 +117,95 @@
 .totalRow .tdName {
   color: var(--text);
 }
+
+.panelFiltered {
+  border-left: 3px solid var(--accent);
+}
+
+.tdDot {
+  width: 22px;
+  text-align: center !important;
+  font-size: 10px;
+  padding-right: 2px !important;
+}
+
+.dotDefault {
+  color: var(--text-dim);
+  opacity: 0.3;
+}
+
+.dotIn {
+  color: var(--pos);
+}
+
+.dotOut {
+  color: var(--text-dim);
+  opacity: 0.4;
+}
+
+.accountRowSelected td {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.seriesRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.seriesPill,
+.seriesPillHidden {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.seriesPillHidden {
+  color: var(--text-dim);
+  opacity: 0.45;
+}
+
+.seriesPill:hover,
+.seriesPillHidden:hover {
+  opacity: 1;
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.filterNote {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resetBtn {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.resetAllBtn {
+  padding: 4px 11px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.resetAllBtn:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.accountRow {
+  cursor: pointer;
+}
+
+.accountRow:hover td {
+  background: var(--bg-hover);
+}

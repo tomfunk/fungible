@@ -174,14 +174,27 @@ The **rule form** is a single panel with fields navigated by `↑ ↓`: Pattern,
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Cycle views: Accounts → Add Data → Dupes |
+| `Tab` | Cycle views: Accounts → Links → Add Data → Dupes |
 | `↑ ↓` | Select account |
 | `Enter` | Edit selected account (nickname, type, subtype, APR — navigated with `↑ ↓`, `← →` to cycle) |
 | `v` | Update value (manual assets only) |
-| `r` | Repair Plaid link for selected account |
 | `s` | Force sync (bypasses 15-min cooldown) |
 | `x` | Delete selected account |
 | `l` | Link a new bank account via Plaid |
+
+**Links** tab lists one row per Plaid connection rather than per account, since a
+single connection can back many accounts.
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Select connection |
+| `u` | Update link — update creds for link, keeping its accounts and transactions |
+| `s` | Force sync (bypasses 15-min cooldown) |
+
+`[u]` runs Plaid in update mode, which re-authorizes the existing connection in
+place. Use it when a connection shows ⚠ sync failed because its login expired.
+It does not create new accounts or re-download transactions, and it cannot widen
+the history window — that is fixed when the connection is first created.
 
 **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 

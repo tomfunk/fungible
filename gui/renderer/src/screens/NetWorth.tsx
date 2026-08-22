@@ -9,7 +9,6 @@ import {
   Tooltip,
   CartesianGrid,
   ReferenceLine,
-  Legend,
 } from 'recharts';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
@@ -40,6 +39,16 @@ function groupByType(accs: AccountBalance[]): TypeBalance[] {
     .sort((a, b) => b.balance - a.balance);
 }
 
+function buildTypeToIds(accs: AccountBalance[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const a of accs) {
+    const key = SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type);
+    const existing = map.get(key);
+    if (existing) existing.push(a.id); else map.set(key, [a.id]);
+  }
+  return map;
+}
+
 function periodLabel(period: string, range: NetWorthGranularity): string {
   if (range === 'year') return period;
   if (range === 'quarter') {
@@ -54,10 +63,19 @@ function periodLabel(period: string, range: NetWorthGranularity): string {
   return `${w} ${y}`;
 }
 
+type SeriesKey = 'assets' | 'liabilities' | 'net';
+const SERIES: { key: SeriesKey; label: string; color: string }[] = [
+  { key: 'assets',      label: 'Assets',      color: CHART.positive },
+  { key: 'liabilities', label: 'Liabilities', color: CHART.negative },
+  { key: 'net',         label: 'Net worth',   color: CHART.accent   },
+];
+
 export function NetWorth() {
   const { navigate } = useNav();
   const [view, setView] = useState<'accounts' | 'types'>('accounts');
   const [range, setRange] = useState<NetWorthGranularity>('month');
+  const [hiddenSeries, setHiddenSeries] = useState<Set<SeriesKey>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string> | null>(null);
 
   useScreenKeys({
     Tab: () => setView((v) => (v === 'accounts' ? 'types' : 'accounts')),
@@ -66,7 +84,11 @@ export function NetWorth() {
   });
 
   const balances = useQuery(() => api.queries.getAccountsWithBalances(), []);
-  const history = useQuery(() => api.queries.getNetWorthHistory(range), [range]);
+  const filterKey = selectedIds ? [...selectedIds].sort().join(',') : '';
+  const history = useQuery(
+    () => api.queries.getNetWorthHistory(range, selectedIds ? [...selectedIds] : undefined),
+    [range, filterKey],
+  );
 
   const accounts = balances?.accounts ?? [];
   const included = accounts.filter((a) => !a.excluded);
@@ -90,6 +112,65 @@ export function NetWorth() {
     net: r.net_worth,
   }));
 
+  const typeToIds = buildTypeToIds(included);
+
+  function toggleSeries(key: SeriesKey) {
+    setHiddenSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleAccount(id: string) {
+    setSelectedIds((prev) => {
+      if (prev === null) return new Set([id]);
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        return next.size === 0 ? null : next;
+      }
+      next.add(id);
+      return next;
+    });
+  }
+
+  function toggleType(label: string) {
+    const ids = typeToIds.get(label) ?? [];
+    if (ids.length === 0) return;
+    setSelectedIds((prev) => {
+      if (prev === null) return new Set(ids);
+      const next = new Set(prev);
+      const allIn = ids.every((id) => next.has(id));
+      if (allIn) {
+        ids.forEach((id) => next.delete(id));
+        return next.size === 0 ? null : next;
+      }
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  const isFiltered = selectedIds !== null;
+  const anyFilterActive = isFiltered || hiddenSeries.size > 0;
+  const totalIncluded = included.length;
+
+  function resetAll() {
+    setSelectedIds(null);
+    setHiddenSeries(new Set());
+  }
+
+  function typeInChart(label: string): boolean {
+    return !isFiltered || (typeToIds.get(label)?.some((id) => selectedIds!.has(id)) ?? false);
+  }
+
+  function renderDot(inChart: boolean) {
+    if (!isFiltered) return <span className={styles.dotDefault}>●</span>;
+    return inChart
+      ? <span className={styles.dotIn}>●</span>
+      : <span className={styles.dotOut}>○</span>;
+  }
+
   return (
     <div className={styles.screen}>
       <KeyHints hints="[1-9·0] screens   [tab] group by type   [r] range   [esc] back" />
@@ -103,7 +184,7 @@ export function NetWorth() {
       ) : (
         <>
           {chartData.length > 0 && (
-            <section className={styles.panel}>
+            <section className={`${styles.panel} ${anyFilterActive ? styles.panelFiltered : ''}`}>
               <div className={styles.panelHeader}>
                 <h2>History</h2>
                 <div className={styles.rangePills}>
@@ -112,7 +193,27 @@ export function NetWorth() {
                       {NW_RANGE_LABELS[r]}
                     </button>
                   ))}
+                  {anyFilterActive && (
+                    <button className={styles.resetAllBtn} onClick={resetAll}>Reset</button>
+                  )}
                 </div>
+              </div>
+              <div className={styles.seriesRow}>
+                {SERIES.map(({ key, label, color }) => (
+                  <button
+                    key={key}
+                    className={hiddenSeries.has(key) ? styles.seriesPillHidden : styles.seriesPill}
+                    style={hiddenSeries.has(key) ? undefined : { borderColor: color, color }}
+                    onClick={() => toggleSeries(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {isFiltered && (
+                  <span className={styles.filterNote}>
+                    {selectedIds!.size} of {totalIncluded} account{totalIncluded !== 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={chartData}>
@@ -124,17 +225,23 @@ export function NetWorth() {
                     labelStyle={tooltipLabelStyle}
                     formatter={(value, name) => [fmt(Number(value)), String(name)]}
                   />
-                  <Legend />
                   <ReferenceLine y={0} stroke={CHART.axis} />
-                  <Area type="monotone" dataKey="assets" name="Assets" stroke={CHART.positive} fill={CHART.positive} fillOpacity={0.15} strokeWidth={1.5} />
-                  <Area type="monotone" dataKey="liabilities" name="Liabilities" stroke={CHART.negative} fill={CHART.negative} fillOpacity={0.15} strokeWidth={1.5} />
-                  <Line type="monotone" dataKey="net" name="Net worth" stroke={CHART.accent} dot={false} strokeWidth={2.5} />
+                  {!hiddenSeries.has('assets') && (
+                    <Area type="monotone" dataKey="assets" name="Assets" stroke={CHART.positive} fill={CHART.positive} fillOpacity={0.15} strokeWidth={1.5} />
+                  )}
+                  {!hiddenSeries.has('liabilities') && (
+                    <Area type="monotone" dataKey="liabilities" name="Liabilities" stroke={CHART.negative} fill={CHART.negative} fillOpacity={0.15} strokeWidth={1.5} />
+                  )}
+                  {!hiddenSeries.has('net') && (
+                    <Line type="monotone" dataKey="net" name="Net worth" stroke={CHART.accent} dot={false} strokeWidth={2.5} />
+                  )}
                 </ComposedChart>
               </ResponsiveContainer>
             </section>
           )}
 
           <div className={styles.columns}>
+            {/* Assets */}
             <section className={styles.panel}>
               <div className={styles.panelHeader}>
                 <h2 className="pos">Assets</h2>
@@ -144,22 +251,39 @@ export function NetWorth() {
               </div>
               <table className={styles.table}>
                 <tbody>
-                  {(view === 'accounts'
-                    ? assets.map((a) => ({
-                        key: a.name + a.balance,
-                        label: a.nickname ?? a.name,
-                        balance: a.balance,
-                        sub: SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type),
-                      }))
-                    : groupByType(assets).map((t) => ({ key: t.label, label: t.label, balance: t.balance, sub: '' }))
-                  ).map((row) => (
-                    <tr key={row.key}>
-                      <td className={styles.tdName}>{row.label}</td>
-                      <td className="num">{fmt(row.balance)}</td>
-                      <td className={`dim ${styles.tdSub}`}>{row.sub}</td>
-                    </tr>
-                  ))}
+                  {view === 'accounts'
+                    ? assets.map((a) => {
+                        const inChart = !isFiltered || selectedIds!.has(a.id);
+                        return (
+                          <tr
+                            key={a.id}
+                            className={`${styles.accountRow} ${isFiltered && inChart ? styles.accountRowSelected : ''} ${isFiltered && !inChart ? 'dim' : ''}`}
+                            onClick={() => toggleAccount(a.id)}
+                          >
+                            <td className={styles.tdDot}>{renderDot(inChart)}</td>
+                            <td className={styles.tdName}>{a.nickname ?? a.name}</td>
+                            <td className="num">{fmt(a.balance)}</td>
+                            <td className={`dim ${styles.tdSub}`}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</td>
+                          </tr>
+                        );
+                      })
+                    : groupByType(assets).map((t) => {
+                        const inChart = typeInChart(t.label);
+                        return (
+                          <tr
+                            key={t.label}
+                            className={`${styles.accountRow} ${isFiltered && inChart ? styles.accountRowSelected : ''} ${isFiltered && !inChart ? 'dim' : ''}`}
+                            onClick={() => toggleType(t.label)}
+                          >
+                            <td className={styles.tdDot}>{renderDot(inChart)}</td>
+                            <td className={styles.tdName}>{t.label}</td>
+                            <td className="num">{fmt(t.balance)}</td>
+                            <td />
+                          </tr>
+                        );
+                      })}
                   <tr className={styles.totalRow}>
+                    <td />
                     <td className={styles.tdName}>Total assets</td>
                     <td className="num pos">{fmt(totalAssets)}</td>
                     <td />
@@ -168,6 +292,7 @@ export function NetWorth() {
               </table>
             </section>
 
+            {/* Liabilities */}
             <section className={styles.panel}>
               <div className={styles.panelHeader}>
                 <h2 className="neg">Liabilities</h2>
@@ -177,16 +302,37 @@ export function NetWorth() {
               ) : (
                 <table className={styles.table}>
                   <tbody>
-                    {(view === 'accounts'
-                      ? liabilities.map((a) => ({ key: a.name + a.balance, label: a.nickname ?? a.name, balance: a.balance }))
-                      : groupByType(liabilities).map((t) => ({ key: t.label, label: t.label, balance: t.balance }))
-                    ).map((row) => (
-                      <tr key={row.key}>
-                        <td className={styles.tdName}>{row.label}</td>
-                        <td className="num">{fmt(row.balance)}</td>
-                      </tr>
-                    ))}
+                    {view === 'accounts'
+                      ? liabilities.map((a) => {
+                          const inChart = !isFiltered || selectedIds!.has(a.id);
+                          return (
+                            <tr
+                              key={a.id}
+                              className={`${styles.accountRow} ${isFiltered && inChart ? styles.accountRowSelected : ''} ${isFiltered && !inChart ? 'dim' : ''}`}
+                              onClick={() => toggleAccount(a.id)}
+                            >
+                              <td className={styles.tdDot}>{renderDot(inChart)}</td>
+                              <td className={styles.tdName}>{a.nickname ?? a.name}</td>
+                              <td className="num">{fmt(a.balance)}</td>
+                            </tr>
+                          );
+                        })
+                      : groupByType(liabilities).map((t) => {
+                          const inChart = typeInChart(t.label);
+                          return (
+                            <tr
+                              key={t.label}
+                              className={`${styles.accountRow} ${isFiltered && inChart ? styles.accountRowSelected : ''} ${isFiltered && !inChart ? 'dim' : ''}`}
+                              onClick={() => toggleType(t.label)}
+                            >
+                              <td className={styles.tdDot}>{renderDot(inChart)}</td>
+                              <td className={styles.tdName}>{t.label}</td>
+                              <td className="num">{fmt(t.balance)}</td>
+                            </tr>
+                          );
+                        })}
                     <tr className={styles.totalRow}>
+                      <td />
                       <td className={styles.tdName}>Total debt</td>
                       <td className="num neg">{fmt(totalLiabilities)}</td>
                     </tr>
@@ -204,7 +350,7 @@ export function NetWorth() {
               <table className={styles.table}>
                 <tbody>
                   {excluded.map((a) => (
-                    <tr key={a.name + a.balance} className="dim">
+                    <tr key={a.id} className="dim">
                       <td className={styles.tdName}>{a.nickname ?? a.name}</td>
                       <td className="num">{fmt(a.balance)}</td>
                       <td className={`dim ${styles.tdSub}`}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</td>

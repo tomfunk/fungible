@@ -20,6 +20,7 @@ import {
   getNetWorthHistory,
   getAccountsWithBalances,
   getLinkedAccounts,
+  getLinkedItems,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -664,5 +665,289 @@ describe('excluded accounts', () => {
     const linked = await getLinkedAccounts();
     expect(linked.find((a) => a.id === '529')!.excluded).toBe(true);
     expect(linked.find((a) => a.id === 'brk')!.excluded).toBe(false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getLinkedAccounts — awaiting-first-sync placeholders', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM plaid_items');
+    await db.execute('DELETE FROM balance_history');
+  });
+
+  const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+    db.execute({
+      sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+      args: [itemId, 'tok', institution, lastSyncedAt],
+    });
+
+  const addAccount = (id: string, itemId: string | null, name = id) =>
+    db.execute({
+      sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
+      args: [id, name, itemId],
+    });
+
+  it('emits a placeholder for an unsynced item with no accounts rows', async () => {
+    await addItem('item-new', 'Capital One', null);
+    const rows = await getLinkedAccounts();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].awaitingFirstSync).toBe(true);
+    expect(rows[0].institution_name).toBe('Capital One');
+    expect(rows[0].name).toBe('Capital One');
+    expect(rows[0].id).toBe('item-new');
+    expect(rows[0].item_id).toBe('item-new');
+    expect(rows[0].item_last_synced_at).toBeNull();
+    expect(rows[0].last_synced).toBeNull();
+    expect(rows[0].type).toBe('other');
+    expect(rows[0].excluded).toBe(false);
+  });
+
+  it('names an institution-less item "New institution"', async () => {
+    await addItem('item-new', null, null);
+    const rows = await getLinkedAccounts();
+    expect(rows[0].name).toBe('New institution');
+  });
+
+  it('sorts placeholders ahead of real accounts', async () => {
+    await addItem('item-new', 'Capital One', null);
+    await addItem('item-old', 'Chase', Date.now());
+    await addAccount('acct-chase', 'item-old', 'Chase Checking');
+    const rows = await getLinkedAccounts();
+    expect(rows.map((r) => r.id)).toEqual(['item-new', 'acct-chase']);
+  });
+
+  it('emits no placeholder once the item has accounts rows', async () => {
+    await addItem('item-old', 'Chase', null);
+    await addAccount('acct-chase', 'item-old');
+    const rows = await getLinkedAccounts();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('acct-chase');
+    expect(rows[0].awaitingFirstSync).toBe(false);
+  });
+
+  // A sync that completed but whose accountsGet returned nothing stays a silent
+  // failure (unchanged behaviour) — it must not be mislabelled "awaiting first
+  // sync" forever. Also guards against deleteAccount, which leaves the
+  // plaid_items row behind, resurrecting the item as a placeholder.
+  it('emits no placeholder for a synced item with no accounts rows', async () => {
+    await addItem('item-empty', 'Empty Bank', Date.now());
+    expect(await getLinkedAccounts()).toEqual([]);
+  });
+
+  // accountsGet landed but the transaction upsert threw, so last_synced_at is
+  // still NULL. The real rows should render normally, not be duplicated.
+  it('emits only real rows when accounts exist but last_synced_at is NULL', async () => {
+    await addItem('item-partial', 'Chase', null);
+    await addAccount('acct-partial', 'item-partial');
+    const rows = await getLinkedAccounts();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].awaitingFirstSync).toBe(false);
+    expect(rows[0].item_last_synced_at).toBeNull();
+  });
+
+  it('emits exactly one placeholder for two items, one synced one not', async () => {
+    await addItem('item-synced', 'Chase', Date.now());
+    await addAccount('acct-chase', 'item-synced');
+    await addItem('item-new', 'Capital One', null);
+    const rows = await getLinkedAccounts();
+    expect(rows.filter((r) => r.awaitingFirstSync).map((r) => r.item_id)).toEqual(['item-new']);
+  });
+
+  it('returns item_last_synced_at as a number for Plaid accounts and null for CSV/manual', async () => {
+    const ts = Date.now();
+    await addItem('item-synced', 'Chase', ts);
+    await addAccount('acct-plaid', 'item-synced');
+    await addAccount('manual-thing', null);
+    const rows = await getLinkedAccounts();
+    const plaid = rows.find((r) => r.id === 'acct-plaid')!;
+    const manual = rows.find((r) => r.id === 'manual-thing')!;
+    expect(typeof plaid.item_last_synced_at).toBe('number');
+    expect(plaid.item_last_synced_at).toBe(ts);
+    expect(manual.item_last_synced_at).toBeNull();
+  });
+
+  // Only CSV import and the demo seeder ever write accounts.institution_name;
+  // the Plaid path records it on plaid_items, so every linked account read it
+  // back blank. It now falls back to the item's name through the join.
+  it('falls back to the item institution when the account row has none', async () => {
+    await addItem('item-chase', 'Chase', Date.now());
+    await addAccount('acct-plaid', 'item-chase');
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'acct-plaid')!.institution_name).toBe('Chase');
+  });
+
+  it('keeps a CSV/manual account own institution, which has no item to inherit from', async () => {
+    await db.execute({
+      sql: `INSERT INTO accounts (id, name, type, institution_name) VALUES ('csv-1', 'Imported', 'depository', 'Ally')`,
+      args: [],
+    });
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'csv-1')!.institution_name).toBe('Ally');
+  });
+
+  it('prefers the account own institution over the item when both are set', async () => {
+    await addItem('item-chase', 'Chase', Date.now());
+    await db.execute({
+      sql: `INSERT INTO accounts (id, name, type, item_id, institution_name) VALUES ('acct-both', 'A', 'depository', 'item-chase', 'Renamed Bank')`,
+      args: [],
+    });
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'acct-both')!.institution_name).toBe('Renamed Bank');
+  });
+
+  it('leaves institution null when neither the account nor an item supplies one', async () => {
+    await addAccount('manual-thing', null);
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'manual-thing')!.institution_name).toBeNull();
+  });
+
+  // Defect-4 regression guard: core/sync.ts only writes a balance row when
+  // balances.current is non-null, so an account that synced fine but reported no
+  // balance has no balance_history at all. It must report its item's sync time
+  // rather than reading "not synced" forever.
+  it('reports item_last_synced_at for a synced account with zero balance_history rows', async () => {
+    const ts = Date.now();
+    await addItem('item-synced', 'Chase', ts);
+    await addAccount('acct-nobalance', 'item-synced');
+    const rows = await getLinkedAccounts();
+    expect(rows[0].last_synced).toBeNull();
+    expect(rows[0].item_last_synced_at).toBe(ts);
+    expect(rows[0].awaitingFirstSync).toBe(false);
+  });
+});
+
+describe('getNetWorthHistory accountIds filter', () => {
+  // Plaid-style IDs: long base64-ish strings that SQLite treats as column names if unquoted.
+  const CHECKING_ID = 'BxBXbRRy44Tb64eKQ4E5tz76vBdkVQ7rY7jKz';
+  const BROKERAGE_ID = 'vzdd8YqX7oUMn13YOMNphPA6wejQ4mFVnBXNL';
+
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, 'Checking', 'depository', 'checking', 0)", args: [CHECKING_ID] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, 'Brokerage', 'investment', 'brokerage', 0)", args: [BROKERAGE_ID] });
+    await db.execute({ sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, 5000, ?)',  args: [CHECKING_ID,  '2025-01-31'] });
+    await db.execute({ sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, 80000, ?)', args: [BROKERAGE_ID, '2025-01-31'] });
+  });
+
+  it('returns all accounts when no filter is given', async () => {
+    const hist = await getNetWorthHistory('month');
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(85000);
+  });
+
+  it('filters to a single account by Plaid-style string id without SQL error', async () => {
+    const hist = await getNetWorthHistory('month', [CHECKING_ID]);
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(5000);
+  });
+
+  it('filters to a subset of accounts', async () => {
+    const hist = await getNetWorthHistory('month', [BROKERAGE_ID]);
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(80000);
+  });
+
+  it('returns empty when accountIds is an empty array', async () => {
+    const hist = await getNetWorthHistory('month', []);
+    expect(hist).toHaveLength(0);
+  });
+});
+
+describe('getLinkedItems', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM plaid_items');
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM sync_state');
+  });
+
+  const addItem = (
+    itemId: string,
+    over: { institution?: string | null; lastSyncedAt?: number | null; daysRequested?: number | null } = {},
+  ) =>
+    db.execute({
+      sql: `INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested)
+            VALUES (?, 'tok', ?, ?, ?)`,
+      args: [itemId, over.institution ?? itemId, over.lastSyncedAt ?? null, over.daysRequested ?? null],
+    });
+
+  const addAccount = (id: string, itemId: string | null) =>
+    db.execute({
+      sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
+      args: [id, id, itemId],
+    });
+
+  const addCursor = (itemId: string) =>
+    db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: [itemId, 'cur'] });
+
+  it('returns one row per item, not per account', async () => {
+    await addItem('item-a', { institution: 'Chase' });
+    await addAccount('acct-1', 'item-a');
+    await addAccount('acct-2', 'item-a');
+
+    const rows = await getLinkedItems();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ item_id: 'item-a', institution_name: 'Chase', account_count: 2 });
+  });
+
+  it('counts only the accounts belonging to each item', async () => {
+    await addItem('item-a');
+    await addItem('item-b');
+    await addAccount('acct-1', 'item-a');
+    await addAccount('acct-2', 'item-b');
+    await addAccount('acct-3', 'item-b');
+    // A manual account has no item and must not inflate anyone's count.
+    await addAccount('manual-house', null);
+
+    const rows = await getLinkedItems();
+    expect(rows.map((r) => [r.item_id, r.account_count])).toEqual([['item-a', 1], ['item-b', 2]]);
+  });
+
+  it('reports an item with no accounts and no sync as awaiting its first sync', async () => {
+    await addItem('item-new', { institution: 'Capital One' });
+    const [row] = await getLinkedItems();
+    expect(row.awaitingFirstSync).toBe(true);
+    expect(row.account_count).toBe(0);
+    expect(row.last_synced_at).toBeNull();
+  });
+
+  it('does not call an item awaiting first sync once it has accounts', async () => {
+    await addItem('item-a');
+    await addAccount('acct-1', 'item-a');
+    const [row] = await getLinkedItems();
+    expect(row.awaitingFirstSync).toBe(false);
+  });
+
+  it('does not call an item awaiting first sync once a sync has completed', async () => {
+    // deleteAccount leaves plaid_items behind, so a synced item can legitimately
+    // have zero accounts — it must not read as "awaiting first sync" forever.
+    await addItem('item-a', { lastSyncedAt: 1_770_000_000_000 });
+    const [row] = await getLinkedItems();
+    expect(row.awaitingFirstSync).toBe(false);
+    expect(row.account_count).toBe(0);
+    expect(row.last_synced_at).toBe(1_770_000_000_000);
+  });
+
+  it('reports whether a sync cursor is stored', async () => {
+    await addItem('item-a');
+    await addItem('item-b');
+    await addCursor('item-a');
+
+    const rows = await getLinkedItems();
+    expect(rows.find((r) => r.item_id === 'item-a')!.hasCursor).toBe(true);
+    // No cursor means the next sync replays this item's whole history.
+    expect(rows.find((r) => r.item_id === 'item-b')!.hasCursor).toBe(false);
+  });
+
+  it('carries days_requested through, leaving the pre-column NULL alone', async () => {
+    await addItem('item-a', { daysRequested: 730 });
+    await addItem('item-b');
+    const rows = await getLinkedItems();
+    expect(rows.find((r) => r.item_id === 'item-a')!.days_requested).toBe(730);
+    expect(rows.find((r) => r.item_id === 'item-b')!.days_requested).toBeNull();
+  });
+
+  it('returns nothing when no items are linked', async () => {
+    expect(await getLinkedItems()).toEqual([]);
   });
 });

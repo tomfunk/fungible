@@ -20,6 +20,21 @@ export function setSyncResult(results: SyncItemResult[]): void {
   emitter.emit('status');
 }
 
+/** Merge a partial sync's outcome: replaces status for `attemptedItemIds` only,
+ *  leaving failures recorded for items this run didn't touch. setSyncResult's
+ *  "a clean run clears all" is only correct for a whole-DB sync — a scoped sync
+ *  that succeeds must not clear another institution's failure badge. */
+export function mergeSyncResult(results: SyncItemResult[], attemptedItemIds: string[]): void {
+  const attempted = new Set(attemptedItemIds);
+  failures = [
+    ...failures.filter((f) => !attempted.has(f.itemId)),
+    ...results
+      .filter((r): r is SyncItemResult & { error: string } => !!r.error)
+      .map((r) => ({ itemId: r.itemId, error: r.error })),
+  ];
+  emitter.emit('status');
+}
+
 /** Current failure snapshot — read by a provider on mount to catch a sync that already resolved. */
 export function getSyncFailures(): SyncFailure[] {
   return failures;

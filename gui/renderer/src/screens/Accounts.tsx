@@ -4,14 +4,18 @@ import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
 import { Modal } from '../components/Modal.js';
-import type { LinkedAccount, CsvAccount } from '../../../../core/queries.js';
+import type { LinkedAccount, CsvAccount, LinkedItem } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { fmtTimeAgo } from '../../../../core/fmt.js';
+import { fmtTimeAgo, fmtSyncedAt } from '../../../../core/fmt.js';
 import styles from './Accounts.module.css';
 
-type Tab = 'accounts' | 'add-data' | 'dupes';
+type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
+
+const TAB_LABELS: Record<Tab, string> = {
+  accounts: 'Accounts', links: 'Links', 'add-data': 'Add Data', dupes: 'Dupes',
+};
 
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
@@ -29,6 +33,8 @@ export function Accounts() {
   const dupes = useQuery(() => api.accounts.getCsvPlaidDupeCandidates(), [reloadKey]) ?? [];
   const members = useQuery(() => api.profile.getHouseholdMembers(), [reloadKey]) ?? [];
   const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
+  // One row per Plaid connection — the Links tab manages items, not accounts.
+  const items = useQuery(() => api.queries.getLinkedItems(), [reloadKey]) ?? [];
 
   const [editAcct, setEditAcct] = useState<LinkedAccount | null>(null);
   const [valueAcct, setValueAcct] = useState<LinkedAccount | null>(null);
@@ -36,6 +42,9 @@ export function Accounts() {
   const [manualOpen, setManualOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  // The connection whose credentials are being updated, if any. Distinct from
+  // linkOpen: that adds a new item, this re-authorizes an existing one.
+  const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
@@ -68,7 +77,7 @@ export function Accounts() {
     }
   }
 
-  const TABS: Tab[] = ['accounts', 'add-data', 'dupes'];
+  const TABS: Tab[] = ['accounts', 'links', 'add-data', 'dupes'];
   useScreenKeys({
     Tab: () => setTab((t) => TABS[(TABS.indexOf(t) + 1) % TABS.length]),
     s: () => void forceSync(),
@@ -80,9 +89,11 @@ export function Accounts() {
       <div className={styles.topBar}>
         <h1 className={styles.title}>Accounts</h1>
         <div className={styles.tabs}>
-          {(['accounts', 'add-data', 'dupes'] as Tab[]).map((t) => (
+          {TABS.map((t) => (
             <button key={t} className={t === tab ? styles.tabActive : styles.tab} onClick={() => setTab(t)}>
-              {t === 'accounts' ? 'Accounts' : t === 'add-data' ? 'Add Data' : `Dupes${dupes.length > 0 ? ` (${dupes.length})` : ''}`}
+              {TAB_LABELS[t]}
+              {t === 'dupes' && dupes.length > 0 ? ` (${dupes.length})` : ''}
+              {t === 'links' && failingItems.size > 0 ? <span className="neg"> ⚠</span> : ''}
             </button>
           ))}
         </div>
@@ -116,19 +127,26 @@ export function Accounts() {
               <tbody>
                 {accounts.map((acct) => {
                   const raw = acct.subtype ?? acct.type;
+                  // A freshly linked institution has no accounts row yet, so it has
+                  // nothing to edit or delete and no mask/type to show.
+                  const awaiting = acct.awaitingFirstSync;
                   return (
-                    <tr key={acct.id} className={styles.row} onClick={() => setEditAcct(acct)}>
+                    <tr key={acct.id} className={styles.row} onClick={awaiting ? undefined : () => setEditAcct(acct)}>
                       <td className={styles.tdName}>
                         {acct.nickname ?? acct.name}
                         {acct.nickname && <span className="manual" title={`Nickname for ${acct.name}`}> ✎</span>}
                         {acct.excluded && <span className="dim" title="Excluded from net worth"> ⊘ excl</span>}
                       </td>
-                      <td className="num dim">{acct.mask ? `···${acct.mask}` : ''}</td>
-                      <td className="dim">{SUBTYPE_DISPLAY[raw] ?? raw}</td>
+                      <td className="num dim">{!awaiting && acct.mask ? `···${acct.mask}` : ''}</td>
+                      <td className="dim">{awaiting ? '' : (SUBTYPE_DISPLAY[raw] ?? raw)}</td>
                       <td className="dim">{acct.institution_name ?? ''}</td>
                       <td>
                         {acct.item_id && failingItems.has(acct.item_id) ? (
                           <span className="neg">⚠ sync failed</span>
+                        ) : awaiting ? (
+                          <span className="warn">◷ awaiting first sync</span>
+                        ) : acct.item_last_synced_at !== null ? (
+                          <span className="dim">synced <span className="pos">{fmtSyncedAt(acct.item_last_synced_at)}</span></span>
                         ) : acct.last_synced ? (
                           <span className="dim">synced <span className="pos">{fmtDate(acct.last_synced)}</span></span>
                         ) : (
@@ -137,7 +155,7 @@ export function Accounts() {
                       </td>
                       <td className="manual">{acct.owner ?? ''}</td>
                       <td className={styles.tdActions}>
-                        {acct.id.startsWith('manual-') && (
+                        {!awaiting && acct.id.startsWith('manual-') && (
                           <button
                             className={styles.rowBtn}
                             onClick={(e) => {
@@ -148,28 +166,90 @@ export function Accounts() {
                             value
                           </button>
                         )}
-                        <button
-                          className={styles.rowBtn}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditAcct(acct);
-                          }}
-                        >
-                          edit
-                        </button>
-                        <button
-                          className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteAcct(acct);
-                          }}
-                        >
-                          delete
-                        </button>
+                        {!awaiting && (
+                          <button
+                            className={styles.rowBtn}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditAcct(acct);
+                            }}
+                          >
+                            edit
+                          </button>
+                        )}
+                        {!awaiting && (
+                          <button
+                            className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteAcct(acct);
+                            }}
+                          >
+                            delete
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {tab === 'links' && (
+        <section className={styles.panel}>
+          {items.length === 0 ? (
+            <p className="dim">No bank connections yet — use Add Data to link one.</p>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Institution</th>
+                  <th className={styles.th}>Accounts</th>
+                  <th className={styles.th}>History window</th>
+                  <th className={styles.th}>Status</th>
+                  <th className={styles.th} />
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.item_id} className={styles.row}>
+                    <td className={styles.tdName}>
+                      {item.institution_name ?? '(unknown institution)'}
+                      {!item.hasCursor && !item.awaitingFirstSync && (
+                        <span className="dim" title="No sync cursor stored — the next sync replays this connection's full history"> · full replay pending</span>
+                      )}
+                    </td>
+                    <td className="num dim">{item.account_count}</td>
+                    {/* Locked at link time; Plaid rejects a wider window on an
+                        item that already has Transactions. */}
+                    <td className="dim" title="Fixed when the connection was created — only a new connection can change it">
+                      {item.days_requested ? `${item.days_requested} days` : '90 days (default)'}
+                    </td>
+                    <td>
+                      {failingItems.has(item.item_id) ? (
+                        <span className="neg">⚠ sync failed</span>
+                      ) : item.awaitingFirstSync ? (
+                        <span className="warn">◷ awaiting first sync</span>
+                      ) : item.last_synced_at !== null ? (
+                        <span className="dim">synced <span className="pos">{fmtSyncedAt(item.last_synced_at)}</span></span>
+                      ) : (
+                        <span className="warn">never synced</span>
+                      )}
+                    </td>
+                    <td className={styles.tdActions}>
+                      <button
+                        className={styles.rowBtn}
+                        title="Update creds for link, keeping its accounts and transactions"
+                        onClick={() => setUpdateItem(item)}
+                      >
+                        update link
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -373,6 +453,22 @@ export function Accounts() {
         />
       )}
 
+      {updateItem && (
+        <LinkBankModal
+          updateItem={updateItem}
+          onClose={() => setUpdateItem(null)}
+          onLinked={(institution) => {
+            setUpdateItem(null);
+            // Syncing here is what clears the ⚠ badge: the item's last recorded
+            // sync is the failure that prompted the update, and nothing else
+            // refreshes that state.
+            showStatus(`Updated ${institution ?? 'link'} — syncing…`, 4000);
+            reload();
+            void forceSync();
+          }}
+        />
+      )}
+
       {statusEl}
     </div>
   );
@@ -383,9 +479,14 @@ export function Accounts() {
 function LinkBankModal({
   onClose,
   onLinked,
+  updateItem,
 }: {
   onClose: () => void;
   onLinked: (institution: string | null) => void;
+  /** Set to update an existing connection's credentials instead of adding one.
+   *  Update mode keeps the item's accounts and transactions, and cannot change
+   *  the history window — so the days field is not offered. */
+  updateItem?: LinkedItem;
 }) {
   const [days, setDays] = useState('');
   const [defaultDays, setDefaultDays] = useState(730);
@@ -400,30 +501,57 @@ function LinkBankModal({
   }, []);
 
   async function start() {
-    const n = parseInt(days, 10);
-    if (isNaN(n) || n < 30 || n > 730) {
-      setError('Enter a whole number from 30 to 730');
-      return;
+    let n: number | undefined;
+    if (!updateItem) {
+      n = parseInt(days, 10);
+      if (isNaN(n) || n < 30 || n > 730) {
+        setError('Enter a whole number from 30 to 730');
+        return;
+      }
     }
     setError('');
     setRunning(true);
     try {
-      const { institutionName } = await api.plaid.linkBank(n);
-      onLinked(institutionName);
+      const { institutionName } = await api.plaid.linkBank(n, updateItem?.item_id);
+      onLinked(institutionName ?? updateItem?.institution_name ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Link failed');
+      setError(e instanceof Error ? e.message : updateItem ? 'Update failed' : 'Link failed');
       setRunning(false);
     }
   }
 
   return (
-    <Modal title="Link a bank" onClose={onClose}>
+    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={onClose}>
       {running ? (
         <div>
           <p className="accent">⟳ Complete the Plaid flow in your browser, then return here.</p>
-          <p className="dim">This window updates automatically once the bank is connected.</p>
+          <p className="dim">
+            {updateItem
+              ? 'Sign in with the same bank. Your existing accounts and transactions are kept.'
+              : 'This window updates automatically once the bank is connected.'}
+          </p>
           {error && <p className="neg">{error}</p>}
         </div>
+      ) : updateItem ? (
+        <>
+          <p>
+            Update creds for <strong>{updateItem.institution_name ?? 'this link'}</strong>, keeping its accounts and
+            transactions.
+          </p>
+          <p className="dim">
+            Plaid reopens this connection so you can sign in again. Nothing is re-downloaded and no new accounts are
+            created — the history window stays at {updateItem.days_requested ? `${updateItem.days_requested} days` : 'its default'}.
+          </p>
+          {error && <p className="neg">{error}</p>}
+          <div className={styles.modalActions}>
+            <button className={styles.btnSecondary} onClick={onClose}>
+              Cancel
+            </button>
+            <button className={styles.btnPrimary} onClick={() => void start()}>
+              Open Plaid in browser
+            </button>
+          </div>
+        </>
       ) : (
         <>
           <div className={styles.formGrid}>

@@ -51,6 +51,11 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // Session-only sync-failure store (core/sync-status.ts) — the GUI will surface
   // sync status in its own layer (renderer state), not through the bridge.
   setSyncResult: 'GUI will surface sync status in its own layer',
+  mergeSyncResult: 'GUI will surface sync status in its own layer',
+  // Pure formatter for syncAll's onProgress steps. The callback itself can't
+  // cross the IPC bridge, so the GUI would push progress over a channel and
+  // format it renderer-side rather than calling this through the registry.
+  describeSyncProgress: 'progress callback cannot cross IPC; GUI will push steps over its own channel',
   getSyncFailures: 'GUI will surface sync status in its own layer',
   onSyncStatus: 'GUI will surface sync status in its own layer',
 
