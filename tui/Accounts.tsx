@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
+import { syncAll, deleteSyncCursor, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
 import { setSyncResult, mergeSyncResult } from '../core/sync-status.js';
 import {
   refreshTransactions, describeRefreshProgress, describeRefreshResult,
@@ -181,7 +181,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // blocks [s] the way a sync does. Progress is held as a step rather than a
   // string: the waiting step carries a deadline, so re-rendering it on a timer
   // turns it into a live countdown.
-  const [linksMode, setLinksMode] = useState<'list' | 'confirm-refresh'>('list');
+  const [linksMode, setLinksMode] = useState<'list' | 'confirm-refresh' | 'confirm-delete-cursor'>('list');
   const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
   const refreshAbortRef = useRef<AbortController | null>(null);
   const [, setRefreshTick] = useState(0);
@@ -355,7 +355,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   /** Sync just the given items — used right after a link so the new institution
    *  syncs immediately. Mirrors forceSync but merges its outcome so another
    *  institution's failure badge survives a scoped run. */
-  function syncItems(itemIds: string[], startMsg = 'Syncing new institution…') {
+  function syncItems(
+    itemIds: string[],
+    startMsg = 'Syncing new institution…',
+    // A cursor-zero resync reports every transaction Plaid holds as `added`, so
+    // the default "N new transactions" would badly overstate it — the caller
+    // that knows better supplies its own wording.
+    doneMsg: (added: number) => string = (added) => `Done — ${added} new transaction${added !== 1 ? 's' : ''}`,
+  ) {
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
     setSyncMsg(startMsg);
@@ -368,7 +375,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
       } else {
         const added = results.reduce((s, r) => s + r.added, 0);
-        setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
+        setSyncMsg(doneMsg(added));
         setSyncStatus('done');
         setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
       }
@@ -412,6 +419,28 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         refreshAbortRef.current = null;
         setRefreshProgress(null);
         setSyncMsg(`Refresh failed — ${plaidErrorMessage(err)}`);
+        setSyncStatus('error');
+      });
+  }
+
+  /** Forget where this connection's change feed left off, then resync it so Plaid
+   *  resends everything it holds. Free, unlike [r] refresh — the cost is the time
+   *  the resync takes. */
+  function startDeleteCursor(item: LinkedItem) {
+    setLinksMode('list');
+    const label = item.institution_name ?? 'this connection';
+    void deleteSyncCursor(item.item_id)
+      .then(() => {
+        syncItems(
+          [item.item_id],
+          `Sync cursor deleted — re-downloading ${label}…`,
+          // Everything Plaid holds arrives as `added` here, existing rows
+          // included, so this counts what was re-downloaded, not what is new.
+          (added) => `Done — re-downloaded ${added.toLocaleString()} transaction${added !== 1 ? 's' : ''}`,
+        );
+      })
+      .catch((err) => {
+        setSyncMsg(`Could not delete sync cursor — ${plaidErrorMessage(err)}`);
         setSyncStatus('error');
       });
   }
@@ -721,6 +750,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (linksMode === 'confirm-refresh') {
         if (key.escape || input === 'n') { setLinksMode('list'); return; }
         if (input === 'y' && linkedItems[itemCursor]) { startRefresh(linkedItems[itemCursor]); return; }
+        // The refresh confirmation points at [d] for the restore case, so accept
+        // it here — cancelling first only to press it again is pure friction.
+        if (input === 'd' && linkedItems[itemCursor]) { setLinksMode('confirm-delete-cursor'); return; }
+        return;
+      }
+      if (linksMode === 'confirm-delete-cursor') {
+        if (key.escape || input === 'n') { setLinksMode('list'); return; }
+        if (input === 'y' && linkedItems[itemCursor]) { startDeleteCursor(linkedItems[itemCursor]); return; }
         return;
       }
       // Esc stops an in-flight refresh rather than leaving the tab — the poll
@@ -744,6 +781,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       // — muscle memory lands on a confirmation, not a charge.
       if (input === 'r' && linkedItems[itemCursor] && syncStatus !== 'syncing') {
         setLinksMode('confirm-refresh');
+        return;
+      }
+      // Confirmed because it is destructive in one direction: replaying the feed
+      // resurrects transactions the user deleted on purpose. Costs nothing at
+      // Plaid, so the gate is about the surprise, not the bill. Skipped while a
+      // row awaits its first sync — that sync starts from scratch already.
+      if (input === 'd' && linkedItems[itemCursor] && !linkedItems[itemCursor].awaitingFirstSync && syncStatus !== 'syncing') {
+        setLinksMode('confirm-delete-cursor');
         return;
       }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
@@ -1119,8 +1164,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(item.last_synced_at)}</Text></Text>
                         : <Text color={C_WARNING}>never synced</Text>}
                     </Text>
-                    {/* No cursor means the next sync replays the item's whole history. */}
-                    {!item.hasCursor && !item.awaitingFirstSync && <Text dimColor>· full replay pending</Text>}
+                    {/* No cursor means the next sync re-downloads the item's whole history. */}
+                    {!item.hasCursor && !item.awaitingFirstSync && <Text dimColor>· sync cursor cleared</Text>}
                   </SelectableRow>
                 );
               })}
@@ -1142,7 +1187,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     </Text>
                     <Text dimColor>Asks your bank to go look for new transactions right now.</Text>
                     <Box marginTop={1} flexDirection="column">
-                      <Text dimColor>Only worth it if you're missing <Text bold>recent</Text> transactions and want the bank re-checked.</Text>
+                      {/* Naming the boundary is what makes the steer below land: past
+                          about a day, Plaid already has it, which is the [d] case. */}
+                      <Text dimColor>Only worth it for transactions from the last day or so — Plaid already has anything older.</Text>
                       {/* The window is fixed at item creation and update mode cannot
                           widen it, so name it here rather than leaving the limit abstract. */}
                       <Text dimColor>
@@ -1152,18 +1199,62 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         Then checks for new transactions {POLL_DELAYS_MS.length} times over about {Math.round(POLL_DELAYS_MS.reduce((a, b) => a + b, 0) / 60000)} minutes. Esc stops the checks.
                       </Text>
                     </Box>
+                    {/* Redirects the restore case, and says why refresh is the wrong
+                        tool for it — otherwise it reads as an arbitrary preference
+                        between two buttons. Undimmed headline so it separates from
+                        the four dim lines above. */}
+                    <Box marginTop={1} flexDirection="column">
+                      <Text>Trying to get back transactions you deleted, or an account you removed?</Text>
+                      <Text dimColor>Refresh won't do it — it only fetches what your bank hasn't reported yet.</Text>
+                      {/* Its own line: wrapping mid-phrase would split the key from
+                          the label it names. */}
+                      <Text dimColor>
+                        Press <Text color={C_POSITIVE}>[d] delete sync cursor</Text> instead — it re-downloads everything Plaid holds, free.
+                      </Text>
+                    </Box>
                   </Box>
                   <Box marginTop={1} gap={4}>
                     <Text color={C_WARNING}>[y] Yes, refresh</Text>
+                    <Text color={C_POSITIVE}>[d] delete sync cursor</Text>
+                    <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
+                  </Box>
+                </ModalPanel>
+              )}
+
+              {linksMode === 'confirm-delete-cursor' && selectedItem && (
+                <ModalPanel borderColor={C_WARNING}>
+                  <Text bold color={C_WARNING}>Delete sync cursor and resync</Text>
+                  <Box marginTop={1} flexDirection="column">
+                    <Text>
+                      <Text color={C_ACCENT}>{selectedItem.institution_name ?? '(unknown institution)'}</Text>
+                      <Text dimColor>  — all {selectedItem.account_count} account{selectedItem.account_count !== 1 ? 's' : ''} on this connection</Text>
+                    </Text>
+                    <Text dimColor>
+                      Forgets how far we've read Plaid's change feed, so the next sync re-downloads
+                      every transaction Plaid currently holds. Free — it costs only the time to resync.
+                    </Text>
+                    <Box marginTop={1} flexDirection="column">
+                      <Text dimColor>Existing rows are updated in place, not duplicated, and your categories and tags are kept.</Text>
+                      {/* deleteTransaction leaves no tombstone, so the replayed feed
+                          resurrects deliberate deletions. The one destructive thing
+                          this does, hence undimmed. */}
+                      <Text>Transactions you deleted by hand will come back.</Text>
+                      <Text dimColor>Transactions Plaid no longer has will not.</Text>
+                    </Box>
+                  </Box>
+                  <Box marginTop={1} gap={4}>
+                    <Text color={C_WARNING}>[y] Yes, delete cursor and resync</Text>
                     <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
                   </Box>
                 </ModalPanel>
               )}
 
               <Box marginTop={1} flexDirection="column">
-                <Text dimColor>[u] update link  — update creds for link, keeping its accounts and transactions</Text>
-                <Text dimColor>[r] refresh      — ask this bank for new transactions now (Plaid charges)</Text>
-                <Text dimColor>[s] sync         — re-sync every connection now</Text>
+                {/* Padded to the longest label so the em dashes line up. */}
+                <Text dimColor>[u] update link        — update creds for link, keeping its accounts and transactions</Text>
+                <Text dimColor>[d] delete sync cursor — re-download this connection's full history (free)</Text>
+                <Text dimColor>[r] refresh            — ask this bank for new transactions now (Plaid charges)</Text>
+                <Text dimColor>[s] sync               — re-sync every connection now</Text>
               </Box>
             </>
           )}

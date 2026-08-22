@@ -162,6 +162,32 @@ export async function syncTransactions(accessToken: string, itemId: string, onPr
   return { added: added.length, modified: modified.length, removed: removedIds.length, dupes };
 }
 
+/**
+ * Forget how far we have consumed an item's /transactions/sync change feed, so
+ * the next sync starts from the beginning and Plaid resends every transaction it
+ * currently holds as `added`. Pair it with a scoped syncAll(true, [itemId]) to
+ * resync immediately.
+ *
+ * What this recovers is rows *this app* lost while Plaid kept them: an account
+ * deleted via deleteAccount (which cascades to its transactions), a row removed
+ * by deleteTransaction, or a database rebuilt against a still-live item. Every
+ * write in syncTransactions is an upsert, so the resync is idempotent and leaves
+ * manual categories and tag suppressions alone.
+ *
+ * What it cannot recover is anything Plaid no longer has — including the rows we
+ * deleted *because* Plaid reported them `removed`. Those are absent from the
+ * replayed feed for the same reason they were deleted, so cursor-zero changes
+ * nothing about them. Only a relinked item can bring those back, and only if the
+ * bank still reports them.
+ *
+ * Note the corollary, which the confirmation copy warns about: a deliberate
+ * deleteTransaction leaves no tombstone, so replaying the feed resurrects rows
+ * the user meant to be rid of.
+ */
+export async function deleteSyncCursor(itemId: string): Promise<void> {
+  await db.execute({ sql: 'DELETE FROM sync_state WHERE account_id = ?', args: [itemId] });
+}
+
 const DEBOUNCE_MS = 15 * 60 * 1000;
 
 export type SyncItemResult = {

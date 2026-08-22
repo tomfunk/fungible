@@ -59,6 +59,12 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   getSyncFailures: 'GUI will surface sync status in its own layer',
   onSyncStatus: 'GUI will surface sync status in its own layer',
 
+  // The GUI bridges the composed action (sync.deleteCursorAndResync) rather than
+  // the bare cursor delete. On its own it leaves the item mid-operation until
+  // something resyncs, so main runs both steps together where they cannot be
+  // interleaved with another sync.
+  deleteSyncCursor: 'GUI bridges the composed sync.deleteCursorAndResync instead',
+
   // On-demand /transactions/refresh (core/transactions-refresh.ts) — TUI-only for
   // now. Bridging it needs more than a registry entry: the poll runs for minutes
   // and streams progress, so the GUI needs a progress channel and a cancel path

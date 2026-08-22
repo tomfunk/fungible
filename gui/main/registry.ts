@@ -92,8 +92,8 @@ import {
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
-import { syncAll } from '../../core/sync.js';
-import { setSyncResult, getSyncFailures } from '../../core/sync-status.js';
+import { syncAll, deleteSyncCursor } from '../../core/sync.js';
+import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
 import { loadHistory, deleteHistoryEntry, CANVAS_SPEC_PATH } from '../../core/canvas-history.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 import { writeEnvFile, type EnvUpdates } from '../../core/env-file.js';
@@ -223,6 +223,16 @@ export const registry = {
       const results = await syncAll(force, itemIds);
       setSyncResult(results);
       return results;
+    },
+    // Delete one item's cursor and resync it, so Plaid resends its full history.
+    // Composed here rather than in the renderer so the two steps can't be
+    // interleaved with another sync, and merged rather than set so the other
+    // institutions keep their failure badges.
+    deleteCursorAndResync: async (itemId: string) => {
+      await deleteSyncCursor(itemId);
+      const results = await syncAll(true, [itemId]);
+      mergeSyncResult(results, [itemId]);
+      return results[0];
     },
     // Initial hydration for a renderer that mounts after a background sync failed.
     getStatus: async () => getSyncFailures(),

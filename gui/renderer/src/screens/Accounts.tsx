@@ -45,6 +45,8 @@ export function Accounts() {
   // The connection whose credentials are being updated, if any. Distinct from
   // linkOpen: that adds a new item, this re-authorizes an existing one.
   const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
+  // The connection whose sync cursor is about to be deleted, if any.
+  const [cursorItem, setCursorItem] = useState<LinkedItem | null>(null);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
@@ -72,6 +74,32 @@ export function Accounts() {
       reload();
     } catch {
       showStatus('Sync failed', 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  /** Delete one connection's sync cursor, then resync it so Plaid resends
+   *  everything it holds. Both steps run in main so they can't be interleaved
+   *  with another sync. */
+  async function deleteCursorAndResync(item: LinkedItem) {
+    if (syncing) return;
+    const label = item.institution_name ?? 'connection';
+    setCursorItem(null);
+    setSyncing(true);
+    try {
+      const result = await api.sync.deleteCursorAndResync(item.item_id);
+      if (result?.error) {
+        showStatus(`Resync failed: ${label} — ${result.error}`, 8000);
+      } else {
+        // `added` counts everything the replayed feed returned, existing rows
+        // included — re-downloaded, not new.
+        const n = result?.added ?? 0;
+        showStatus(`${label} — re-downloaded ${n.toLocaleString()} transaction${n === 1 ? '' : 's'}`, 6000);
+      }
+      reload();
+    } catch {
+      showStatus(`Resync failed: ${label}`, 3000);
     } finally {
       setSyncing(false);
     }
@@ -219,7 +247,7 @@ export function Accounts() {
                     <td className={styles.tdName}>
                       {item.institution_name ?? '(unknown institution)'}
                       {!item.hasCursor && !item.awaitingFirstSync && (
-                        <span className="dim" title="No sync cursor stored — the next sync replays this connection's full history"> · full replay pending</span>
+                        <span className="dim" title="No sync cursor stored — the next sync re-downloads this connection's full history"> · sync cursor cleared</span>
                       )}
                     </td>
                     <td className="num dim">{item.account_count}</td>
@@ -247,6 +275,18 @@ export function Accounts() {
                       >
                         update link
                       </button>
+                      {/* Hidden until the first sync lands: that sync starts from
+                          scratch already, so there is no cursor to delete. */}
+                      {!item.awaitingFirstSync && (
+                        <button
+                          className={styles.rowBtn}
+                          disabled={syncing}
+                          title="Re-download this connection's full history from Plaid (free)"
+                          onClick={() => setCursorItem(item)}
+                        >
+                          delete sync cursor
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -451,6 +491,40 @@ export function Accounts() {
             });
           }}
         />
+      )}
+
+      {cursorItem && (
+        <Modal title="Delete sync cursor and resync" onClose={() => setCursorItem(null)} accent="var(--warning)">
+          <p>
+            <span className="accent">{cursorItem.institution_name ?? '(unknown institution)'}</span>{' '}
+            <span className="dim">
+              — all {cursorItem.account_count} account{cursorItem.account_count === 1 ? '' : 's'} on this connection
+            </span>
+          </p>
+          <p className="dim">
+            Forgets how far we've read Plaid's change feed, so the next sync re-downloads every
+            transaction Plaid currently holds. Free — it costs only the time to resync.
+          </p>
+          <p className="dim">
+            Existing rows are updated in place, not duplicated, and your categories and tags are kept.{' '}
+            {/* deleteTransaction leaves no tombstone, so the replayed feed resurrects
+                deliberate deletions. The one destructive thing this does. */}
+            <strong>Transactions you deleted by hand will come back.</strong>{' '}
+            Transactions Plaid no longer has will not.
+          </p>
+          <div className={styles.modalActions}>
+            <button className={styles.btnSecondary} onClick={() => setCursorItem(null)}>
+              Cancel
+            </button>
+            <button
+              className={styles.btnPrimary}
+              disabled={syncing}
+              onClick={() => void deleteCursorAndResync(cursorItem)}
+            >
+              Delete cursor and resync
+            </button>
+          </div>
+        </Modal>
       )}
 
       {updateItem && (

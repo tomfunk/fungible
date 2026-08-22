@@ -12,7 +12,7 @@ vi.mock('../core/plaid.js', () => ({
 
 import { db } from '../core/db.js';
 import { getPlaidClient } from '../core/plaid.js';
-import { syncTransactions, syncAll, describeSyncProgress, type SyncProgress } from '../core/sync.js';
+import { syncTransactions, syncAll, deleteSyncCursor, describeSyncProgress, type SyncProgress } from '../core/sync.js';
 
 type PlaidStub = { transactionsSync: ReturnType<typeof vi.fn>; accountsGet: ReturnType<typeof vi.fn> };
 
@@ -241,6 +241,98 @@ describe('sync progress reporting', () => {
     mockPlaid();
     const results = await syncAll(true, ['item-a']);
     expect(results[0].error).toBeUndefined();
+  });
+});
+
+describe('deleteSyncCursor', () => {
+  async function seedItem(itemId: string, cursor?: string) {
+    await db.execute({
+      sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
+      args: [itemId, `tok-${itemId}`, itemId],
+    });
+    if (cursor !== undefined) {
+      await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: [itemId, cursor] });
+    }
+  }
+
+  it('drops the stored cursor', async () => {
+    await seedItem('item-a', 'stale');
+    await deleteSyncCursor('item-a');
+    const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-a'] });
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it('leaves other items\' cursors alone', async () => {
+    await seedItem('item-a', 'stale');
+    await seedItem('item-b', 'keep-me');
+    await deleteSyncCursor('item-a');
+    const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-b'] });
+    expect((rows.rows[0] as unknown as { cursor: string }).cursor).toBe('keep-me');
+  });
+
+  it('is a no-op for an item that has never synced', async () => {
+    await seedItem('item-a');
+    await expect(deleteSyncCursor('item-a')).resolves.toBeUndefined();
+  });
+
+  // The point of the whole feature: the next sync must start from the beginning
+  // of the change feed, not from where we left off.
+  it('makes the following sync request history from the beginning', async () => {
+    await seedItem('item-a', 'stale');
+    const plaid = mockPlaid();
+
+    await deleteSyncCursor('item-a');
+    await syncAll(true, ['item-a']);
+
+    expect(plaid.transactionsSync).toHaveBeenCalledTimes(1);
+    expect(plaid.transactionsSync.mock.calls[0][0]).toMatchObject({ cursor: undefined });
+  });
+
+  it('without the delete, the same sync resumes from the stored cursor', async () => {
+    await seedItem('item-a', 'stale');
+    const plaid = mockPlaid();
+
+    await syncAll(true, ['item-a']);
+
+    expect(plaid.transactionsSync.mock.calls[0][0]).toMatchObject({ cursor: 'stale' });
+  });
+
+  it('restores a transaction the database had lost but Plaid still holds', async () => {
+    await seedItem('item-a', 'stale');
+    mockPlaid([], [{
+      transaction_id: 'tx-9', account_id: 'acct-1', date: '2026-08-01', name: 'Coffee',
+      merchant_name: null, amount: 4.5, pending: false,
+      personal_finance_category: { primary: 'FOOD_AND_DRINK' },
+    }]);
+
+    await deleteSyncCursor('item-a');
+    const [result] = await syncAll(true, ['item-a']);
+
+    expect(result).toMatchObject({ itemId: 'item-a', added: 1 });
+    const rows = await db.execute({ sql: 'SELECT id FROM transactions WHERE id = ?', args: ['tx-9'] });
+    expect(rows.rows).toHaveLength(1);
+  });
+
+  // The limit the confirmation copy promises. A row deleted *because* Plaid
+  // reported it removed is absent from the replayed feed for the same reason it
+  // was deleted, so cursor-zero cannot bring it back. Pinned because the copy
+  // ("Transactions Plaid no longer has will not") depends on it.
+  it('does not restore a transaction Plaid itself no longer has', async () => {
+    await seedItem('item-a', 'stale');
+    await insertTx('tx-gone');
+    // First sync: Plaid reports it removed, so the row is deleted locally.
+    mockPlaid(['tx-gone']);
+    await syncAll(true, ['item-a']);
+    const afterRemoval = await db.execute({ sql: 'SELECT id FROM transactions WHERE id = ?', args: ['tx-gone'] });
+    expect(afterRemoval.rows).toHaveLength(0);
+
+    // Cursor-zero replay: Plaid's feed no longer contains it, so it stays gone.
+    mockPlaid();
+    await deleteSyncCursor('item-a');
+    await syncAll(true, ['item-a']);
+
+    const afterReplay = await db.execute({ sql: 'SELECT id FROM transactions WHERE id = ?', args: ['tx-gone'] });
+    expect(afterReplay.rows).toHaveLength(0);
   });
 });
 

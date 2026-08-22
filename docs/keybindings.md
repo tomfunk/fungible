@@ -189,12 +189,37 @@ single connection can back many accounts.
 |-----|--------|
 | `↑ ↓` | Select connection |
 | `u` | Update link — update creds for link, keeping its accounts and transactions |
+| `d` | Delete sync cursor — re-download this connection's full history (free) |
+| `r` | Refresh — ask this bank for new transactions now (Plaid charges) |
 | `s` | Force sync (bypasses 15-min cooldown) |
 
 `[u]` runs Plaid in update mode, which re-authorizes the existing connection in
 place. Use it when a connection shows ⚠ sync failed because its login expired.
 It does not create new accounts or re-download transactions, and it cannot widen
 the history window — that is fixed when the connection is first created.
+
+`[d]` and `[r]` both go after missing transactions, but they fix different
+causes, and only one of them costs money.
+
+`[d]` deletes the stored `/transactions/sync` cursor, so the next sync starts
+from the beginning of the item's history and Plaid resends everything it holds.
+Use it to recover rows this app lost while Plaid kept them — an account you
+deleted, transactions you deleted, or a database rebuilt against a live
+connection. Writes are upserts, so existing rows are updated rather than
+duplicated and manual categories and tags survive. Two things to know: a
+transaction you deleted by hand comes back (nothing records that you meant it
+gone), and anything Plaid itself no longer has stays gone, including the rows
+this app deleted *because* Plaid reported them removed. Plaid does not bill for
+it; the cost is the time the resync takes. A connection with no stored cursor
+shows `· sync cursor cleared` until its next sync.
+
+`[r]` calls `/transactions/refresh`, asking the bank to run an extraction right
+now rather than waiting for its next scheduled one, then polls for about four
+minutes to see what lands (`Esc` stops the polling). **Plaid bills per call on
+most plans.** It only reaches transactions the bank has not reported yet —
+roughly the last day — and cannot widen the history window. If what you are
+missing is older than that, Plaid almost certainly already has it, which makes
+`[d]` the free fix and `[r]` a wasted charge.
 
 **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 

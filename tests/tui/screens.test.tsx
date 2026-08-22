@@ -2193,23 +2193,23 @@ describe('Accounts', () => {
       expect(flat(r)).toContain('awaiting first sync');
     });
 
-    it('flags a connection with no stored cursor as due a full replay', async () => {
+    it('flags a connection with no stored cursor', async () => {
       await addItem('item-a', 'Chase', Date.now());
       await addAccount('acct-1', 'item-a');
 
       const r = accounts();
       await tabTo(r, 'links');
-      expect(flat(r)).toContain('full replay pending');
+      expect(flat(r)).toContain('sync cursor cleared');
     });
 
-    it('does not flag a replay once a cursor is stored', async () => {
+    it('drops the flag once a cursor is stored', async () => {
       await addItem('item-a', 'Chase', Date.now());
       await addAccount('acct-1', 'item-a');
       await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: ['item-a', 'cur'] });
 
       const r = accounts();
       await tabTo(r, 'links');
-      expect(flat(r)).not.toContain('full replay pending');
+      expect(flat(r)).not.toContain('sync cursor cleared');
     });
 
     // Pressing [u] spawns the Plaid subprocess, so the behaviour it drives is
@@ -2364,6 +2364,154 @@ describe('Accounts', () => {
         await waitFor(() => expect(flat(r)).toContain('Stopped checking'));
         // Still on Links — Esc was consumed by the poll, not by the tab.
         expect(flat(r)).toContain('[u] update link');
+      });
+
+      // The steer that makes [r] vs [d] a real choice rather than two buttons.
+      it('points at [d] for the restore case rather than selling a refresh', async () => {
+        await linksWithItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+
+        await waitFor(() => expect(flat(r)).toContain('Trying to get back transactions you deleted'));
+        const f = flat(r);
+        expect(f).toContain('[d] delete sync cursor');
+        // The whole reason to steer: the alternative is not billed.
+        expect(f).toContain('free');
+      });
+
+      // Cancelling only to press [d] is pure friction, so the confirmation takes
+      // it directly.
+      it('[d] from the refresh confirmation opens the cursor confirmation instead', async () => {
+        await linksWithItem();
+        const spy = vi.spyOn(refreshApi, 'refreshTransactions');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('d');
+
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        expect(flat(r)).not.toContain('Plaid charges for each refresh');
+        expect(spy).not.toHaveBeenCalled();
+      });
+    });
+
+    // ── Delete sync cursor ([d]) ──────────────────────────────────────────────
+    // Costs nothing at Plaid, so the confirmation is not about the bill: a
+    // cursor-zero replay resurrects transactions the user deleted on purpose,
+    // and that is the surprise the gate exists to prevent.
+    describe('delete sync cursor ([d])', () => {
+      async function linksWithSyncedItem() {
+        await addItem('item-a', 'Chase', Date.now());
+        await addAccount('acct-1', 'item-a');
+        await addAccount('acct-2', 'item-a');
+        await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: ['item-a', 'cur'] });
+      }
+
+      it('advertises [d] on a connection row', async () => {
+        await linksWithSyncedItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        expect(flat(r)).toContain('[d] delete sync cursor');
+      });
+
+      it('asks for confirmation before deleting anything', async () => {
+        await linksWithSyncedItem();
+        const spy = vi.spyOn(syncApi, 'deleteSyncCursor');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        // Item-scoped, and the panel says so rather than implying one account.
+        expect(flat(r)).toContain('all 2 accounts on this connection');
+        expect(spy).not.toHaveBeenCalled();
+      });
+
+      it('warns that hand-deleted transactions come back, and that Plaid gaps stay', async () => {
+        await linksWithSyncedItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        const f = flat(r);
+        expect(f).toContain('Transactions you deleted by hand will come back');
+        expect(f).toContain('Transactions Plaid no longer has will not');
+        // The reason to reach for this over [r]: it does not cost anything.
+        expect(f).toContain('Free');
+      });
+
+      it('[n] backs out without touching the cursor', async () => {
+        await linksWithSyncedItem();
+        const spy = vi.spyOn(syncApi, 'deleteSyncCursor');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        r.stdin.write('n');
+
+        await waitFor(() => expect(flat(r)).not.toContain('Delete sync cursor and resync'));
+        expect(spy).not.toHaveBeenCalled();
+        const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-a'] });
+        expect(rows.rows).toHaveLength(1);
+      });
+
+      it('[y] deletes the cursor and resyncs just that item', async () => {
+        await linksWithSyncedItem();
+        vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+          { itemId: 'item-a', added: 1234, modified: 0, removed: 0, dupes: 0, skipped: false },
+        ]);
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('re-downloaded 1,234 transactions'));
+        // Scoped to the selected item, and forced past the 15-minute debounce.
+        expect(syncApi.syncAll).toHaveBeenCalledWith(true, ['item-a'], expect.anything());
+        // The cursor really went, rather than the UI merely claiming it did.
+        const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-a'] });
+        expect(rows.rows).toHaveLength(0);
+      });
+
+      // "N new transactions" would be a lie here: a cursor-zero replay reports
+      // every row Plaid holds as added, most of which the database already had.
+      it('reports the count as re-downloaded rather than new', async () => {
+        await linksWithSyncedItem();
+        vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+          { itemId: 'item-a', added: 900, modified: 0, removed: 0, dupes: 0, skipped: false },
+        ]);
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('re-downloaded 900 transactions'));
+        expect(flat(r)).not.toContain('900 new transactions');
+      });
+
+      it('does nothing on a connection still awaiting its first sync', async () => {
+        // That sync starts from scratch already, so there is no cursor to delete.
+        await addItem('item-new', 'Capital One', null);
+        const spy = vi.spyOn(syncApi, 'deleteSyncCursor');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => expect(flat(r)).toContain('awaiting first sync'));
+        r.stdin.write('d');
+
+        await new Promise((res) => setTimeout(res, 50));
+        expect(flat(r)).not.toContain('Delete sync cursor and resync');
+        expect(spy).not.toHaveBeenCalled();
       });
     });
   });
