@@ -287,7 +287,7 @@ describe('GUI Accounts — Links tab', () => {
       await addAccount('acct-1', 'item-a');
       await links();
 
-      await waitFor(() => expect(screen.getByText(/full replay pending/)).toBeTruthy());
+      await waitFor(() => expect(screen.getByText(/sync cursor cleared/)).toBeTruthy());
     });
 
     it('drops the flag once a cursor is stored', async () => {
@@ -297,17 +297,17 @@ describe('GUI Accounts — Links tab', () => {
       await links();
 
       await waitFor(() => expect(screen.getByText('Chase')).toBeTruthy());
-      expect(screen.queryByText(/full replay pending/)).toBeNull();
+      expect(screen.queryByText(/sync cursor cleared/)).toBeNull();
     });
 
     // A fresh link has no cursor either, but its first sync starts from scratch
-    // anyway — saying "full replay pending" there would be noise.
+    // anyway — saying "sync cursor cleared" there would be noise.
     it('does not flag a connection awaiting its first sync', async () => {
       await addItem('item-new', 'Capital One', null);
       await links();
 
       await waitFor(() => expect(screen.getByText('Capital One')).toBeTruthy());
-      expect(screen.queryByText(/full replay pending/)).toBeNull();
+      expect(screen.queryByText(/sync cursor cleared/)).toBeNull();
     });
   });
 
