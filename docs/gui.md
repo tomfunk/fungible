@@ -14,11 +14,13 @@ Download an installer from the [latest GitHub Release](https://github.com/tomfun
 - **Windows (x64)** — `fungible-<version>-win-x64.exe`
 - **Linux (x64)** — `fungible-<version>-linux-x86_64.AppImage` or `.deb`
 
-The installers aren't code-signed. On first launch:
+The installers are ad-hoc signed, not notarized (no paid Apple Developer ID). On first launch:
 
-- **macOS** — Gatekeeper will block it. Open System Settings → Privacy & Security → "Open Anyway", or run `xattr -d com.apple.quarantine /Applications/Fungible.app` once.
+- **macOS** — Gatekeeper blocks it with "Apple could not verify 'Fungible' is free of malware". Open it once from System Settings → Privacy & Security → "Open Anyway", or run `xattr -dr com.apple.quarantine /Applications/Fungible.app`.
 - **Windows** — SmartScreen may warn; click "More info" → "Run anyway".
 - **Linux AppImage** — `chmod +x` the file, then run it.
+
+On releases up to v1.8.0 the macOS app shipped unsigned, so Gatekeeper rejected it outright with "Fungible is damaged and can't be opened" and offered no "Open Anyway" (issue [#144](https://github.com/tomfunk/fungible/issues/144)). The `xattr -dr` command above clears that too; upgrading is the better fix.
 
 ### From source
 
