@@ -330,4 +330,89 @@ describe('GUI Accounts — Links tab', () => {
     await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'repair' })).toBeNull();
   });
+
+  // Refresh drives core/transactions-refresh.ts over the dedicated 'sync:refresh'
+  // IPC channel (not the registry), so these register a handler on the harness's
+  // invoke and assert the confirm gate + reporting, mirroring the TUI's [r] tests.
+  describe('refresh', () => {
+    it('confirms and names the Plaid charge before calling refresh', async () => {
+      const spy = vi.fn();
+      bridge.onInvoke('sync:refresh', spy);
+      await addItem('item-a', 'Chase', Date.now(), 730);
+      await addAccount('acct-1', 'item-a');
+      await links();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'refresh' }));
+
+      await waitFor(() => expect(screen.getByText(/Plaid charges for each refresh/)).toBeTruthy());
+      // The window is named from days_requested so the limit isn't left abstract.
+      expect(screen.getByText(/730-day history window/)).toBeTruthy();
+      // Nothing billed until the user confirms.
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('Cancel backs out without spending a refresh', async () => {
+      const spy = vi.fn();
+      bridge.onInvoke('sync:refresh', spy);
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+      await links();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'refresh' }));
+      await waitFor(() => expect(screen.getByText(/Plaid charges for each refresh/)).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() => expect(screen.queryByText(/Plaid charges for each refresh/)).toBeNull());
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('Yes refreshes the selected item and reports the outcome', async () => {
+      bridge.onInvoke('sync:refresh', async (itemId) => ({
+        itemId, added: 0, modified: 0, removed: 0, checks: 4, cancelled: false, syncResults: [],
+      }));
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+      await links();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'refresh' }));
+      await waitFor(() => expect(screen.getByText(/Plaid charges for each refresh/)).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Yes, refresh' }));
+
+      // The no-luck copy never claims completion — the refresh may still be
+      // running at the bank, and this view can't tell.
+      await waitFor(() => expect(screen.getByText(/No new transactions yet/)).toBeTruthy());
+    });
+
+    it('keeps the modal open with a Stop button while the poll runs', async () => {
+      // Never resolves: the poll is still in flight, so the modal must stay up.
+      bridge.onInvoke('sync:refresh', () => new Promise(() => {}));
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+      await links();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'refresh' }));
+      await waitFor(() => expect(screen.getByText(/Plaid charges for each refresh/)).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Yes, refresh' }));
+
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Stop checking' })).toBeTruthy());
+      // The gate's confirm button is gone once the poll owns the modal.
+      expect(screen.queryByRole('button', { name: 'Yes, refresh' })).toBeNull();
+    });
+
+    it('Stop cancels the in-flight poll', async () => {
+      const cancel = vi.fn();
+      bridge.onInvoke('sync:refresh', () => new Promise(() => {}));
+      bridge.onInvoke('sync:refresh-cancel', cancel);
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+      await links();
+
+      await userEvent.click(await screen.findByRole('button', { name: 'refresh' }));
+      await waitFor(() => expect(screen.getByText(/Plaid charges for each refresh/)).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Yes, refresh' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Stop checking' }));
+
+      expect(cancel).toHaveBeenCalledWith('item-a');
+    });
+  });
 });

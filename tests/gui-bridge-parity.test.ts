@@ -65,13 +65,13 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // interleaved with another sync.
   deleteSyncCursor: 'GUI bridges the composed sync.deleteCursorAndResync instead',
 
-  // On-demand /transactions/refresh (core/transactions-refresh.ts) — TUI-only for
-  // now. Bridging it needs more than a registry entry: the poll runs for minutes
-  // and streams progress, so the GUI needs a progress channel and a cancel path
-  // rather than a single request/response call. Remove these when that lands.
-  refreshTransactions: 'TUI-only; GUI needs a streaming progress + cancel channel, not a plain bridge call',
-  describeRefreshProgress: 'TUI-only; renderer will format its own progress once refresh is bridged',
-  describeRefreshResult: 'TUI-only; renderer will format its own result once refresh is bridged',
+  // On-demand /transactions/refresh (core/transactions-refresh.ts) — bridged, but
+  // not through the registry: the poll runs for minutes and streams progress, so
+  // it has a dedicated channel (gui/main/sync-ipc.ts, 'sync:refresh') with a
+  // progress push and a cancel path rather than a single request/response call.
+  refreshTransactions: 'bridged via sync-ipc streaming channel, not the registry',
+  describeRefreshProgress: 'renderer imports it directly to format pushed progress steps',
+  describeRefreshResult: 'renderer imports it directly to format the final result',
 
   // Generic settings access — GUI uses typed wrappers (settings.getPretaxMonthly /
   // settings.setPretaxMonthly) rather than the raw getSetting/setSetting functions.

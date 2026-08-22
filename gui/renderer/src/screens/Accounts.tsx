@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
@@ -9,6 +9,10 @@ import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.j
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { fmtTimeAgo, fmtSyncedAt } from '../../../../core/fmt.js';
+import {
+  describeRefreshProgress, describeRefreshResult, POLL_DELAYS_MS,
+  type RefreshProgress, type RefreshResult,
+} from '../../../../core/transactions-refresh-format.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
@@ -47,6 +51,16 @@ export function Accounts() {
   const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   // The connection whose sync cursor is about to be deleted, if any.
   const [cursorItem, setCursorItem] = useState<LinkedItem | null>(null);
+  // The connection whose refresh modal is open. Stays set through the poll so its
+  // live progress and Stop button remain on screen — mirroring the TUI, where
+  // refresh reports through the status line and Esc aborts it.
+  const [refreshItem, setRefreshItem] = useState<LinkedItem | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
+  // A 'waiting' step carries a deadline; a 1s tick re-renders it into a live
+  // countdown, the same trick the TUI uses.
+  const [, setRefreshTick] = useState(0);
+  const refreshTickRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
@@ -104,6 +118,41 @@ export function Accounts() {
       setSyncing(false);
     }
   }
+
+  async function startRefresh(item: LinkedItem) {
+    setRefreshing(true);
+    setRefreshProgress({ phase: 'requesting' });
+    try {
+      const result = await window.__bridge.invoke('sync:refresh', item.item_id) as RefreshResult;
+      reload();
+      if (result.error) showStatus(`Refresh failed: ${result.error}`, 8000);
+      else showStatus(describeRefreshResult(result), 10000);
+    } catch (err) {
+      showStatus(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`, 3000);
+    } finally {
+      setRefreshing(false);
+      setRefreshProgress(null);
+      setRefreshItem(null);
+    }
+  }
+
+  // Abort the poll main-side; the awaited call above then resolves with whatever
+  // the checks that ran turned up (describeRefreshResult names the cancel case).
+  function stopRefresh(item: LinkedItem) {
+    void window.__bridge.invoke('sync:refresh-cancel', item.item_id);
+  }
+
+  // Main pushes a progress step for every phase of the poll.
+  useEffect(() =>
+    window.__bridge.on('sync:refresh-progress', (...args: unknown[]) =>
+      setRefreshProgress(args[0] as RefreshProgress),
+    ), []);
+
+  useEffect(() => {
+    if (refreshProgress?.phase !== 'waiting') return;
+    refreshTickRef.current = setInterval(() => setRefreshTick((n) => n + 1), 1000);
+    return () => clearInterval(refreshTickRef.current);
+  }, [refreshProgress?.phase]);
 
   const TABS: Tab[] = ['accounts', 'links', 'add-data', 'dupes'];
   useScreenKeys({
@@ -268,6 +317,14 @@ export function Accounts() {
                       )}
                     </td>
                     <td className={styles.tdActions}>
+                      <button
+                        className={styles.rowBtn}
+                        title="Ask this bank for new transactions now (Plaid charges per refresh)"
+                        onClick={() => setRefreshItem(item)}
+                        disabled={refreshing || item.awaitingFirstSync}
+                      >
+                        refresh
+                      </button>
                       <button
                         className={styles.rowBtn}
                         title="Update creds for link, keeping its accounts and transactions"
@@ -541,6 +598,48 @@ export function Accounts() {
             void forceSync();
           }}
         />
+      )}
+
+      {refreshItem && (
+        // While refreshing, onClose is a no-op so the poll's progress stays on
+        // screen — Stop is the only way out mid-run, mirroring the TUI's Esc.
+        <Modal
+          title="Refresh transactions — Plaid charges for each refresh"
+          onClose={() => { if (!refreshing) setRefreshItem(null); }}
+          accent="var(--warning)"
+        >
+          <p>
+            <span className="accent">{refreshItem.institution_name ?? '(unknown institution)'}</span>{' '}
+            <span className="dim">— all {refreshItem.account_count} account{refreshItem.account_count !== 1 ? 's' : ''} on this connection</span>
+          </p>
+          <p className="dim">Asks your bank to go look for new transactions right now.</p>
+          <div className="dim">
+            <p>Only worth it if you're missing <strong>recent</strong> transactions and want the bank re-checked.</p>
+            {/* Fixed at item creation; update mode can't widen it — name it so the
+                limit isn't left abstract. */}
+            <p>It can't reach past this connection's {refreshItem.days_requested ? `${refreshItem.days_requested}-day` : '90-day'} history window.</p>
+            <p>Then checks for new transactions {POLL_DELAYS_MS.length} times over about {Math.round(POLL_DELAYS_MS.reduce((a, b) => a + b, 0) / 60000)} minutes.</p>
+          </div>
+          {refreshProgress && (
+            <p className="warn" style={{ marginTop: '1em' }}>{describeRefreshProgress(refreshProgress)}</p>
+          )}
+          <div className={styles.modalActions}>
+            {refreshing ? (
+              <button className={styles.btnSecondary} onClick={() => stopRefresh(refreshItem)}>
+                Stop checking
+              </button>
+            ) : (
+              <>
+                <button className={styles.btnSecondary} onClick={() => setRefreshItem(null)}>
+                  Cancel
+                </button>
+                <button className={styles.btnPrimary} onClick={() => void startRefresh(refreshItem)}>
+                  Yes, refresh
+                </button>
+              </>
+            )}
+          </div>
+        </Modal>
       )}
 
       {statusEl}

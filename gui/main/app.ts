@@ -12,6 +12,7 @@ import { registerBridge } from './bridge.js';
 import { registerRefreshPush } from './refresh-ipc.js';
 import { registerSyncStatusPush } from './sync-status-ipc.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
+import { registerSyncIpc } from './sync-ipc.js';
 import { cancelActivePlaidLink } from './plaid-link.js';
 import { buildMenu } from './menu.js';
 
@@ -51,6 +52,7 @@ if (!app.requestSingleInstanceLock()) {
     registerRefreshPush();
     registerSyncStatusPush();
     registerAgentIpc();
+    registerSyncIpc();
     buildMenu();
     createWindow();
 
