@@ -311,12 +311,12 @@ describe('GUI Accounts — Links tab', () => {
     });
   });
 
-  it('repair opens the Plaid link flow', async () => {
+  it('update link opens the Plaid link flow', async () => {
     await addItem('item-a', 'Chase', Date.now());
     await addAccount('acct-1', 'item-a');
     await links();
 
-    await userEvent.click(await screen.findByRole('button', { name: 'repair' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'update link' }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open Plaid in browser' })).toBeTruthy());
   });
