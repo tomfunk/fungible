@@ -5,6 +5,10 @@ import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
 import { syncAll, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
 import { setSyncResult, mergeSyncResult } from '../core/sync-status.js';
+import {
+  refreshTransactions, describeRefreshProgress, describeRefreshResult,
+  POLL_DELAYS_MS, type RefreshProgress,
+} from '../core/transactions-refresh.js';
 import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
@@ -172,6 +176,23 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Links view state — one row per Plaid connection, not per account.
   const [linkedItems, setLinkedItems] = useState<LinkedItem[]>([]);
   const [itemCursor, setItemCursor] = useState(0);
+  // Refresh mode gates the billed Plaid call behind a confirmation; the poll
+  // that follows reports through syncStatus, so it shares the status line and
+  // blocks [s] the way a sync does. Progress is held as a step rather than a
+  // string: the waiting step carries a deadline, so re-rendering it on a timer
+  // turns it into a live countdown.
+  const [linksMode, setLinksMode] = useState<'list' | 'confirm-refresh'>('list');
+  const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
+  const refreshAbortRef = useRef<AbortController | null>(null);
+  const [, setRefreshTick] = useState(0);
+  useEffect(() => {
+    if (refreshProgress?.phase !== 'waiting') return;
+    const t = setInterval(() => setRefreshTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [refreshProgress]);
+  // Abort an in-flight poll if the screen goes away mid-refresh, so its timer
+  // and its sync don't outlive the component.
+  useEffect(() => () => refreshAbortRef.current?.abort(), []);
 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
@@ -355,6 +376,44 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
       setSyncStatus('error');
     });
+  }
+
+  /** Ask this connection's bank to go look for new transactions now, then watch
+   *  for what turns up. Item-scoped, like every other action on this tab. */
+  function startRefresh(item: LinkedItem) {
+    setLinksMode('list');
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
+    setSyncStatus('syncing');
+    setSyncMsg('');
+    setRefreshProgress({ phase: 'requesting' });
+
+    refreshTransactions(item.item_id, { signal: controller.signal, onProgress: setRefreshProgress })
+      .then((result) => {
+        refreshAbortRef.current = null;
+        setRefreshProgress(null);
+        // A check that ran is a real sync outcome: it raises this item's ⚠ badge
+        // when it failed and clears a stale one when it didn't. Scoped to this
+        // item, so another connection's failure survives.
+        if (result.syncResults.length > 0) mergeSyncResult(result.syncResults, [item.item_id]);
+        loadAccounts();
+        if (result.error) {
+          setSyncStatus('error');
+          setSyncMsg(`Refresh failed — ${result.error}`);
+          return;
+        }
+        setSyncMsg(describeRefreshResult(result));
+        setSyncStatus('done');
+        // Longer than a sync's 4s: this message is the whole answer to a
+        // four-minute wait, and the no-luck case tells the user what to do next.
+        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 10000);
+      })
+      .catch((err) => {
+        refreshAbortRef.current = null;
+        setRefreshProgress(null);
+        setSyncMsg(`Refresh failed — ${plaidErrorMessage(err)}`);
+        setSyncStatus('error');
+      });
   }
 
   function saveNewAcct() {
@@ -659,6 +718,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     // act on the item, and doing them from an account row implied a scope the
     // action never had.
     if (mainView === 'links') {
+      if (linksMode === 'confirm-refresh') {
+        if (key.escape || input === 'n') { setLinksMode('list'); return; }
+        if (input === 'y' && linkedItems[itemCursor]) { startRefresh(linkedItems[itemCursor]); return; }
+        return;
+      }
+      // Esc stops an in-flight refresh rather than leaving the tab — the poll
+      // runs for minutes and this is the only way out of it.
+      if (key.escape && refreshAbortRef.current) { refreshAbortRef.current.abort(); return; }
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('add-data'); return; }
       if (key.upArrow)   { setItemCursor((c) => Math.max(0, c - 1)); return; }
@@ -670,6 +737,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setMainView('add-data');
         setAddStep('link-plaid');
         startPlaidLink(defaultDays, linkedItems[itemCursor].item_id);
+        return;
+      }
+      // Confirmed rather than immediate: Plaid bills per /transactions/refresh
+      // call. Also worth the gate because [r] was "repair link" one release ago
+      // — muscle memory lands on a confirmation, not a charge.
+      if (input === 'r' && linkedItems[itemCursor] && syncStatus !== 'syncing') {
+        setLinksMode('confirm-refresh');
         return;
       }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
@@ -851,6 +925,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   const selectedAcct = linkedAccounts[acctCursor];
+  const selectedItem = linkedItems[itemCursor];
+  // A running refresh owns the Links status line; its text is re-derived every
+  // render so the countdown in the waiting step actually counts down.
+  const linksStatusLine = refreshProgress ? describeRefreshProgress(refreshProgress) : syncMsg;
   // Placeholders aren't accounts yet, so the footer names them separately
   // rather than inflating the account count.
   const awaitingCount = linkedAccounts.filter((a) => a.awaitingFirstSync).length;
@@ -879,8 +957,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : ''}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
+            : mainView === 'links' && refreshProgress
+            ? 'Esc stop checking'
             : mainView === 'links'
-            ? '↑↓ select  ·  [u] update link  ·  [s] sync'
+            ? '↑↓ select  ·  [u] update link  ·  [r] refresh  ·  [s] sync'
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
@@ -1050,10 +1130,39 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 {linkedItems.length} connection{linkedItems.length !== 1 ? 's' : ''}
                 {failingItems.size > 0 && <Text color={C_NEGATIVE}>  ·  {failingItems.size} failing</Text>}
               </Text>
-              {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text>}
+              {linksStatusLine && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{linksStatusLine}<Text dimColor>{syncElapsed}</Text></Text>}
+
+              {linksMode === 'confirm-refresh' && selectedItem && (
+                <ModalPanel borderColor={C_WARNING}>
+                  <Text bold color={C_WARNING}>Refresh transactions — Plaid charges for each refresh</Text>
+                  <Box marginTop={1} flexDirection="column">
+                    <Text>
+                      <Text color={C_ACCENT}>{selectedItem.institution_name ?? '(unknown institution)'}</Text>
+                      <Text dimColor>  — all {selectedItem.account_count} account{selectedItem.account_count !== 1 ? 's' : ''} on this connection</Text>
+                    </Text>
+                    <Text dimColor>Asks your bank to go look for new transactions right now.</Text>
+                    <Box marginTop={1} flexDirection="column">
+                      <Text dimColor>Only worth it if you're missing <Text bold>recent</Text> transactions and want the bank re-checked.</Text>
+                      {/* The window is fixed at item creation and update mode cannot
+                          widen it, so name it here rather than leaving the limit abstract. */}
+                      <Text dimColor>
+                        It can't reach past this connection's {selectedItem.days_requested ? `${selectedItem.days_requested}-day` : '90-day'} history window.
+                      </Text>
+                      <Text dimColor>
+                        Then checks for new transactions {POLL_DELAYS_MS.length} times over about {Math.round(POLL_DELAYS_MS.reduce((a, b) => a + b, 0) / 60000)} minutes. Esc stops the checks.
+                      </Text>
+                    </Box>
+                  </Box>
+                  <Box marginTop={1} gap={4}>
+                    <Text color={C_WARNING}>[y] Yes, refresh</Text>
+                    <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
+                  </Box>
+                </ModalPanel>
+              )}
 
               <Box marginTop={1} flexDirection="column">
                 <Text dimColor>[u] update link  — update creds for link, keeping its accounts and transactions</Text>
+                <Text dimColor>[r] refresh      — ask this bank for new transactions now (Plaid charges)</Text>
                 <Text dimColor>[s] sync         — re-sync every connection now</Text>
               </Box>
             </>

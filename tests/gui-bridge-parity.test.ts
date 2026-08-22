@@ -59,6 +59,14 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   getSyncFailures: 'GUI will surface sync status in its own layer',
   onSyncStatus: 'GUI will surface sync status in its own layer',
 
+  // On-demand /transactions/refresh (core/transactions-refresh.ts) — TUI-only for
+  // now. Bridging it needs more than a registry entry: the poll runs for minutes
+  // and streams progress, so the GUI needs a progress channel and a cancel path
+  // rather than a single request/response call. Remove these when that lands.
+  refreshTransactions: 'TUI-only; GUI needs a streaming progress + cancel channel, not a plain bridge call',
+  describeRefreshProgress: 'TUI-only; renderer will format its own progress once refresh is bridged',
+  describeRefreshResult: 'TUI-only; renderer will format its own result once refresh is bridged',
+
   // Generic settings access — GUI uses typed wrappers (settings.getPretaxMonthly /
   // settings.setPretaxMonthly) rather than the raw getSetting/setSetting functions.
   getSetting: 'GUI exposes typed wrappers (getPretaxMonthly/setPretaxMonthly) via settings namespace instead of generic access',

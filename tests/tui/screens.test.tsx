@@ -30,6 +30,7 @@ import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
 import { Accounts, extractLinkUrl } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
+import * as refreshApi from '../../core/transactions-refresh.js';
 import * as syncApi from '../../core/sync.js';
 import * as dedupApi from '../../core/dedup.js';
 import { Health } from '../../tui/Health.js';
@@ -2237,6 +2238,133 @@ describe('Accounts', () => {
       // It moved to the Links tab; the accounts hint must not still advertise it.
       expect(flat(r)).not.toContain('update link');
       expect(flat(r)).not.toContain('repair link');
+    });
+
+    // ── Refresh ([r]) ─────────────────────────────────────────────────────────
+    // Plaid bills per /transactions/refresh call, so the confirmation gate is as
+    // much a part of the feature as the keypress. [r] was "repair link" until
+    // update mode renamed it to [u], which is a second reason nothing may fire
+    // on the bare keypress.
+    describe('refresh ([r])', () => {
+      /** Puts the cursor on a connection row with the refresh action available. */
+      async function linksWithItem(days: number | null = null) {
+        await db.execute({
+          sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested) VALUES (?, ?, ?, ?, ?)',
+          args: ['item-a', 'tok', 'Chase', Date.now(), days],
+        });
+        await addAccount('acct-1', 'item-a');
+        await addAccount('acct-2', 'item-a');
+      }
+
+      it('advertises [r] on a connection row', async () => {
+        await linksWithItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        expect(flat(r)).toContain('[r] refresh');
+      });
+
+      it('asks for confirmation and says Plaid charges before doing anything', async () => {
+        await linksWithItem();
+        const spy = vi.spyOn(refreshApi, 'refreshTransactions');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        // Item-scoped, and the panel says so rather than implying one account.
+        expect(flat(r)).toContain('all 2 accounts on this connection');
+        expect(spy).not.toHaveBeenCalled();
+      });
+
+      it('names the connection history window it cannot reach past', async () => {
+        await linksWithItem(730);
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+
+        await waitFor(() => expect(flat(r)).toContain('730-day history window'));
+      });
+
+      it('[n] backs out without spending a refresh', async () => {
+        await linksWithItem();
+        const spy = vi.spyOn(refreshApi, 'refreshTransactions');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('n');
+
+        await waitFor(() => expect(flat(r)).not.toContain('Plaid charges for each refresh'));
+        expect(spy).not.toHaveBeenCalled();
+      });
+
+      it('[y] refreshes the selected item and reports it as requested, not complete', async () => {
+        await linksWithItem();
+        let report: ((p: refreshApi.RefreshProgress) => void) | undefined;
+        vi.spyOn(refreshApi, 'refreshTransactions').mockImplementation((_id, opts) => {
+          report = opts?.onProgress;
+          return new Promise(() => {});   // still polling; the tab stays in-flight
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('Asking your bank'));
+        expect(refreshApi.refreshTransactions).toHaveBeenCalledWith('item-a', expect.anything());
+
+        report?.({ phase: 'waiting', attempt: 1, attempts: 4, until: Date.now() + 15_000 });
+        await waitFor(() => {
+          const f = flat(r);
+          expect(f).toContain('Refresh requested');
+          expect(f).toContain('check 1 of 4');
+          expect(f.toLowerCase()).not.toContain('refresh complete');
+        });
+      });
+
+      it('reports the outcome when the poll finds nothing', async () => {
+        await linksWithItem();
+        vi.spyOn(refreshApi, 'refreshTransactions').mockResolvedValue({
+          itemId: 'item-a', added: 0, modified: 0, removed: 0, checks: 4, cancelled: false, syncResults: [],
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('No new transactions yet'));
+      });
+
+      it('Esc aborts an in-flight poll instead of leaving the tab', async () => {
+        await linksWithItem();
+        let started = false;
+        vi.spyOn(refreshApi, 'refreshTransactions').mockImplementation((id, opts) => {
+          started = true;
+          return new Promise((resolve) => {
+            opts?.signal?.addEventListener('abort', () => resolve({
+              itemId: id, added: 0, modified: 0, removed: 0, checks: 1, cancelled: true, syncResults: [],
+            }));
+          });
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('y');
+        await waitFor(() => expect(started).toBe(true));
+
+        r.stdin.write('\x1b');
+        await waitFor(() => expect(flat(r)).toContain('Stopped checking'));
+        // Still on Links — Esc was consumed by the poll, not by the tab.
+        expect(flat(r)).toContain('[u] update link');
+      });
     });
   });
 });
