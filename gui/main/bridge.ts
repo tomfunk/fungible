@@ -8,7 +8,7 @@ import { registry } from './registry.js';
 const plaid = {
   isConfigured: async (): Promise<boolean> => isPlaidConfigured(),
   getDefaultDaysRequested,
-  linkBank: (daysRequested?: number) => runPlaidLink(daysRequested),
+  linkBank: (daysRequested?: number, updateItemId?: string) => runPlaidLink(daysRequested, updateItemId),
 };
 
 const files = {
