@@ -78,9 +78,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [editPattern, setEditPattern] = useState('');
   const [editMatchType, setEditMatchType] = useState<'name' | 'regex'>('name');
 
-  // Tag panel state
+  // Tag panel state. The applied-tag set is kept together with the transaction
+  // it was read for: the panel acts on whatever row the cursor is on, and that
+  // row can change out from under an open panel (see the sync effect below), so
+  // the marks are only meaningful while the two ids agree.
   const [allTags, setAllTags] = useState<TagOption[]>([]);
-  const [txTagIds, setTxTagIds] = useState<Set<number>>(new Set());
+  const [tagState, setTagState] = useState<{ txId: string; ids: Set<number> } | null>(null);
   const [tagCursor, setTagCursor] = useState(0);
   const [tagInput, setTagInput] = useState('');
 
@@ -95,6 +98,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
+      // The tag panel acts on the selected row, so it cannot outlive an empty
+      // list: tagging the last row out of a 'lacks' filter would otherwise
+      // leave it open, drawing nothing while swallowing every keypress. Closed
+      // here rather than in an effect so it lands in the same commit as the
+      // rows — no render in between where the panel is open but empty.
+      if (rows.length === 0) setMode((m) => (m === 'tag' ? 'list' : m));
     });
   }
 
@@ -109,6 +118,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }, [mode, editField]);
 
   const selected = txs[cursor];
+
+  // Marks describe the row they were read for and no other, so an in-flight
+  // read shows nothing applied rather than the previous row's tags.
+  const selectedTagIds = tagState && tagState.txId === selected?.id ? tagState.ids : null;
 
   function openEdit() {
     if (!selected) return;
@@ -125,35 +138,49 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openTagPanel() {
     if (!selected) return;
-    void Promise.all([getTagOptions(), getTransactionTagIds(selected.id)]).then(([tags, tagIds]) => {
+    const txId = selected.id;
+    void Promise.all([getTagOptions(), getTransactionTagIds(txId)]).then(([tags, ids]) => {
       setAllTags(tags);
-      setTxTagIds(tagIds);
+      setTagState({ txId, ids });
       setTagInput('');
       setTagCursor(0);
       setMode('tag');
     });
   }
 
-  function toggleTag(tagId: number) {
+  /** Optimistic edit of the open panel's marks; dropped if the cursor already moved on. */
+  function patchTagState(txId: string, edit: (ids: Set<number>) => Set<number>) {
+    setTagState((s) => (s && s.txId === txId ? { txId, ids: edit(s.ids) } : s));
+  }
+
+  async function toggleTag(tagId: number) {
     if (!selected) return;
-    if (txTagIds.has(tagId)) {
-      removeTagFromTransaction(selected.id, tagId);
-      setTxTagIds((s) => { const n = new Set(s); n.delete(tagId); return n; });
-    } else {
-      addTagToTransaction(selected.id, tagId);
-      setTxTagIds((s) => new Set([...s, tagId]));
-    }
+    // null means the panel's marks are still being re-read for the row the
+    // cursor just moved to. Treating that as "has no tags" would turn a remove
+    // into an INSERT OR IGNORE that changes nothing, and patchTagState would
+    // drop the optimistic edit too — the keypress would appear to do nothing.
+    // Ignore it; the marks land in a moment and the key works again.
+    if (selectedTagIds === null) return;
+    const txId = selected.id;
+    const had = selectedTagIds.has(tagId);
+    patchTagState(txId, (ids) => {
+      const n = new Set(ids);
+      if (had) n.delete(tagId); else n.add(tagId);
+      return n;
+    });
+    // Await the write so the reload below sees it — otherwise a row that the
+    // filter now excludes can survive the refresh.
+    await (had ? removeTagFromTransaction(txId, tagId) : addTagToTransaction(txId, tagId));
     load(search, true);
   }
 
   function createAndApplyTag(name: string) {
     if (!selected) return;
-    void getOrCreateTag(name).then((tagId) => {
-      void addTagToTransaction(selected.id, tagId);
-      void Promise.all([getTagOptions(), getTransactionTagIds(selected.id)]).then(([tags, tagIds]) => {
-        setAllTags(tags);
-        setTxTagIds(tagIds);
-      });
+    const txId = selected.id;
+    void getOrCreateTag(name).then(async (tagId) => {
+      await addTagToTransaction(txId, tagId);
+      patchTagState(txId, (ids) => new Set(ids).add(tagId));
+      setAllTags(await getTagOptions());
       setTagInput('');
       setTagCursor(0);
       load(search, true);
@@ -225,6 +252,20 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     ? allTags.filter((t) => t.name.toLowerCase().includes(tagInput.toLowerCase()))
     : allTags;
 
+  // The tag panel is titled with — and acts on — the row under the cursor, and
+  // that row moves while the panel is open: tagging a transaction that a
+  // 'lacks' filter selects against drops it from the list, sliding the next one
+  // into the same index. Re-read the marks for the row the panel now names
+  // instead of leaving the tag just applied to the old row on screen.
+  useEffect(() => {
+    if (mode !== 'tag' || !selected) return;
+    if (tagState?.txId === selected.id) return;
+    const txId = selected.id;
+    let cancelled = false;
+    void getTransactionTagIds(txId).then((ids) => { if (!cancelled) setTagState({ txId, ids }); });
+    return () => { cancelled = true; };
+  }, [mode, selected?.id, tagState?.txId]);
+
   useInput((input, key) => {
     if (mode === 'search') {
       if (key.escape) { setSearchInput(''); setSearch(''); setMode('list'); return; }
@@ -247,7 +288,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === ' ' || key.return) {
         const t = filteredTags[tagCursor];
         if (t) {
-          toggleTag(t.id);
+          void toggleTag(t.id);
         } else if (tagInput.trim() && key.return) {
           createAndApplyTag(tagInput.trim());
         }
@@ -556,7 +597,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           ) : (
             filteredTags.map((t, i) => {
               const isSelected = i === tagCursor;
-              const has = txTagIds.has(t.id);
+              const has = selectedTagIds?.has(t.id) ?? false;
               return (
                 <SelectableRow key={t.id} selected={isSelected}>
                   <Text color={has ? C_POSITIVE : undefined} dimColor={!isSelected && !has}>

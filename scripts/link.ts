@@ -1,104 +1,12 @@
 import 'dotenv/config';
 import http from 'node:http';
 import { execFile } from 'node:child_process';
-import { initDb, db } from '../core/db.js';
-import { createLinkToken, exchangePublicToken } from '../core/plaid.js';
-import { encryptToken } from '../core/crypto.js';
+import { initDb } from '../core/db.js';
+import {
+  clampDaysRequested, completeLink, createFlowLinkToken, linkPage, successPage,
+} from '../core/plaid-link-flow.js';
 
 const PORT = 4747;
-
-function linkPage(linkToken: string) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Fungible — Connect Bank</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; display: flex; align-items: center; justify-content: center; height: 100vh; }
-    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 40px; text-align: center; max-width: 380px; }
-    h1 { font-size: 1.4rem; margin-bottom: 8px; color: #fff; }
-    p { color: #888; font-size: 0.9rem; margin-bottom: 28px; }
-    button { background: #00d4aa; color: #000; border: none; border-radius: 8px; padding: 12px 28px; font-size: 1rem; font-weight: 600; cursor: pointer; }
-    button:hover { background: #00bfa0; }
-    .status { margin-top: 20px; font-size: 0.85rem; color: #888; }
-    .success { color: #00d4aa; }
-    .error { color: #ff6b6b; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>fungible</h1>
-    <p>Connect your bank account to start tracking expenses.</p>
-    <button id="connect-btn">Connect Bank</button>
-    <div class="status" id="status"></div>
-  </div>
-
-  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
-  <script>
-    const btn = document.getElementById('connect-btn');
-    const status = document.getElementById('status');
-
-    btn.addEventListener('click', () => {
-      const handler = Plaid.create({
-        token: '${linkToken}',
-        onSuccess: async (publicToken, metadata) => {
-          btn.disabled = true;
-          status.textContent = 'Connecting...';
-          try {
-            const res = await fetch('/callback', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ public_token: publicToken, institution: metadata.institution }),
-            });
-            if (res.ok) {
-              status.className = 'status success';
-              status.textContent = 'Connected! You can close this window.';
-              btn.textContent = 'Done';
-            } else {
-              throw new Error(await res.text());
-            }
-          } catch (e) {
-            status.className = 'status error';
-            status.textContent = 'Error: ' + e.message;
-            btn.disabled = false;
-          }
-        },
-        onExit: (err) => {
-          if (err) {
-            status.className = 'status error';
-            status.textContent = err.display_message || 'Exited without connecting.';
-          }
-        },
-      });
-      handler.open();
-    });
-  </script>
-</body>
-</html>`;
-}
-
-function successPage() {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Connected</title>
-  <style>
-    body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; display: flex; align-items: center; justify-content: center; height: 100vh; }
-    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 12px; padding: 40px; text-align: center; }
-    h1 { color: #00d4aa; margin-bottom: 8px; }
-    p { color: #888; font-size: 0.9rem; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Connected!</h1>
-    <p>You can close this window and return to the terminal.</p>
-  </div>
-</body>
-</html>`;
-}
 
 // History window (days of transactions Plaid backfills) is set by the TUI via
 // PLAID_DAYS_REQUESTED. It's locked at Item creation and can't be changed later.
@@ -107,19 +15,29 @@ function resolveDaysRequested(): number | undefined {
   if (!raw) return undefined;
   const n = parseInt(raw, 10);
   if (isNaN(n)) return undefined;
-  return Math.max(30, Math.min(730, n));
+  return clampDaysRequested(n);
+}
+
+/** Single-line progress line. The TUI pipes this stdout straight into the link
+ *  panel, so every step reported here is visible to the user while they wait. */
+function log(msg: string) {
+  console.log(msg);
 }
 
 async function main() {
   await initDb();
-  console.log('Creating Plaid link token...');
+  // Set by the TUI's [u] update link to re-authorize an existing connection in
+  // place rather than link a new one.
+  const updateItemId = process.env.PLAID_UPDATE_ITEM_ID || undefined;
   const daysRequested = resolveDaysRequested();
-  const linkToken = await createLinkToken('local-user', daysRequested);
+
+  log(updateItemId ? 'Creating Plaid update-mode link token…' : 'Creating Plaid link token…');
+  const linkToken = await createFlowLinkToken({ updateItemId, daysRequested });
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(linkPage(linkToken));
+      res.end(linkPage(linkToken, { updateMode: !!updateItemId }));
       return;
     }
 
@@ -128,28 +46,33 @@ async function main() {
       req.on('data', (chunk) => { body += chunk; });
       req.on('end', async () => {
         try {
-          const { public_token, institution } = JSON.parse(body);
-          const { accessToken, itemId } = await exchangePublicToken(public_token);
-
-          const institutionName = institution?.name ?? null;
-
-          await db.execute({
-            sql: `INSERT INTO plaid_items (item_id, access_token, institution_name, days_requested)
-                  VALUES (?, ?, ?, ?)
-                  ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name, days_requested=excluded.days_requested`,
-            args: [itemId, encryptToken(accessToken), institutionName, daysRequested ?? null],
-          });
+          // Each of these is a single line on purpose: the TUI renders only the
+          // last line of a stdout chunk (tui/Accounts.tsx), so a multi-line log
+          // would hide everything but its final line.
+          log(updateItemId
+            ? 'Credentials received — updating link…'
+            : 'Account link received from Plaid — exchanging token…');
+          const { itemId, institutionName, updateMode } = await completeLink(body, { updateItemId, daysRequested });
 
           res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(successPage());
+          res.end(successPage({ updateMode, returnTo: 'the terminal' }));
 
-          console.log(`\n✓ Connected: ${institutionName ?? itemId}`);
-          console.log('  Run `npm run dev` to open the dashboard.\n');
+          log(`✓ ${updateMode ? 'Link updated' : 'Connected'}: ${institutionName ?? itemId} — returning to fungible…`);
 
           setTimeout(() => server.close(), 1000);
         } catch (e: any) {
+          // Also to stderr: the TUI flags the panel as failed on stderr, so the
+          // user sees the reason instead of the last progress line sitting there
+          // looking hung.
+          console.error(`Link failed: ${e.message}`);
           res.writeHead(500, { 'Content-Type': 'text/plain' });
           res.end(e.message);
+          // The stderr above flips the TUI panel to "failed", which offers
+          // "Press Enter to return" — so the user leaves while this process is
+          // still holding port 4747. Exit with it, or the next [l] link a bank
+          // dies on EADDRINUSE and linking stays broken for the rest of the
+          // session. The delay lets the 500 flush to the browser first.
+          setTimeout(() => { server.close(); process.exit(1); }, 1000);
         }
       });
       return;
@@ -159,10 +82,21 @@ async function main() {
     res.end();
   });
 
+  // listen() reports failure as an async 'error' event, which main().catch never
+  // sees — without this an EADDRINUSE surfaces to the user as a raw stack trace
+  // in the link panel.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    console.error(err.code === 'EADDRINUSE'
+      ? `Link failed: port ${PORT} is already in use — another link is still running. Close it, then try again.`
+      : `Link failed: ${err.message}`);
+    process.exit(1);
+  });
+
   server.listen(PORT, '127.0.0.1', () => {
     const url = `http://localhost:${PORT}`;
-    console.log(`Opening ${url} ...`);
+    log(`Opening ${url} …`);
     execFile('open', [url]);
+    log('Waiting for you to connect in the browser…');
   });
 }
 

@@ -602,17 +602,141 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; item_id: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
+export type LinkedAccount = {
+  id: string; name: string; nickname: string | null; owner: string | null; type: string;
+  subtype: string | null; institution_name: string | null; mask: string | null; item_id: string | null;
+  // MAX(balance_history.date) — when this account's balance was last snapshotted.
+  // The only sync signal a manual/CSV account has, since those have no Plaid item.
+  last_synced: string | null;
+  apr: number | null; excluded: boolean;
+  // A freshly linked Plaid item with no accounts rows yet: it exists in plaid_items
+  // but its first sync hasn't run, so there is nothing real to render. Named
+  // awaitingFirstSync, not `pending` — `pending` means "Plaid pending transaction"
+  // everywhere else in this file.
+  awaitingFirstSync: boolean;
+  // plaid_items.last_synced_at (epoch ms) — when we last successfully talked to
+  // this institution. NULL for CSV/manual accounts, which have no item.
+  item_last_synced_at: number | null;
+};
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
+  // Two queries rather than a UNION ALL: the shapes barely overlap and this
+  // function already maps rows, so concatenating in TS reads clearer.
+  const [result, bare] = await Promise.all([
+    db.execute(`
+      SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.mask, a.item_id, a.apr, a.excluded,
+        -- accounts.institution_name is only ever written by CSV import and the
+        -- demo seeder; the Plaid path records the name on plaid_items and never
+        -- copies it down, leaving every linked account's institution blank.
+        -- Reading through the join fixes that for existing rows with no
+        -- migration and no backfill, and CSV/manual accounts (no item) keep
+        -- their own value.
+        COALESCE(a.institution_name, pi.institution_name) as institution_name,
+        (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced,
+        pi.last_synced_at as item_last_synced_at
+      FROM accounts a
+      LEFT JOIN plaid_items pi ON pi.item_id = a.item_id
+      ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
+    `),
+    // Items that have never completed a sync AND have no visible row. Both
+    // clauses are load-bearing:
+    //   last_synced_at IS NULL — written last in syncTransactions, so it means
+    //     "no sync ever finished". Without it, an item whose sync succeeded but
+    //     whose accountsGet returned zero accounts would read "awaiting first
+    //     sync" forever, and deleteAccount (which leaves plaid_items behind)
+    //     would resurrect a deleted item as a placeholder.
+    //   NOT EXISTS — self-clears the moment the first accountsGet upsert lands,
+    //     so no cleanup path is needed. It also keeps real rows from being
+    //     duplicated when accountsGet succeeded but the transaction upsert threw.
+    db.execute(`
+      SELECT pi.item_id, pi.institution_name
+      FROM plaid_items pi
+      WHERE pi.last_synced_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.item_id = pi.item_id)
+      ORDER BY pi.institution_name
+    `),
+  ]);
+
+  const accounts = (result.rows as unknown as (Omit<LinkedAccount, 'excluded' | 'awaitingFirstSync' | 'item_last_synced_at'> & { excluded: number; item_last_synced_at: number | null })[]).map((r) => ({
+    ...r,
+    excluded: toBool(r.excluded),
+    item_last_synced_at: r.item_last_synced_at === null ? null : Number(r.item_last_synced_at),
+    awaitingFirstSync: false,
+  }));
+
+  // Placeholders sort first — there are at most one or two and their whole
+  // purpose is to be noticed right after a link.
+  const placeholders: LinkedAccount[] = (bare.rows as unknown as { item_id: string; institution_name: string | null }[])
+    .map((r) => ({
+      id: r.item_id,   // distinct namespace from Plaid account_id; safe as a React key
+      name: r.institution_name ?? 'New institution',
+      nickname: null,
+      owner: null,
+      type: 'other',
+      subtype: null,
+      institution_name: r.institution_name,
+      mask: null,
+      item_id: r.item_id,
+      last_synced: null,
+      apr: null,
+      excluded: false,
+      awaitingFirstSync: true,
+      item_last_synced_at: null,
+    }));
+
+  return [...placeholders, ...accounts];
+}
+
+/**
+ * One row per Plaid connection, for the Links view.
+ *
+ * Deliberately item-shaped rather than account-shaped: the things this view
+ * exists to manage — the sync cursor, the history window, updating credentials,
+ * replacing a connection — are all properties of the item, not of the accounts
+ * hanging off it. getLinkedAccounts answers a different question and flattens
+ * the item away.
+ */
+export type LinkedItem = {
+  item_id: string;
+  institution_name: string | null;
+  // Epoch ms of the last sync that ran to completion, written last in
+  // syncTransactions. NULL means no sync has ever finished for this item.
+  last_synced_at: number | null;
+  // Locked in at link time and unchangeable afterwards — Plaid rejects a wider
+  // window on an item that already has Transactions. NULL predates the column,
+  // in which case Plaid's 90-day default applied.
+  days_requested: number | null;
+  account_count: number;
+  // Linked, but the first sync has not landed. Same two-clause rule as
+  // getLinkedAccounts uses for its placeholder rows, and load-bearing for the
+  // same reasons: last_synced_at alone would mislabel an item whose sync
+  // succeeded but returned no accounts, and the count alone would resurrect an
+  // item whose accounts were deleted (deleteAccount leaves plaid_items behind).
+  awaitingFirstSync: boolean;
+  // Whether a /transactions/sync cursor is stored. No cursor means the next
+  // sync replays the item's full history from the start.
+  hasCursor: boolean;
+};
+
+export async function getLinkedItems(): Promise<LinkedItem[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id, a.apr, a.excluded,
-      (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
-    FROM accounts a
-    ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
+    SELECT pi.item_id, pi.institution_name, pi.last_synced_at, pi.days_requested,
+           (SELECT COUNT(*) FROM accounts a WHERE a.item_id = pi.item_id) as account_count,
+           (SELECT COUNT(*) FROM sync_state s WHERE s.account_id = pi.item_id) as cursor_count
+    FROM plaid_items pi
+    ORDER BY pi.institution_name, pi.item_id
   `);
-  return (result.rows as unknown as (Omit<LinkedAccount, 'excluded'> & { excluded: number })[]).map((r) => ({
-    ...r, excluded: toBool(r.excluded),
+  return (result.rows as unknown as {
+    item_id: string; institution_name: string | null; last_synced_at: number | null;
+    days_requested: number | null; account_count: number; cursor_count: number;
+  }[]).map((r) => ({
+    item_id: r.item_id,
+    institution_name: r.institution_name,
+    last_synced_at: r.last_synced_at === null ? null : Number(r.last_synced_at),
+    days_requested: r.days_requested === null ? null : Number(r.days_requested),
+    account_count: Number(r.account_count),
+    awaitingFirstSync: r.last_synced_at === null && Number(r.account_count) === 0,
+    hasCursor: Number(r.cursor_count) > 0,
   }));
 }
 
@@ -623,7 +747,7 @@ export async function getCsvAccounts(): Promise<CsvAccount[]> {
   return result.rows as unknown as CsvAccount[];
 }
 
-export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
+export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
 
 // SQLite has no boolean type — integer 0/1 columns are coerced here.
 const toBool = (v: unknown): boolean => Number(v) === 1;
@@ -631,7 +755,8 @@ export type HistoryRow        = { date: string; assets: number; liabilities: num
 export type NetWorthPeriod    = { period: string; assets: number; liabilities: number; net_worth: number };
 export type NetWorthGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
-export async function getNetWorthHistory(granularity: NetWorthGranularity = 'month'): Promise<NetWorthPeriod[]> {
+export async function getNetWorthHistory(granularity: NetWorthGranularity = 'month', accountIds?: string[]): Promise<NetWorthPeriod[]> {
+  if (accountIds !== undefined && accountIds.length === 0) return [];
   const periodExpr: Record<NetWorthGranularity, string> = {
     day:     `strftime('%Y-%m-%d', date)`,
     week:    `strftime('%Y-W%W', date)`,
@@ -640,7 +765,12 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
     year:    `strftime('%Y', date)`,
   };
   const expr = periodExpr[granularity];
-  const result = await db.execute(`
+  const filterArgs = accountIds ?? [];
+  const filterClause = filterArgs.length > 0
+    ? ` AND a.id IN (${filterArgs.map(() => '?').join(',')})`
+    : '';
+  const result = await db.execute({
+    sql: `
     WITH period_last AS (
       SELECT
         ${expr} AS period,
@@ -665,10 +795,12 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
       END) AS net_worth
     FROM period_last pl
     JOIN accounts a ON a.id = pl.account_id
-    WHERE pl.rn = 1 AND a.excluded = 0
+    WHERE pl.rn = 1 AND a.excluded = 0${filterClause}
     GROUP BY pl.period
     ORDER BY pl.period ASC
-  `);
+  `,
+    args: filterArgs,
+  });
   return (result.rows as unknown as { period: string; assets: number; liabilities: number; net_worth: number }[]).map((r) => ({
     period:      r.period,
     assets:      Number(r.assets),
@@ -680,7 +812,7 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
 export async function getAccountsWithBalances(): Promise<{ accounts: AccountBalance[]; history: HistoryRow[] }> {
   const [acctResult, histResult] = await Promise.all([
     db.execute(`
-      SELECT a.name, a.nickname, a.type, a.subtype, a.excluded, bh.balance
+      SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.excluded, bh.balance
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)

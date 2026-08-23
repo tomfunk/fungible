@@ -17,16 +17,24 @@ const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
     linkBank: async () => {
       throw new Error('plaid link not available in tests');
     },
+    cancelLink: async () => {},
   },
   files: { pickCsv: async () => null },
 };
 
-export type BridgeHarness = { emit: (channel: string, ...args: unknown[]) => void };
+export type BridgeHarness = {
+  /** Push an event to subscribers of an `on` channel (e.g. a sync-status update). */
+  emit: (channel: string, ...args: unknown[]) => void;
+  /** Register a handler for an `invoke` channel (the dedicated IPC channels that
+   *  bypass the registry, e.g. 'sync:refresh'). */
+  onInvoke: (channel: string, handler: (...args: unknown[]) => unknown) => void;
+};
 
 /** Installs a fake window.__bridge that routes calls into the real registry
  *  (backed by the mocked in-memory DB). Call in beforeEach, before rendering. */
 export function installBridge(): BridgeHarness {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  const invokeHandlers = new Map<string, (...args: unknown[]) => unknown>();
   (window as unknown as { __bridge: unknown }).__bridge = {
     call: async (ns: string, fn: string, args: unknown[]) => {
       const f =
@@ -34,7 +42,10 @@ export function installBridge(): BridgeHarness {
       if (typeof f !== 'function') throw new Error(`Unknown bridge call: ${ns}.${fn}`);
       return f(...args);
     },
-    invoke: async (channel: string) => (channel === 'agent:provider' ? null : undefined),
+    invoke: async (channel: string, ...args: unknown[]) => {
+      if (invokeHandlers.has(channel)) return invokeHandlers.get(channel)!(...args);
+      return channel === 'agent:provider' ? null : undefined;
+    },
     on: (channel: string, cb: (...args: unknown[]) => void) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(cb);
@@ -45,6 +56,7 @@ export function installBridge(): BridgeHarness {
   };
   return {
     emit: (channel, ...args) => listeners.get(channel)?.forEach((cb) => cb(...args)),
+    onInvoke: (channel, handler) => invokeHandlers.set(channel, handler),
   };
 }
 

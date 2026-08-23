@@ -148,6 +148,11 @@ export async function initDb() {
     ['Personal Care', 'flexible'], ['Home', 'flexible'], ['Services', 'flexible'],
     ['Shopping', 'discretionary'], ['Entertainment', 'discretionary'],
     ['Travel', 'discretionary'], ['Dining', 'discretionary'], ['Fees', 'discretionary'],
+    // Streaming and cloud storage — cancellable, so discretionary rather than
+    // fixed. Must stay in step with the seeded Subscriptions rules in
+    // core/seed-rules.ts: a category with no tier here falls to 'untagged' in
+    // every fixed/flexible/discretionary breakdown.
+    ['Subscriptions', 'discretionary'],
   ];
   await db.batch(
     flexDefaults.map(([cat, flex]) => ({
@@ -203,7 +208,7 @@ export async function initDb() {
     'Income', 'Transfer', 'Food & Drink', 'Shopping', 'Transportation',
     'Travel', 'Bills & Utilities', 'Insurance', 'Medical', 'Personal Care',
     'Childcare', 'Entertainment', 'Home', 'Services', 'Fees',
-    'Government', 'Taxes', 'Loan Payment', 'Uncategorized',
+    'Government', 'Taxes', 'Loan Payment', 'Subscriptions', 'Uncategorized',
   ];
   await db.batch(
     defaultCategories.map((cat) => ({
