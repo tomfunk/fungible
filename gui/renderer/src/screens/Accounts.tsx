@@ -61,6 +61,9 @@ export function Accounts() {
   // countdown, the same trick the TUI uses.
   const [, setRefreshTick] = useState(0);
   const refreshTickRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  // The item whose poll is in flight, held in a ref so the unmount cleanup can
+  // read it without re-subscribing on every refresh.
+  const refreshingItemIdRef = useRef<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
@@ -148,6 +151,7 @@ export function Accounts() {
   }
 
   async function startRefresh(item: LinkedItem) {
+    refreshingItemIdRef.current = item.item_id;
     setRefreshing(true);
     setRefreshProgress({ phase: 'requesting' });
     try {
@@ -158,6 +162,7 @@ export function Accounts() {
     } catch (err) {
       showStatus(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`, 3000);
     } finally {
+      refreshingItemIdRef.current = null;
       setRefreshing(false);
       setRefreshProgress(null);
       setRefreshItem(null);
@@ -169,6 +174,13 @@ export function Accounts() {
   function stopRefresh(item: LinkedItem) {
     void window.__bridge.invoke('sync:refresh-cancel', item.item_id);
   }
+
+  // Navigating away aborts the poll rather than leaving it to run its full
+  // budget main-side, the same cleanup the TUI does on unmount.
+  useEffect(() => () => {
+    const itemId = refreshingItemIdRef.current;
+    if (itemId) void window.__bridge.invoke('sync:refresh-cancel', itemId);
+  }, []);
 
   // Main pushes a progress step for every phase of the poll.
   useEffect(() =>

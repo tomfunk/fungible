@@ -805,8 +805,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       }
       // Confirmed rather than immediate: Plaid bills per /transactions/refresh
       // call. Also worth the gate because [r] was "repair link" one release ago
-      // — muscle memory lands on a confirmation, not a charge.
-      if (input === 'r' && linkedItems[itemCursor] && syncStatus !== 'syncing') {
+      // — muscle memory lands on a confirmation, not a charge. Skipped while a
+      // row awaits its first sync: that sync fetches the same window for free.
+      if (input === 'r' && linkedItems[itemCursor] && !linkedItems[itemCursor].awaitingFirstSync && syncStatus !== 'syncing') {
         setLinksMode('confirm-refresh');
         return;
       }

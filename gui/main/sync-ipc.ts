@@ -27,7 +27,10 @@ export function registerSyncIpc() {
       if (result.syncResults.length > 0) mergeSyncResult(result.syncResults, [itemId]);
       return result;
     } finally {
-      inflight.delete(itemId);
+      // Only if it is still ours: an abort resolves this poll a tick after the
+      // replacing call has already stored its own controller, and deleting that
+      // one would leave the new poll with no cancel path.
+      if (inflight.get(itemId) === controller) inflight.delete(itemId);
     }
   });
 
