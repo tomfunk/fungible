@@ -67,6 +67,12 @@ async function main() {
           console.error(`Link failed: ${e.message}`);
           res.writeHead(500, { 'Content-Type': 'text/plain' });
           res.end(e.message);
+          // The stderr above flips the TUI panel to "failed", which offers
+          // "Press Enter to return" — so the user leaves while this process is
+          // still holding port 4747. Exit with it, or the next [l] link a bank
+          // dies on EADDRINUSE and linking stays broken for the rest of the
+          // session. The delay lets the 500 flush to the browser first.
+          setTimeout(() => { server.close(); process.exit(1); }, 1000);
         }
       });
       return;
@@ -74,6 +80,16 @@ async function main() {
 
     res.writeHead(404);
     res.end();
+  });
+
+  // listen() reports failure as an async 'error' event, which main().catch never
+  // sees — without this an EADDRINUSE surfaces to the user as a raw stack trace
+  // in the link panel.
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    console.error(err.code === 'EADDRINUSE'
+      ? `Link failed: port ${PORT} is already in use — another link is still running. Close it, then try again.`
+      : `Link failed: ${err.message}`);
+    process.exit(1);
   });
 
   server.listen(PORT, '127.0.0.1', () => {

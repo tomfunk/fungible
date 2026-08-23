@@ -323,6 +323,29 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     setSyncMsg(describeSyncProgress(p));
   }
 
+  /** A sync parked because one was already in flight when a link finished.
+   *  Without this the new institution's first sync was dropped silently and its
+   *  row sat at "awaiting first sync" until the next launch. */
+  const pendingSyncRef = useRef<{ itemIds: string[]; startMsg?: string } | null>(null);
+
+  /** Run a parked sync, if any. Reports whether it started one, so the caller
+   *  can skip idling out a status line the queued run has just taken over.
+   *  Clears the ref first, so a queued run draining into itself can't loop. */
+  function drainPendingSync(): boolean {
+    const pending = pendingSyncRef.current;
+    pendingSyncRef.current = null;
+    if (!pending || pending.itemIds.length === 0) return false;
+    syncItems(pending.itemIds, pending.startMsg);
+    return true;
+  }
+
+  /** Sync `itemIds` now, or park them if a sync is already running. */
+  function syncItemsWhenFree(itemIds: string[], startMsg?: string) {
+    if (itemIds.length === 0) return;
+    if (syncStatusRef.current === 'syncing') pendingSyncRef.current = { itemIds, startMsg };
+    else syncItems(itemIds, startMsg);
+  }
+
   function forceSync() {
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
@@ -338,11 +361,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         // enough to read, and there's a real problem to act on.
         setSyncStatus('error');
         setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
+        // A queued run replaces this line, but the failure itself survives in
+        // the shared store as the row badge and the global banner.
+        drainPendingSync();
       } else {
         const added = results.reduce((s, r) => s + r.added, 0);
         setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
         setSyncStatus('done');
-        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+        if (!drainPendingSync()) setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
       }
     }).catch((err) => {
       // syncAll no longer throws on per-item failure, so this is a broader fault
@@ -373,11 +399,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (failed.length > 0) {
         setSyncStatus('error');
         setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
+        drainPendingSync();
       } else {
         const added = results.reduce((s, r) => s + r.added, 0);
         setSyncMsg(doneMsg(added));
         setSyncStatus('done');
-        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+        if (!drainPendingSync()) setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
       }
     }).catch((err) => {
       setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
@@ -547,7 +574,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           // to the attempted item, leaving other items' failures alone.
           setLinkMsg('Link updated! Press Enter to continue.');
           void loadAccounts();
-          if (syncStatusRef.current !== 'syncing') syncItems([updateItemId], 'Syncing updated link…');
+          syncItemsWhenFree([updateItemId], 'Syncing updated link…');
         } else {
           setLinkMsg('Bank connected! Press Enter to continue.');
           // The reload surfaces the institution's placeholder row immediately —
@@ -556,7 +583,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           // from the loaded list rather than out of the link subprocess's stdout.
           void loadAccounts().then((accts) => {
             const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
-            if (itemIds.length > 0 && syncStatusRef.current !== 'syncing') syncItems(itemIds);
+            syncItemsWhenFree(itemIds);
           });
         }
       } else if (code !== null) {

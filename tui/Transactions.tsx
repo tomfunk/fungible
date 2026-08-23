@@ -155,8 +155,14 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   async function toggleTag(tagId: number) {
     if (!selected) return;
+    // null means the panel's marks are still being re-read for the row the
+    // cursor just moved to. Treating that as "has no tags" would turn a remove
+    // into an INSERT OR IGNORE that changes nothing, and patchTagState would
+    // drop the optimistic edit too — the keypress would appear to do nothing.
+    // Ignore it; the marks land in a moment and the key works again.
+    if (selectedTagIds === null) return;
     const txId = selected.id;
-    const had = selectedTagIds?.has(tagId) ?? false;
+    const had = selectedTagIds.has(tagId);
     patchTagState(txId, (ids) => {
       const n = new Set(ids);
       if (had) n.delete(tagId); else n.add(tagId);

@@ -155,13 +155,20 @@ describe('syncAll item filter', () => {
     expect(await syncedItemIds()).toEqual(['item-a', 'item-b']);
   });
 
-  it('treats an empty filter as unfiltered', async () => {
+  // An empty scope means "sync these zero items", not "sync everything". The
+  // array crosses the GUI's IPC bridge from the renderer, so a caller that
+  // computes an empty list must not get a full sync of every institution — the
+  // opposite of what it asked for, and expensive on a large database. `undefined`
+  // remains the way to ask for all of them.
+  it('treats an empty filter as an empty scope, not as unfiltered', async () => {
     await seedItems('item-a', 'item-b');
-    mockPlaid();
+    const plaid = mockPlaid();
 
     const results = await syncAll(true, []);
 
-    expect(results.map((r) => r.itemId).sort()).toEqual(['item-a', 'item-b']);
+    expect(results).toEqual([]);
+    expect(await syncedItemIds()).toEqual([]);
+    expect(plaid.transactionsSync).not.toHaveBeenCalled();
   });
 
   it('syncs several named items and skips the rest', async () => {
