@@ -8,6 +8,7 @@ import { handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
 import { usePagination, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
+import { useLoadGuard } from './useLoadGuard.js';
 
 const BAR_WIDTH = 32;
 const PAGE = 20;
@@ -71,8 +72,15 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   }, [refreshKey]);
 
   const filterKey = selectedIds ? [...selectedIds].sort().join(',') : '';
+  // [Space] can retoggle the filter several times a second, and this query is an
+  // unindexed window function over all of balance_history — so a slow earlier
+  // request can land after a faster later one and paint a chart that disagrees
+  // with the selection on screen, with no later event to correct it.
+  const historyGuard = useLoadGuard();
   useEffect(() => {
+    const token = historyGuard.begin();
     void getNetWorthHistory(range, selectedIds ? [...selectedIds] : undefined).then((r) => {
+      if (!historyGuard.isLatest(token)) return;
       setRows(r);
       if (filterMode) {
         setCursor((c) => Math.min(c, Math.max(0, r.length - 1)));
@@ -178,8 +186,13 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
   const AMT_W  = 14;
-  const IND_W  = filterMode ? 2 : 0;
-  const NAME_W = Math.max(14, inner - AMT_W - 16 - IND_W);
+  // Columns the indicator cell occupies on a data row: 2 for '● ' plus the row
+  // Box's gap={2} that follows it. The gap is part of the width because Ink adds
+  // no gap for a null child, so outside filter mode the lead costs nothing —
+  // which is why rows with no indicator (the totals, the excluded block) pad by
+  // NAME_W + LEAD_W to line their amounts up with the rows above.
+  const LEAD_W  = filterMode ? 4 : 0;
+  const NAME_W = Math.max(14, inner - AMT_W - 16 - LEAD_W);
 
   const { visible, pageStart } = usePagination(rows, cursor, PAGE);
   const labelW = range === 'year' ? 4 : range === 'quarter' ? 7 : range === 'month' ? 8 : 12;
@@ -293,10 +306,10 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               ? assets.map((a, i) => renderAssetRow(a, i))
               : assetTypes.map((t, i) => renderAssetTypeRow(t, i))}
             <Box gap={2} marginTop={0}>
-              <Text dimColor>{'─'.repeat(NAME_W + IND_W)}</Text>
+              <Text dimColor>{'─'.repeat(NAME_W + LEAD_W)}</Text>
             </Box>
             <Box gap={2}>
-              <Text bold>{'Total assets'.padEnd(NAME_W + IND_W)}</Text>
+              <Text bold>{'Total assets'.padEnd(NAME_W + LEAD_W)}</Text>
               <Text bold color={C_POSITIVE}>{fmt(totalAssets).padStart(AMT_W)}</Text>
             </Box>
           </Box>
@@ -308,10 +321,10 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               ? liabilities.map((a, i) => renderLiabilityRow(a, assets.length + i))
               : liabilityTypes.map((t, i) => renderLiabilityTypeRow(t, assetTypes.length + i))}
             <Box gap={2}>
-              <Text dimColor>{'─'.repeat(NAME_W + IND_W)}</Text>
+              <Text dimColor>{'─'.repeat(NAME_W + LEAD_W)}</Text>
             </Box>
             <Box gap={2}>
-              <Text bold>{'Total debt'.padEnd(NAME_W + IND_W)}</Text>
+              <Text bold>{'Total debt'.padEnd(NAME_W + LEAD_W)}</Text>
               <Text bold color={C_NEGATIVE}>{fmt(totalLiabilities).padStart(AMT_W)}</Text>
             </Box>
           </Box>
@@ -322,16 +335,16 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text bold dimColor>Excluded (not in net worth)</Text>
               {excluded.map((a) => (
                 <Box key={a.id} gap={2}>
-                  <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W + IND_W).padEnd(NAME_W + IND_W)}</Text>
+                  <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W + LEAD_W).padEnd(NAME_W + LEAD_W)}</Text>
                   <Text dimColor>{fmt(a.balance).padStart(AMT_W)}</Text>
                   <Text dimColor>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</Text>
                 </Box>
               ))}
               <Box gap={2}>
-                <Text dimColor>{'─'.repeat(NAME_W + IND_W)}</Text>
+                <Text dimColor>{'─'.repeat(NAME_W + LEAD_W)}</Text>
               </Box>
               <Box gap={2}>
-                <Text dimColor>{'Excluded total'.padEnd(NAME_W + IND_W)}</Text>
+                <Text dimColor>{'Excluded total'.padEnd(NAME_W + LEAD_W)}</Text>
                 <Text dimColor>{fmtSigned(exclNet).padStart(AMT_W)}</Text>
               </Box>
             </Box>

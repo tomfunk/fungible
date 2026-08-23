@@ -57,7 +57,12 @@ export function fmtSyncedAt(ms: number | null): string {
   if (ms === null) return 'never';
   if (Date.now() - ms < 24 * 60 * 60 * 1000) return fmtTimeAgo(ms);
   const dt = new Date(ms);
-  return `${MONTHS[dt.getMonth()]} ${dt.getDate()}`;
+  const date = `${MONTHS[dt.getMonth()]} ${dt.getDate()}`;
+  // Year only when it isn't the current one. This is the "is this connection
+  // healthy?" column, and a year-old link reading the same as a four-month-old
+  // one hides exactly what the column exists to reveal.
+  const year = new Date().getFullYear();
+  return dt.getFullYear() === year ? date : `${date} ${dt.getFullYear()}`;
 }
 
 export function fmtSpan(earliest: string | null, latest: string | null): string {

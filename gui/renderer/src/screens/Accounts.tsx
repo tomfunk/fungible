@@ -93,6 +93,34 @@ export function Accounts() {
     }
   }
 
+  /** Sync only the just-linked institution(s). Scoped, so another institution's
+   *  failure badge survives it; awaited and followed by a reload, so the
+   *  placeholder row turns into real accounts on its own — otherwise the tab
+   *  sits at "◷ awaiting first sync" until the user presses [s] or navigates
+   *  away and back, and a failed first sync says nothing at all. */
+  async function syncNewInstitutions() {
+    if (syncing) return;
+    const accts = await api.queries.getLinkedAccounts();
+    const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
+    if (itemIds.length === 0) return;
+    setSyncing(true);
+    try {
+      const results = await api.sync.syncAll(true, itemIds);
+      const failed = results.filter((r) => r.error);
+      if (failed.length > 0) {
+        showStatus(`Sync failed: ${failed.map((r) => r.error).join('  ·  ')}`, 8000);
+      } else {
+        const added = results.reduce((s, r) => s + r.added, 0);
+        showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
+      }
+      reload();
+    } catch {
+      showStatus('Sync failed', 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   /** Delete one connection's sync cursor, then resync it so Plaid resends
    *  everything it holds. Both steps run in main so they can't be interleaved
    *  with another sync. */
@@ -541,11 +569,7 @@ export function Accounts() {
             showStatus(`Connected ${institution ?? 'bank'} — syncing…`, 4000);
             reload();
             setTab('accounts');
-            // Trigger scoped sync for newly linked institution
-            void api.queries.getLinkedAccounts().then((accts) => {
-              const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
-              if (itemIds.length > 0) void api.sync.syncAll(true, itemIds);
-            });
+            void syncNewInstitutions();
           }}
         />
       )}
@@ -673,6 +697,14 @@ function LinkBankModal({
     });
   }, []);
 
+  /** Closing while the browser flow is open abandons it, so tell main to tear it
+   *  down — otherwise it holds the single link slot until it times out and the
+   *  user can't start another link, or update a broken one, until then. */
+  function close() {
+    if (running) void api.plaid.cancelLink();
+    onClose();
+  }
+
   async function start() {
     let n: number | undefined;
     if (!updateItem) {
@@ -694,7 +726,7 @@ function LinkBankModal({
   }
 
   return (
-    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={onClose}>
+    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={close}>
       {running ? (
         <div>
           <p className="accent">⟳ Complete the Plaid flow in your browser, then return here.</p>

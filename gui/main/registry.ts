@@ -221,7 +221,11 @@ export const registry = {
     // which drives the renderer banner + row badges via the sync-status push.
     syncAll: async (force?: boolean, itemIds?: string[]) => {
       const results = await syncAll(force, itemIds);
-      setSyncResult(results);
+      // A scoped run only speaks for the items it attempted — merge, so an
+      // institution this run never touched keeps its failure badge. Only a
+      // whole-DB sync has earned the right to clear everything.
+      if (itemIds && itemIds.length > 0) mergeSyncResult(results, itemIds);
+      else setSyncResult(results);
       return results;
     },
     // Delete one item's cursor and resync it, so Plaid resends its full history.

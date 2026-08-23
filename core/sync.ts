@@ -194,7 +194,12 @@ export async function syncAll(
   itemIds?: string[],
   onProgress?: (itemId: string, p: SyncProgress) => void,
 ): Promise<SyncItemResult[]> {
-  const itemsRes = itemIds && itemIds.length > 0
+  // An empty scope means "sync these zero items", not "sync everything". The
+  // distinction matters because the array crosses the GUI's IPC bridge from the
+  // renderer, where a caller that computes an empty list would otherwise trigger
+  // a full sync of every institution — the opposite of what it asked for.
+  if (itemIds && itemIds.length === 0) return [];
+  const itemsRes = itemIds
     ? await db.execute({
         sql: `SELECT item_id, access_token, last_synced_at FROM plaid_items
               WHERE item_id IN (${itemIds.map(() => '?').join(', ')})`,
