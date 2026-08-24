@@ -80,8 +80,8 @@ export async function syncTransactions(accessToken: string, itemId: string, onPr
         const category = categorizeWithRules(catRules, tx.name, tx.merchant_name ?? null, rawCategory, tx.amount, tx.account_id);
         const displayName = applyNameRulesWithRules(nameRules, tx.name, tx.amount, tx.account_id);
         return {
-          sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending, display_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending, display_name, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plaid')
                 ON CONFLICT(id) DO UPDATE SET
                   date=excluded.date, name=excluded.name, merchant_name=excluded.merchant_name,
                   amount=excluded.amount,

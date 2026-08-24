@@ -115,8 +115,8 @@ const txns: [string, string, string, string, string | null, number, string][] = 
 
 await db.batch(
   txns.map(([id, acct, date, name, merchant, amount, category]) => ({
-    sql: `INSERT OR IGNORE INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    sql: `INSERT OR IGNORE INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending, source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'plaid')`,
     args: [id, acct, date, name, merchant, amount, category, category],
   })),
   'write',

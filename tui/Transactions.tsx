@@ -443,7 +443,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search, true);
         return;
       }
-      if (input === 'x' && selected?.id.startsWith('csv-')) {
+      if (input === 'x' && selected?.source === 'csv') {
         deleteTransaction(selected.id);
         load(search);
         return;

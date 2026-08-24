@@ -27,7 +27,27 @@ const SCHEMA = `
     pending INTEGER NOT NULL DEFAULT 0,
     manual_category TEXT,
     display_name TEXT,
-    ignored INTEGER NOT NULL DEFAULT 0
+    ignored INTEGER NOT NULL DEFAULT 0,
+    source TEXT CHECK(source IN ('plaid','csv')),
+    import_id INTEGER,
+    dedup_key TEXT
+  );
+
+  CREATE UNIQUE INDEX idx_transactions_dedup
+    ON transactions(account_id, dedup_key) WHERE dedup_key IS NOT NULL;
+
+  CREATE TABLE imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_hash TEXT NOT NULL,
+    imported_at INTEGER NOT NULL,
+    row_count INTEGER NOT NULL,
+    imported INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    min_date TEXT,
+    max_date TEXT,
+    config TEXT NOT NULL
   );
 
   CREATE TABLE category_rules (

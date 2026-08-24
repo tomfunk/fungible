@@ -1009,7 +1009,7 @@ function ManualAssetModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
 
 // ── CSV import wizard (single-form, unlike the TUI's step flow) ─────────────
 
-type CsvData = { path: string; headers: string[]; rows: string[][] };
+type CsvData = { path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string };
 
 function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imported: number, skipped: number) => void }) {
   const [csv, setCsv] = useState<CsvData | null>(null);
@@ -1097,7 +1097,7 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
         debitCol: amountMode === 'split' ? debitCol : null,
         creditCol: amountMode === 'split' ? creditCol : null,
         positiveIsInflow,
-      });
+      }, { name: csv.fileName, hash: csv.fileHash });
       onDone(result.imported, result.skipped);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed');

@@ -102,6 +102,19 @@ export async function initDb() {
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_balance_history_acct_date
       ON balance_history(account_id, date)`,
+    `CREATE TABLE IF NOT EXISTS imports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_hash TEXT NOT NULL,
+      imported_at INTEGER NOT NULL,
+      row_count INTEGER NOT NULL,
+      imported INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      min_date TEXT,
+      max_date TEXT,
+      config TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS household_members (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL DEFAULT '',
@@ -129,6 +142,9 @@ export async function initDb() {
     'ALTER TABLE accounts ADD COLUMN item_id TEXT',
     'ALTER TABLE category_rules ADD COLUMN account_id TEXT',
     'ALTER TABLE name_rules ADD COLUMN account_id TEXT',
+    "ALTER TABLE transactions ADD COLUMN source TEXT CHECK(source IN ('plaid','csv'))",
+    'ALTER TABLE transactions ADD COLUMN import_id INTEGER',
+    'ALTER TABLE transactions ADD COLUMN dedup_key TEXT',
   ];
   for (const sql of migrations) {
     try {
@@ -138,6 +154,51 @@ export async function initDb() {
       if (!msg.includes('duplicate column name') && !msg.includes('already exists')) throw e;
     }
   }
+
+  // Label existing rows by provenance. Until now the only signal was the id
+  // prefix the CSV importer wrote, so that prefix is what seeds the column —
+  // once, after which the column is authoritative and the prefix is just a
+  // namespace. Anything not written by the CSV importer came from Plaid.
+  await db.execute(
+    `UPDATE transactions SET source = CASE WHEN id LIKE 'csv-%' THEN 'csv' ELSE 'plaid' END
+     WHERE source IS NULL`,
+  );
+
+  // Give pre-existing CSV rows a dedup_key so a later re-import of the same
+  // statement recognises them instead of inserting duplicates. They keep their
+  // old hash-derived ids — nothing is rewritten — and they have no import_id,
+  // because there is no record of which file they came from. The UI shows them
+  // as predating import history.
+  //
+  // Ordinals are assigned here rather than in SQL so one implementation produces
+  // every key in the database (SQLite's LOWER() is ASCII-only, JS toLowerCase is
+  // not, and the two disagree on names like CAFÉ). Assigning them by construction
+  // also guarantees the batch cannot violate the unique index created below.
+  const legacyCsv = await db.execute(
+    `SELECT id, date, name, amount FROM transactions
+     WHERE source = 'csv' AND dedup_key IS NULL ORDER BY rowid`,
+  );
+  if (legacyCsv.rows.length > 0) {
+    const { assignOrdinals, dedupKey } = await import('./csv.js');
+    const rows = legacyCsv.rows as unknown as { id: string; date: string; name: string; amount: number }[];
+    await db.batch(
+      assignOrdinals(rows.map((r) => ({ ...r, amount: Number(r.amount) }))).map((r) => ({
+        sql: 'UPDATE transactions SET dedup_key = ? WHERE id = ?',
+        args: [dedupKey(r.date, r.name, r.amount, r.ord), r.id],
+      })),
+      'write',
+    );
+  }
+
+  // Created after the backfill, so a database that somehow already holds
+  // colliding rows fails here rather than silently dropping one of them.
+  // Partial: Plaid rows have no dedup_key, and NULLs would not be constrained
+  // anyway — saying so keeps the index small and the intent explicit.
+  await db.execute(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_dedup
+     ON transactions(account_id, dedup_key) WHERE dedup_key IS NOT NULL`,
+  );
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_transactions_import ON transactions(import_id)');
 
   // Seed default flexibility tiers (only where not already set)
   const flexDefaults: [string, string][] = [

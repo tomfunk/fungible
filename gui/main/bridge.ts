@@ -16,7 +16,7 @@ const plaid = {
 };
 
 const files = {
-  pickCsv: async (): Promise<{ path: string; headers: string[]; rows: string[][] } | null> => {
+  pickCsv: async (): Promise<{ path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string } | null> => {
     const result = await dialog.showOpenDialog({
       title: 'Import CSV',
       filters: [{ name: 'CSV', extensions: ['csv'] }],

@@ -374,7 +374,7 @@ export function Transactions() {
                       clear
                     </button>
                   )}
-                  {tx.id.startsWith('csv-') && (
+                  {tx.source === 'csv' && (
                     <button
                       className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
                       title="Delete (CSV-imported only)"

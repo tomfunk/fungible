@@ -137,6 +137,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [fileError, setFileError] = useState('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<string[][]>([]);
+  const [csvFile, setCsvFile] = useState<{ name: string; hash: string }>({ name: '', hash: '' });
   const [colCursor, setColCursor] = useState(0);
   const [dateCol, setDateCol] = useState<number | null>(null);
   const [nameCol, setNameCol] = useState<number | null>(null);
@@ -602,6 +603,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (!parsed.headers.length) { setFileError('No columns found'); return; }
       setHeaders(parsed.headers);
       setCsvRows(parsed.rows);
+      setCsvFile({ name: parsed.fileName, hash: parsed.fileHash });
       setFileError('');
       const h = parsed.headers.map((x) => x.toLowerCase());
       const dateGuess = h.findIndex((x) => x.includes('date') || x.includes('posted'));
@@ -620,7 +622,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     void importCsvTransactions(csvRows, acct, {
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
-    }).then((result) => {
+    }, csvFile).then((result) => {
       setImportResult(result);
       setAddStep('done');
     });

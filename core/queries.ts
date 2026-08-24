@@ -543,6 +543,10 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
 export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
+  // Gates the delete affordance: a Plaid-owned row comes back on the next sync,
+  // so offering to delete it would be a lie. NULL only for rows written before
+  // the column existed, which initDb backfills on the next launch.
+  source: 'plaid' | 'csv' | null;
 };
 
 export function buildSearchRe(search: string): RegExp {
@@ -570,7 +574,7 @@ export async function getTransactions(filters: {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({
-    sql: `SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
+    sql: `SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored, t.source,
             (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
           FROM transactions t ${where}
           ORDER BY ${SORT_ORDER_BY[sort]}
