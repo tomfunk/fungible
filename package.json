@@ -66,7 +66,7 @@
     "react-dom": "^19.2.8",
     "recharts": "^3.9.1",
     "typescript": "^7.0.2",
-    "vite": "^7.3.5",
+    "vite": "^8.2.2",
     "vitest": "^3.2.4"
   }
 }
