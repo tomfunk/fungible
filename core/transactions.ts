@@ -30,6 +30,25 @@ export async function clearTransactionOverride(id: string): Promise<void> {
   });
 }
 
+/**
+ * Reattribute a transaction to the period it belongs to. Preserves the bank's
+ * posting date in `original_date` on the first edit, so repeated edits never
+ * lose it and `clearTransactionDate` can always get back to the truth.
+ */
+export async function setTransactionDate(id: string, date: string): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE transactions SET original_date = COALESCE(original_date, date), date = ? WHERE id = ?',
+    args: [date, id],
+  });
+}
+
+export async function clearTransactionDate(id: string): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE transactions SET date = COALESCE(original_date, date), original_date = NULL WHERE id = ?',
+    args: [id],
+  });
+}
+
 export async function setTransactionIgnored(id: string, ignored: boolean): Promise<void> {
   await db.execute({
     sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
