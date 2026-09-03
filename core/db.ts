@@ -115,6 +115,10 @@ export async function initDb() {
     'ALTER TABLE transactions ADD COLUMN manual_category TEXT',
     'ALTER TABLE transactions ADD COLUMN display_name TEXT',
     'ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0',
+    // Set when the user reattributes a transaction to the period it belongs to
+    // (a paycheck posting on the 1st, a check cashed months after it was written).
+    // Holds the original posting date; `date` holds the reattributed one.
+    'ALTER TABLE transactions ADD COLUMN original_date TEXT',
     'ALTER TABLE category_rules ADD COLUMN min_amount REAL',
     'ALTER TABLE category_rules ADD COLUMN max_amount REAL',
     'ALTER TABLE name_rules ADD COLUMN min_amount REAL',
