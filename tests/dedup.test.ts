@@ -175,3 +175,33 @@ describe('deduplicateCsvVsPlaid', () => {
     expect(await deduplicateCsvVsPlaid()).toBe(2);
   });
 });
+
+describe('deduplicateCsvVsPlaid with reattributed dates', () => {
+  it('still matches a duplicate whose displayed date was moved months away', async () => {
+    // Same transaction from both sources, posted a day apart. The CSV copy has
+    // been reattributed to a prior period; matching must use the posting date.
+    const csvId = await csvTx({ name: 'BRAINCO TECHNOLO', amount: -5531.2, date: '2025-01-01' });
+    await db.execute({
+      sql: "UPDATE transactions SET date = '2024-11-30', original_date = '2025-01-01' WHERE id = ?",
+      args: [csvId],
+    });
+    await plaidTx({ name: 'BRAINCO TECHNOLO', amount: -5531.2, date: '2025-01-02' });
+
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(csvId)).toBe(false);
+  });
+
+  it('does not match when the posting dates are genuinely far apart', async () => {
+    // Reattributing must not manufacture a match either: these are two real,
+    // distinct payments that happen to share an amount.
+    const csvId = await csvTx({ name: 'Albany Children\'s Center', amount: 2914, date: '2024-11-25' });
+    await db.execute({
+      sql: "UPDATE transactions SET date = '2025-01-02', original_date = '2024-11-25' WHERE id = ?",
+      args: [csvId],
+    });
+    await plaidTx({ name: 'Albany Children\'s Center', amount: 2914, date: '2025-01-02' });
+
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+    expect(await exists(csvId)).toBe(true);
+  });
+});

@@ -11,6 +11,8 @@ import {
   clearTransactionOverride,
   setTransactionIgnored,
   setTransactionDisplayName,
+  setTransactionDate,
+  clearTransactionDate,
   deleteTransaction,
   upsertCategoryRule,
   upsertNameRule,
@@ -210,5 +212,49 @@ describe('setIgnoredBulk', () => {
     await setIgnoredBulk([id], false);
     const row = (await db.execute({ sql: 'SELECT ignored FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as { ignored: number };
     expect(row.ignored).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('setTransactionDate', () => {
+  async function dateOf(id: string) {
+    const r = await db.execute({ sql: 'SELECT date, original_date FROM transactions WHERE id = ?', args: [id] });
+    return r.rows[0] as unknown as { date: string; original_date: string | null };
+  }
+
+  it('moves the date and preserves the posting date', async () => {
+    const id = await insertTx({ name: 'BRAINCO TECHNOLO' }); // posts 2025-01-15
+    await setTransactionDate(id, '2024-12-31');
+    expect(await dateOf(id)).toEqual({ date: '2024-12-31', original_date: '2025-01-15' });
+  });
+
+  it('keeps the first posting date across repeated edits', async () => {
+    const id = await insertTx({ name: 'BRAINCO TECHNOLO' });
+    await setTransactionDate(id, '2024-12-31');
+    await setTransactionDate(id, '2024-12-01');
+    // original_date must still be the bank's date, not the intermediate edit
+    expect(await dateOf(id)).toEqual({ date: '2024-12-01', original_date: '2025-01-15' });
+  });
+
+  it('clearTransactionDate restores the posting date', async () => {
+    const id = await insertTx({ name: 'Check #311 Cashed' });
+    await setTransactionDate(id, '2024-06-01');
+    await clearTransactionDate(id);
+    expect(await dateOf(id)).toEqual({ date: '2025-01-15', original_date: null });
+  });
+
+  it('clearTransactionDate is a no-op on an unedited transaction', async () => {
+    const id = await insertTx({ name: 'Target' });
+    await clearTransactionDate(id);
+    expect(await dateOf(id)).toEqual({ date: '2025-01-15', original_date: null });
+  });
+
+  it('reattributed transactions land in the new period for range queries', async () => {
+    const id = await insertTx({ name: 'BRAINCO TECHNOLO', amount: -5531.2 });
+    await setTransactionDate(id, '2024-12-31');
+    const inDec = await db.execute("SELECT id FROM transactions WHERE date BETWEEN '2024-12-01' AND '2024-12-31'");
+    const inJan = await db.execute("SELECT id FROM transactions WHERE date BETWEEN '2025-01-01' AND '2025-01-31'");
+    expect(inDec.rows.map((r) => r.id)).toEqual([id]);
+    expect(inJan.rows).toHaveLength(0);
   });
 });

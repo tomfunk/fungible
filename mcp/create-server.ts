@@ -72,6 +72,29 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('edit_transaction', input),
   );
 
+  // ── set_transaction_date ────────────────────────────────────────────────────
+
+  server.tool(
+    'set_transaction_date',
+    'Reattribute a transaction to the period it belongs to (e.g. a paycheck that posted on the 1st but was earned the prior month, or a check cashed months after it was written). The bank\'s posting date is preserved and the change survives re-syncs.',
+    {
+      id:   z.string().describe('Transaction ID from list_transactions'),
+      date: z.string().describe('Date to attribute the transaction to, YYYY-MM-DD'),
+    },
+    (input) => run('set_transaction_date', input),
+  );
+
+  // ── clear_transaction_date ──────────────────────────────────────────────────
+
+  server.tool(
+    'clear_transaction_date',
+    'Undo a date reattribution, restoring the bank\'s original posting date.',
+    {
+      id: z.string().describe('Transaction ID from list_transactions'),
+    },
+    (input) => run('clear_transaction_date', input),
+  );
+
   // ── clear_edit ──────────────────────────────────────────────────────────────
 
   server.tool(

@@ -20,7 +20,7 @@ import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTop
 import { applyCategoriesToAll } from './categorize.js';
 import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
-import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored } from './transactions.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
 import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
@@ -36,6 +36,7 @@ import { CANVAS_SPEC_PATH, appendHistory, searchHistory, getHistoryEntry, delete
 // or TUI refresh and afterWrite callbacks will be silently skipped for that tool.
 export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction',
+  'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
   'tag_transaction', 'toggle_hidden_category', 'sync',
   'show_canvas', 'load_canvas', 'delete_canvas',
@@ -235,6 +236,29 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: 'set_transaction_date',
+    description: 'Reattribute a transaction to the period it belongs to (e.g. a paycheck that posted on the 1st but was earned the prior month, or a check cashed months after it was written). The bank\'s posting date is preserved and the change survives re-syncs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id:   { type: 'string', description: 'Transaction ID' },
+        date: { type: 'string', description: 'Date to attribute the transaction to, YYYY-MM-DD' },
+      },
+      required: ['id', 'date'],
+    },
+  },
+  {
+    name: 'clear_transaction_date',
+    description: 'Undo a date reattribution, restoring the bank\'s original posting date.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Transaction ID' },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'clear_edit',
     description: 'Remove a manual category override from a transaction, reverting to rule-based categorization.',
     parameters: {
@@ -401,6 +425,8 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
   switch (name) {
     case 'edit_transaction':       return `Set transaction category to "${s('category')}" [id: ${s('id')}]`;
     case 'clear_edit':             return `Remove manual category override [id: ${s('id')}]`;
+    case 'set_transaction_date':   return `Reattribute transaction to ${s('date')} [id: ${s('id')}]`;
+    case 'clear_transaction_date': return `Restore original posting date [id: ${s('id')}]`;
     case 'ignore_transaction':     return `${input['ignore'] ? 'Ignore' : 'Un-ignore'} transaction [id: ${s('id')}]`;
     case 'add_rule':               return `Add category rule: "${s('pattern')}" → ${s('category')}`;
     case 'delete_rule':            return `Delete category rule #${n('id')}`;
@@ -788,6 +814,29 @@ async function executeToolImpl(
       if (!tx) return `No transaction with id ${str('id')}.`;
       await setTransactionCategory(str('id'), str('category'));
       return `Set "${tx.name}" → ${str('category')} (pinned)`;
+    }
+
+    case 'set_transaction_date': {
+      const txResult = await db.execute({ sql: 'SELECT name, date FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string; date: string } | undefined;
+      if (!tx) return `No transaction with id ${str('id')}.`;
+      const date = str('date');
+      // Reject anything SQLite's date functions would silently treat as NULL —
+      // a bad date here would quietly drop the row out of every range query.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+        return `"${date}" is not a valid date. Use YYYY-MM-DD.`;
+      }
+      await setTransactionDate(str('id'), date);
+      return `Reattributed "${tx.name}" from ${tx.date} → ${date} (posting date preserved)`;
+    }
+
+    case 'clear_transaction_date': {
+      const txResult = await db.execute({ sql: 'SELECT name, original_date FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string; original_date: string | null } | undefined;
+      if (!tx) return `No transaction with id ${str('id')}.`;
+      if (!tx.original_date) return `"${tx.name}" has no date override.`;
+      await clearTransactionDate(str('id'));
+      return `Restored "${tx.name}" to its posting date ${tx.original_date}`;
     }
 
     case 'clear_edit': {
