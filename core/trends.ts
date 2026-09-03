@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { MONTHS, addDays, weekLabel, type TrendsRange } from './dateUtils.js';
-import { buildSearchRe } from './queries.js';
+import { buildSearchRe, UNCATEGORIZED } from './queries.js';
 import { buildFilterClause, type Filter } from './filters.js';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -177,29 +177,46 @@ export async function getPeriodTotals(view: View, range: TrendsRange, filter?: F
     ? `AND EXISTS (SELECT 1 FROM categories c WHERE c.name = t.category AND c.flexibility = '${view.flex}')`
     : 'AND t.category NOT IN (SELECT category FROM hidden_categories)';
 
-  const amtFilter = view.mode === 'income' ? 'AND t.amount < 0' : view.mode === 'net' ? '' : 'AND t.amount > 0';
-  const base = `FROM transactions t WHERE t.pending = 0 AND t.ignored = 0 ${amtFilter} ${catFilter}${f.clause}`;
   const isNet = view.mode === 'net';
-  const totalExpr = isNet
-    ? 'SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE 0 END) as income, SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as expenses, SUM(CASE WHEN t.amount < 0 THEN ABS(t.amount) ELSE -t.amount END) as total'
-    : 'SUM(ABS(t.amount)) as total';
+  const isIncome = view.mode === 'income';
+  const base = `FROM transactions t WHERE t.pending = 0 AND t.ignored = 0 ${catFilter}${f.clause}`;
   const zeroRow = (p: { label: string; from: string; to: string }): PeriodRow =>
     ({ ...p, total: 0, ...(isNet ? { income: 0, expenses: 0 } : {}) });
 
-  let sql: string;
-  let toActual: (r: any) => PeriodRow;
+  const PERIODS = {
+    month:   { select: 'CAST(substr(t.date,1,4) AS INTEGER) as y, CAST(substr(t.date,6,2) AS INTEGER) as m', key: 'y, m' },
+    quarter: { select: 'CAST(substr(t.date,1,4) AS INTEGER) as y, (CAST(substr(t.date,6,2) AS INTEGER)-1)/3+1 as q', key: 'y, q' },
+    year:    { select: 'CAST(substr(t.date,1,4) AS INTEGER) as y', key: 'y' },
+    week:    { select: `date(t.date, '-' || ((CAST(strftime('%w', t.date) AS INTEGER)+6)%7) || ' days') as week_start`, key: 'week_start' },
+  } as const;
+  const period = PERIODS[range === 'month' || range === 'quarter' || range === 'year' ? range : 'week'];
 
+  // Every mode resolves each category's flows the same way summarizeBuckets does
+  // (queries.ts), so Expenses, Income and Net all reconcile with each other and
+  // with the spending summary: a real category nets, and whichever side wins
+  // decides whether it counts as spending or income. Uncategorized is split by
+  // flow instead — it legitimately mixes an un-ruled paycheck with real spending.
+  const INC   = `CASE WHEN category = '${UNCATEGORIZED}' THEN inflow  WHEN inflow  > outflow THEN inflow - outflow ELSE 0 END`;
+  const SPEND = `CASE WHEN category = '${UNCATEGORIZED}' THEN outflow WHEN outflow > inflow  THEN outflow - inflow ELSE 0 END`;
+  const totalCol = isNet ? `SUM(${INC}) - SUM(${SPEND})` : isIncome ? `SUM(${INC})` : `SUM(${SPEND})`;
+
+  const sql = `
+    SELECT ${period.key}, ${totalCol} as total${isNet ? `, SUM(${INC}) as income, SUM(${SPEND}) as expenses` : ''}
+    FROM (
+      SELECT ${period.select}, t.category as category,
+        SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)  as outflow,
+        SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) as inflow
+      ${base} GROUP BY ${period.key}, t.category
+    ) GROUP BY ${period.key} ORDER BY ${period.key}`;
+
+  let toActual: (r: any) => PeriodRow;
   if (range === 'month') {
-    sql = `SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, CAST(substr(t.date,6,2) AS INTEGER) as m, ${totalExpr} ${base} GROUP BY y, m ORDER BY y, m`;
     toActual = (r) => ({ label: `${MONTHS[r.m - 1]} ${r.y}`, from: `${r.y}-${pad(r.m)}-01`, to: `${r.y}-${pad(r.m)}-31`, total: Number(r.total), ...(isNet ? { income: Number(r.income), expenses: Number(r.expenses) } : {}) });
   } else if (range === 'quarter') {
-    sql = `SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, (CAST(substr(t.date,6,2) AS INTEGER)-1)/3+1 as q, ${totalExpr} ${base} GROUP BY y, q ORDER BY y, q`;
     toActual = (r) => ({ label: `Q${r.q} ${r.y}`, from: `${r.y}-${Q_FROM[r.q - 1]}-01`, to: `${r.y}-${Q_TO[r.q - 1]}-31`, total: Number(r.total), ...(isNet ? { income: Number(r.income), expenses: Number(r.expenses) } : {}) });
   } else if (range === 'year') {
-    sql = `SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, ${totalExpr} ${base} GROUP BY y ORDER BY y`;
     toActual = (r) => ({ label: `${r.y}`, from: `${r.y}-01-01`, to: `${r.y}-12-31`, total: Number(r.total), ...(isNet ? { income: Number(r.income), expenses: Number(r.expenses) } : {}) });
   } else {
-    sql = `SELECT date(t.date, '-' || ((CAST(strftime('%w', t.date) AS INTEGER)+6)%7) || ' days') as week_start, ${totalExpr} ${base} GROUP BY week_start ORDER BY week_start`;
     toActual = (r) => {
       const to = addDays(r.week_start, 6);
       return { label: weekLabel(r.week_start, to), from: r.week_start, to, total: Number(r.total), ...(isNet ? { income: Number(r.income), expenses: Number(r.expenses) } : {}) };

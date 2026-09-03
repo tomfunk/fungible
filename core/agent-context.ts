@@ -6,6 +6,7 @@
 
 import { db } from './db.js';
 import { yearsToFire } from './health.js';
+import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
 import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
 import { isAssetAccount, isLiabilityAccount } from './account-class.js';
 
@@ -156,21 +157,7 @@ export async function getFinancialHealth(
   const balances = await getBalances();
 
   const [expResult, pretaxRaw] = await Promise.all([
-    db.execute(`
-      SELECT
-        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_expenses,
-        COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_income,
-        COALESCE(
-          -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
-           SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
-          0
-        ) / 12.0 AS avg_savings
-      FROM transactions
-      WHERE date >= date('now', '-12 months')
-        AND pending = 0 AND ignored = 0
-        AND category NOT IN (SELECT category FROM hidden_categories)
-        AND category != 'Transfer'
-    `),
+    db.execute(TRAILING_12MO_AVERAGES_SQL),
     getSetting(PRETAX_MONTHLY_KEY),
   ]);
   const expRow = expResult.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
