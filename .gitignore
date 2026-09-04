@@ -6,6 +6,8 @@ dist/
 memory/
 PLANS.md
 scripts/seed-rules.ts
+scripts/balance-snapshots.csv
+scripts/import-balance-snapshots.ts
 .claude/
 out/
 release/
