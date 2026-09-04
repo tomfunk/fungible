@@ -54,4 +54,18 @@ describe('createLinkToken', () => {
     expect(req.transactions).toBeUndefined();
     expect(req.access_token).toBe('access-abc');
   });
+
+  // Without this, "update link" can only re-type a password. An Item that has
+  // lost its accounts (Plaid's NO_ACCOUNTS) then fails identically after every
+  // press, because nothing in the flow ever re-opens the account picker — and at
+  // a non-OAuth institution the picker only appears when we ask for it.
+  it('enables Account Select in update mode so a link with no accounts can be repaired', async () => {
+    await createLinkToken('local-user', undefined, 'access-abc');
+    expect(lastRequest().update).toEqual({ account_selection_enabled: true });
+  });
+
+  it('does not send update options when adding a new bank', async () => {
+    await createLinkToken('local-user');
+    expect(lastRequest().update).toBeUndefined();
+  });
 });
