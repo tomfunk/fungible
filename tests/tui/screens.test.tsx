@@ -1384,8 +1384,8 @@ describe('Rules', () => {
     const r = rules();
     const f = frame(r);
     expect(f).toContain('fungible');
-    expect(f).toContain('Category Rules');
-    expect(f).toContain('Name Rules');
+    expect(f).toContain('Rules');
+    expect(f).toContain('Tag Rules');
     expect(f).toContain('Categories');
   });
 
@@ -1397,23 +1397,11 @@ describe('Rules', () => {
     });
   });
 
-  it('Tab cycles to Name Rules section', async () => {
-    const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
-    await waitFor(() => {
-      // Name Rules section is now active — its label should be highlighted (non-dimmed)
-      // We can check we're in name rules by pressing Tab again to get to Categories
-      expect(frame(r)).toContain('Name Rules');
-    });
-  });
-
   it('Tab cycles to Categories section showing seeded categories', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('\t');
-    r.stdin.write('\t');
-    r.stdin.write('\t'); // rules → names → tags → categories
+    r.stdin.write('\t'); // rules → tags → categories
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Grocery');
@@ -1423,9 +1411,8 @@ describe('Rules', () => {
 
   it('Tab cycles to Tag Rules section', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
-    r.stdin.write('\t'); // rules → names → tags
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\t'); // rules → tags
     await waitFor(() => expect(frame(r)).toContain('No tag rules yet'));
     r.stdin.write('a');
     await waitFor(() => {
@@ -1436,30 +1423,117 @@ describe('Rules', () => {
     });
   });
 
-  it('[a] opens new category rule form', async () => {
+  it('[a] opens the new rule form with both a category and a display name field', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Whole Foods')); // rules loaded
     r.stdin.write('a');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).toContain('New Category Rule');
+      expect(f).toContain('New Rule');
       expect(f).toContain('Pattern');
+      expect(f).toContain('Category');
+      expect(f).toContain('Display name');
     });
   });
 
-  it('typing pattern and Enter in rule-form saves the rule', async () => {
+  it('typing a pattern, Enter to Category, picking one, then Enter saves the rule', async () => {
+    // A new rule starts on "— none —", so the first Enter moves the cursor to
+    // Category instead of saving; the second one (with a category picked) saves.
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('a');
-    await waitFor(() => expect(frame(r)).toContain('New Category Rule'));
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
     for (const ch of 'Starbucks') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('Starbucks'));
     r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('New Rule')); // still open, nothing saved
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[C'); // → only moves the picker if the cursor landed on Category
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\r');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).not.toContain('New Category Rule');
+      expect(f).not.toContain('New Rule');
       expect(f).toContain('Starbucks');
     });
+    const cats = await db.execute("SELECT category FROM category_rules WHERE pattern = 'Starbucks'");
+    expect(cats.rows).toHaveLength(1);
+    expect((cats.rows[0] as unknown as { category: string }).category).toBe('Bills & Utilities');
+  });
+
+  it('a new rule defaults to no category and Enter on it writes nothing', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Rule');
+      expect(f).toContain('— none —');            // no category pre-selected
+      expect(f).not.toContain('Bills & Utilities'); // ...not the first-sorting one
+    });
+    for (const ch of 'Starbucks') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Starbucks'));
+    r.stdin.write('\r');
+    // Enter guided instead of saving: the form is still open and nothing was written.
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    const cats = await db.execute("SELECT id FROM category_rules WHERE pattern = 'Starbucks'");
+    const names = await db.execute("SELECT id FROM name_rules WHERE pattern = 'Starbucks'");
+    expect(cats.rows).toHaveLength(0);
+    expect(names.rows).toHaveLength(0);
+  });
+
+  it('Enter with an empty pattern leaves the cursor where it is', async () => {
+    // Nothing to guide toward, so Enter stays a no-op: ← must still do nothing,
+    // which it only does while the cursor sits on the Pattern field.
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    r.stdin.write('\r');
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[C'); // would advance the picker if Enter had jumped to Category
+    await new Promise((res) => setTimeout(res, 50));
+    const f = frame(r);
+    expect(f).toContain('New Rule');
+    expect(f).toContain('— none —');
+    expect(f).not.toContain('Bills & Utilities');
+  });
+
+  it('"— none —" says it removes the rule only when editing one that has a category', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    // New rule: nothing to remove, so the plain label.
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    expect(frame(r)).not.toContain('removes rule');
+    r.stdin.write('\x1b'); // Esc back to the list
+    await waitFor(() => expect(frame(r)).not.toContain('New Rule'));
+
+    // Editing the seeded category rule: cursoring to "none" means deleting it.
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Edit Rule'));
+    expect(frame(r)).toContain('Grocery');
+    expect(frame(r)).not.toContain('removes rule'); // a category is still selected
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // → Category
+    await new Promise((res) => setTimeout(res, 10));
+    for (let i = 0; i < 3; i++) r.stdin.write('\x1b[D'); // ← past Dining, Bills & Utilities, to none
+    await waitFor(() => expect(frame(r)).toContain('— none (removes rule) —'));
+  });
+
+  it('a name-only rule shows the plain "— none —" label, with no removal warning', async () => {
+    await db.execute('DELETE FROM category_rules');
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'sq *', 'Square')",
+    );
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Square'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Edit Rule'));
+    const f = frame(r);
+    expect(f).toContain('— none —');
+    expect(f).not.toContain('removes rule');
   });
 
   it('Enter on existing rule opens edit form pre-filled with its pattern', async () => {
@@ -1468,7 +1542,7 @@ describe('Rules', () => {
     r.stdin.write('\r');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).toContain('Edit Category Rule');
+      expect(f).toContain('Edit Rule');
       expect(f).toContain('Whole Foods');
     });
   });
@@ -1528,30 +1602,51 @@ describe('Rules', () => {
     });
   });
 
-  it('[a] in Name Rules section opens new name rule form', async () => {
+  it('a category rule and a name rule with the same conditions render as one row', async () => {
+    // Seeded category rule: name/'Whole Foods' → Grocery. Same conditions, so
+    // the two collapse into a single row carrying both.
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'Whole Foods', 'WF Market')",
+    );
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t'); // switch to Name Rules
-    await waitFor(() => expect(frame(r)).toContain('No name rules'));
-    r.stdin.write('a');
     await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('New Name Rule');
-      expect(f).toContain('Pattern');
-      expect(f).toContain('Replace with');
+      const line = frame(r).split('\n').find((l) => l.includes('Whole Foods'));
+      expect(line).toBeDefined();
+      expect(line).toContain('Grocery');   // category cell
+      expect(line).toContain('WF Market'); // display-name cell
+    });
+    // One row, not two.
+    await waitFor(() => expect(frame(r)).toContain('1 rules'));
+  });
+
+  it('a name rule with no category rule shows as a row with an empty category', async () => {
+    await db.execute('DELETE FROM category_rules');
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'sq *', 'Square')",
+    );
+    const r = rules();
+    await waitFor(() => {
+      const line = frame(r).split('\n').find((l) => l.includes('sq *'));
+      expect(line).toBeDefined();
+      expect(line).toContain('Square');
     });
   });
 
-  it('typing pattern + replacement in name-rule-form and Enter saves the rule', async () => {
+  it('one save writes both a category rule and a name rule', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
-    await waitFor(() => expect(frame(r)).toContain('No name rules'));
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('a');
-    await waitFor(() => expect(frame(r)).toContain('New Name Rule'));
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
     for (const ch of 'amazon') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('amazon'));
-    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // navigate to replacement
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // pattern → category
+    // Consecutive writes coalesce into one chunk, and a chunk mixing two
+    // different sequences is read as a single key — so the → gets its own.
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[C'); // → off "— none —" onto the first category
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[B'); // → display name
     // Wait for React to commit the field navigation before typing (avoids stale closure)
     await waitFor(() => expect(frame(r)).toContain('display name'));
     for (const ch of 'Amazon') r.stdin.write(ch);
@@ -1559,16 +1654,60 @@ describe('Rules', () => {
     r.stdin.write('\r');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).not.toContain('New Name Rule');
+      expect(f).not.toContain('New Rule');
       expect(f).toContain('amazon');
       expect(f).toContain('Amazon');
     });
+    const cats = await db.execute("SELECT category FROM category_rules WHERE pattern = 'amazon'");
+    const names = await db.execute("SELECT replacement FROM name_rules WHERE pattern = 'amazon'");
+    expect(cats.rows).toHaveLength(1);
+    expect(names.rows).toHaveLength(1);
+    expect((names.rows[0] as unknown as { replacement: string }).replacement).toBe('Amazon');
+  });
+
+  it('leaving the category on "— none —" saves a name rule only', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    for (const ch of 'amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('amazon'));
+    // The category is already on "— none —" (a new rule's default), so this
+    // walks straight past it to the display name.
+    await waitFor(() => expect(frame(r)).toContain('— none —'));
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1b[B'); // pattern → display name
+    await waitFor(() => expect(frame(r)).toContain('display name'));
+    for (const ch of 'Amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Amazon'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).not.toContain('New Rule'));
+    const cats = await db.execute("SELECT category FROM category_rules WHERE pattern = 'amazon'");
+    const names = await db.execute("SELECT replacement FROM name_rules WHERE pattern = 'amazon'");
+    expect(cats.rows).toHaveLength(0);
+    expect(names.rows).toHaveLength(1);
+  });
+
+  it('[x] on a combined row deletes both underlying rules', async () => {
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'Whole Foods', 'WF Market')",
+    );
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('WF Market'));
+    r.stdin.write('x');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Rule deleted');
+      expect(f).toContain('No rules yet');
+    });
+    const cats = await db.execute("SELECT id FROM category_rules WHERE pattern = 'Whole Foods'");
+    const names = await db.execute("SELECT id FROM name_rules WHERE pattern = 'Whole Foods'");
+    expect(cats.rows).toHaveLength(0);
+    expect(names.rows).toHaveLength(0);
   });
 
   it('Enter in categories section opens the edit panel', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('\t');
     r.stdin.write('\t'); // categories section
     await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
@@ -1583,8 +1722,7 @@ describe('Rules', () => {
 
   it('Esc in categories edit panel closes without navigating away', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('\t');
     r.stdin.write('\t');
     await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
@@ -1603,7 +1741,7 @@ describe('Rules', () => {
     const r = render(
       <W><Rules onNavigate={onNavigate} showHints={false} /></W>,
     );
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
@@ -2668,7 +2806,7 @@ describe('App', () => {
       ['4', ['Net Worth', 'Test Checking']],
       ['5', ['Tags', 'travel']],
       ['6', ['Financial Health', 'SNAPSHOT']],
-      ['7', ['Category Rules', 'Whole Foods']],
+      ['7', ['Tag Rules', 'Whole Foods']],  // Rules screen: its section tabs + the seeded rule
       ['8', ['Accounts', 'Test Checking']],
       ['9', ['Canvas']],
       ['0', ['Settings', 'HOUSEHOLD']],

@@ -115,8 +115,13 @@ describe('snapshots', () => {
   });
 
   it('rules', async () => {
+    // A name rule sharing the seeded category rule's conditions, so the capture
+    // shows a merged row (category + display name) rather than an empty list.
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'Whole Foods', 'WF Market')",
+    );
     const r = render(<W><Rules onNavigate={noop} showHints isActive /></W>);
-    await waitFor(() => { if (!r.lastFrame()?.includes('rules')) throw new Error(); });
+    await waitFor(() => { if (!r.lastFrame()?.includes('WF Market')) throw new Error(); });
     dump('rules', frame(r));
   });
 
