@@ -153,14 +153,17 @@ Three sections, cycle with `Tab`: **Rules**, **Tag Rules**, **Categories**.
 
 | Key | Action |
 |-----|--------|
+| `↑ ↓` | Navigate |
 | `/` | Search rules |
 | `a` | Add rule |
 | `Enter` | Edit selected rule |
 | `x` | Delete selected rule |
 
-The **Rules** list shows category rules and name rules in one table — `TYPE | PATTERN | AMOUNT | CATEGORY | NAME` — and a rule that sets both a category and a display name is one row.
+The **Rules** list shows category rules and name rules in one table — `TYPE | PATTERN | AMOUNT | CATEGORY | NAME` — and a rule that sets both a category and a display name is one row. A rule scoped to one account shows `@account` at the end of its row.
 
-The **rule form** is a single panel with fields navigated by `↑ ↓`: Pattern, Match type, Min $, Max $, Category, Display name, Account. `← →` cycles/toggles the active field. A new rule opens with Category on `— none —`, so a pattern on its own is not yet saveable: `Enter` saves once there is a pattern plus a category, a display name, or both; with a pattern but neither, it moves the field cursor to Category to point at what is missing; with no pattern it does nothing. One save writes a category rule, a name rule, or both, and clearing a field on an existing rule deletes that side — set Category to `— none —` (labelled `— none (removes rule) —` while editing a rule that has a category) to drop the category rule, empty Display name to drop the name rule. `x` on a row deletes both underlying records. Matching is substring or regex with optional min/max amount filters, and applies to both halves of the rule at once.
+The **rule form** is a single panel with fields navigated by `↑ ↓`: Pattern, Match type, Min $, Max $, Category, Display name, Account. `← →` cycles/toggles the active field; **Account** scopes the rule to a single account and defaults to all of them.
+
+A new rule opens with Category on `— none —`, so a pattern on its own is not yet saveable: `Enter` saves once there is a pattern plus a category, a display name, or both; with a pattern but neither, it moves the field cursor to Category to point at what is missing; with no pattern it does nothing. One save writes a category rule, a name rule, or both, and clearing a field on an existing rule deletes that side — set Category to `— none —` (labelled `— none (removes rule) —` while editing a rule that has a category) to drop the category rule, empty Display name to drop the name rule. `x` on a row deletes both underlying records. Matching is substring or regex with optional min/max amount filters, and applies to both halves of the rule at once.
 
 The **tag rule form** has: Match type (`all` / `name` / `regex`), Pattern (hidden for `all`), Min $, Max $, Tag, Account. It shows a live count of the transactions that match; saving tags them, and tags you removed by hand stay removed. Deleting a tag rule leaves existing tags in place.
 
@@ -168,6 +171,7 @@ The **tag rule form** has: Match type (`all` / `name` / `regex`), Pattern (hidde
 
 | Key | Action |
 |-----|--------|
+| `↑ ↓` | Select category |
 | `a` | Add new category |
 | `Enter` | Edit selected category (Name, Flexibility, Hidden — navigated with `↑ ↓`) |
 | `x` | Delete category (resets affected transactions to Uncategorized) |
