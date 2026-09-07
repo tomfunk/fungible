@@ -5,7 +5,12 @@ const linkTokenCreate = vi.fn().mockResolvedValue({ data: { link_token: 'link-to
 
 vi.mock('plaid', async () => {
   const actual = await vi.importActual<typeof import('plaid')>('plaid');
-  return { ...actual, PlaidApi: vi.fn().mockImplementation(() => ({ linkTokenCreate })) };
+  // vitest 4+ no longer treats an arrow function passed to mockImplementation as
+  // new-able; core/plaid.ts does `new PlaidApi(...)`, so use a function expression.
+  const PlaidApi = vi.fn().mockImplementation(function () {
+    return { linkTokenCreate };
+  });
+  return { ...actual, PlaidApi };
 });
 
 import { Products } from 'plaid';
