@@ -6,6 +6,7 @@
 
 import { db } from './db.js';
 import { yearsToFire } from './health.js';
+import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
 import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
 import { isAssetAccount, isLiabilityAccount } from './account-class.js';
 
@@ -156,21 +157,7 @@ export async function getFinancialHealth(
   const balances = await getBalances();
 
   const [expResult, pretaxRaw] = await Promise.all([
-    db.execute(`
-      SELECT
-        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_expenses,
-        COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_income,
-        COALESCE(
-          -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
-           SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
-          0
-        ) / 12.0 AS avg_savings
-      FROM transactions
-      WHERE date >= date('now', '-12 months')
-        AND pending = 0 AND ignored = 0
-        AND category NOT IN (SELECT category FROM hidden_categories)
-        AND category != 'Transfer'
-    `),
+    db.execute(TRAILING_12MO_AVERAGES_SQL),
     getSetting(PRETAX_MONTHLY_KEY),
   ]);
   const expRow = expResult.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
@@ -280,8 +267,12 @@ export const APP_CONTEXT = `
 ## Data Model
 - Transactions are synced from Plaid or imported via CSV.
 - **Sign convention**: positive amount = money out (expense); negative amount = money in (income).
-- Transactions have: id, date, name, display_name, amount, category, account_id, pending, ignored, manual_category.
+- Transactions have: id, date, name, display_name, amount, category, account_id, pending, ignored, manual_category, original_date.
 - \`manual_category\`: set when user or agent manually assigns a category. Survives re-syncs.
+- \`original_date\`: set when a transaction has been reattributed to a different period (a paycheck
+  posting on the 1st that was earned the prior month, a check cashed months after it was written).
+  Holds the bank's posting date; \`date\` holds the reattributed one. All totals and trends use
+  \`date\`, so they reflect the reattribution. Survives re-syncs.
 - \`ignored\`: soft-hides a transaction from all totals (transfers, reimbursements, refunds, etc.).
 - \`hidden_categories\`: categories excluded from all totals and charts (e.g. "Transfer").
 - Accounts: type is one of depository, investment, credit, other.

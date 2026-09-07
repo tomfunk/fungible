@@ -15,7 +15,7 @@ export type MerchantSummaryRow = {
 // The catch-all category. Unlike a real category, it legitimately mixes income
 // (e.g. an un-ruled paycheck) with spending, so we never net the two together —
 // see summarizeBuckets.
-const UNCATEGORIZED = 'Uncategorized';
+export const UNCATEGORIZED = 'Uncategorized';
 
 /**
  * Turn per-category {outflow, inflow} buckets into an income/expense/byCategory
@@ -40,6 +40,41 @@ function summarizeBuckets(rows: { category: string; outflow: number; inflow: num
   byCategory.sort((a, b) => b.total - a.total);
   return { income, expenses, net: income - expenses, byCategory };
 }
+
+/**
+ * Trailing-12-month income / expense / savings averages, netted per category by
+ * the same rule as summarizeBuckets: a reimbursement sitting inside an expense
+ * category reduces that category's spend instead of inflating expenses AND
+ * income at once. Summing raw outflows here would overstate avg_expenses, which
+ * feeds runway, the FIRE number, and years-to-FIRE.
+ *
+ * Shared by loadHealthData (TUI/GUI Health tab) and getFinancialHealth (agent),
+ * which must not drift apart.
+ */
+export const TRAILING_12MO_AVERAGES_SQL = `
+  SELECT
+    COALESCE(SUM(spend), 0) / 12.0            AS avg_expenses,
+    COALESCE(SUM(inc), 0) / 12.0              AS avg_income,
+    COALESCE(SUM(inc) - SUM(spend), 0) / 12.0 AS avg_savings
+  FROM (
+    SELECT
+      CASE WHEN category = '${UNCATEGORIZED}' THEN outflow
+           WHEN outflow > inflow THEN outflow - inflow ELSE 0 END AS spend,
+      CASE WHEN category = '${UNCATEGORIZED}' THEN inflow
+           WHEN inflow > outflow THEN inflow - outflow ELSE 0 END AS inc
+    FROM (
+      SELECT category,
+        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)  AS outflow,
+        SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS inflow
+      FROM transactions
+      WHERE date >= date('now', '-12 months')
+        AND pending = 0 AND ignored = 0
+        AND category NOT IN (SELECT category FROM hidden_categories)
+        AND category != 'Transfer'
+      GROUP BY category
+    )
+  )
+`;
 
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');

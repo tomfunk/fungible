@@ -355,3 +355,45 @@ describe('describeSyncProgress', () => {
     expect(describeSyncProgress({ phase: 'dedup' })).toBe('Checking for duplicates…');
   });
 });
+
+describe('syncTransactions — reattributed dates survive re-sync', () => {
+  const plaidTx = (id: string, date: string) => ({
+    transaction_id: id,
+    account_id: 'acct-1',
+    date,
+    name: 'BRAINCO TECHNOLO',
+    merchant_name: null,
+    amount: -5531.2,
+    pending: false,
+    personal_finance_category: { primary: 'INCOME' },
+  });
+
+  async function dateOf(id: string) {
+    const r = await db.execute({ sql: 'SELECT date, original_date FROM transactions WHERE id = ?', args: [id] });
+    return r.rows[0] as unknown as { date: string; original_date: string | null };
+  }
+
+  it('keeps a reattributed date when Plaid re-sends the transaction', async () => {
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-01')]);
+    await syncTransactions('token', 'item-1');
+    await db.execute("UPDATE transactions SET date = '2025-06-30', original_date = '2025-07-01' WHERE id = 'tx-pay'");
+
+    // Plaid re-sends the same row on a later sync with its own posting date.
+    await deleteSyncCursor('item-1');
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-01')]);
+    await syncTransactions('token', 'item-1');
+
+    expect(await dateOf('tx-pay')).toEqual({ date: '2025-06-30', original_date: '2025-07-01' });
+  });
+
+  it('still accepts Plaid date changes on transactions with no override', async () => {
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-01')]);
+    await syncTransactions('token', 'item-1');
+
+    await deleteSyncCursor('item-1');
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-03')]);
+    await syncTransactions('token', 'item-1');
+
+    expect(await dateOf('tx-pay')).toEqual({ date: '2025-07-03', original_date: null });
+  });
+});
