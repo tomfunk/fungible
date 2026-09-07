@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getAllRules, getAllNameRules, getAllTagRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, getLinkedAccounts, type Rule, type NameRule, type TagRuleRow, type CategoryDetail, type LinkedAccount } from '../core/queries.js';
 import {
@@ -7,6 +7,7 @@ import {
   deleteCategory, renameCategory, createCategory,
 } from '../core/rules.js';
 import { getTagOptions, type TagOption } from '../core/tags.js';
+import { mergeRules, type MergedRule } from '../core/rules-merge.js';
 import { countTagRuleMatches, type TagMatchType } from '../core/tag-rules.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
@@ -18,24 +19,35 @@ import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, 
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'tag-rule-form' | 'add-category-name' | 'edit-category';
+type Mode = 'list' | 'search' | 'rule-form' | 'tag-rule-form' | 'add-category-name' | 'edit-category';
 type CatEditField = 'name' | 'flexibility' | 'hidden';
-type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category' | 'account';
-type NameRuleField = 'pattern' | 'type' | 'min' | 'max' | 'replacement' | 'account';
+// One form covers both rule kinds: a row can carry a category, a display name, or both.
+type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category' | 'replacement' | 'account';
 type TagRuleField = 'type' | 'pattern' | 'min' | 'max' | 'tag' | 'account';
-const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category', 'account'];
-const NAME_RULE_FIELDS: NameRuleField[] = ['pattern', 'type', 'min', 'max', 'replacement', 'account'];
+const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category', 'replacement', 'account'];
 const TAG_MATCH_TYPES: TagMatchType[] = ['all', 'name', 'regex'];
-type Section = 'rules' | 'names' | 'tags' | 'categories';
+type Section = 'rules' | 'tags' | 'categories';
 
-const SECTIONS: Section[] = ['rules', 'names', 'tags', 'categories'];
+const SECTIONS: Section[] = ['rules', 'tags', 'categories'];
+
+/** Fixed-width list cell: truncated with an ellipsis, or padded to keep columns aligned. */
+function cell(text: string, width: number): string {
+  return text.length > width ? text.slice(0, width - 1) + '…' : text.padEnd(width);
+}
+
+/** "$50" / "$10-$50" / "≥$10" / "≤$50" / "" for a rule's amount bounds. */
+function amountLabel(min: number | null, max: number | null): string {
+  if (min !== null && max !== null) return min === max ? `$${min}` : `$${min}-$${max}`;
+  if (min !== null) return `≥$${min}`;
+  if (max !== null) return `≤$${max}`;
+  return '';
+}
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
   const [cursor, setCursor] = useState(0);
-  const [nameCursor, setNameCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
   const [section, setSection] = useState<Section>('rules');
   const [uncategorized, setUncategorized] = useState(0);
@@ -47,19 +59,14 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const [renameCatInput, setRenameCatInput] = useState('');
   const [catDetails, setCatDetails] = useState<CategoryDetail[]>([]);
 
-  // New category rule state
+  // Unified rule form state. A save writes a category rule, a name rule, or
+  // both, from these same fields.
   const [newPattern, setNewPattern] = useState('');
   const [newType, setNewType] = useState<'name' | 'regex'>('name');
   const [newMinAmount, setNewMinAmount] = useState('');
   const [newMaxAmount, setNewMaxAmount] = useState('');
-  const [catCursor, setCatCursor] = useState(0);
-
-  // New name rule state
-  const [newNamePattern, setNewNamePattern] = useState('');
-  const [newNameType, setNewNameType] = useState<'name' | 'regex'>('name');
-  const [newNameMinAmount, setNewNameMinAmount] = useState('');
-  const [newNameMaxAmount, setNewNameMaxAmount] = useState('');
   const [newReplacement, setNewReplacement] = useState('');
+  const [catCursor, setCatCursor] = useState(0);
 
   // Tag rules
   const [tagRules, setTagRules] = useState<TagRuleRow[]>([]);
@@ -74,11 +81,12 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const [tagRuleField, setTagRuleField] = useState<TagRuleField>('type');
   const [tagMatchCount, setTagMatchCount] = useState(0);
 
-  // Account scoping (shared by both rule forms; only one is active at a time)
+  // Account scoping (shared by the rule and tag-rule forms; only one is open at a time)
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [accountCursor, setAccountCursor] = useState(0); // 0 = All accounts; i>0 → accounts[i-1]
 
-  // Editing
+  // Editing: a combined row edits both underlying records, so the form tracks
+  // one id per table (either may be null — that side doesn't exist yet).
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
   const [editingNameRuleId, setEditingNameRuleId] = useState<number | null>(null);
 
@@ -87,25 +95,26 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   // Unified rule form field cursor
   const [ruleField, setRuleField] = useState<RuleField>('pattern');
-  const [nameRuleField, setNameRuleField] = useState<NameRuleField>('pattern');
 
   // Search
   const [search, setSearch] = useState('');
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'name-rule-form', 'tag-rule-form', 'add-category-name', 'edit-category']);
+  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'tag-rule-form', 'add-category-name', 'edit-category']);
   useEffect(() => { setTyping(TEXT_INPUT_MODES_RULES.has(mode)); }, [mode]);
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
-  // Category rules: 6 children → 5 gaps of 2; fixed: sel(2)+type(5)+amt(10)+pri(3) = 20; total reserve = 20+10 = 30
-  const rulesFlex = Math.max(20, inner - 30);
-  const rulePatW = Math.max(12, Math.floor(rulesFlex * 0.5));
-  const ruleCatW = Math.max(10, rulesFlex - rulePatW);
-  // Name rules: 5 children → 4 gaps of 2; fixed: sel(2)+type(5)+amt(12) = 19; total reserve = 19+8 = 27
-  const namesFlex = Math.max(20, inner - 27);
-  const namePatW  = Math.max(12, Math.floor(namesFlex * 0.5));
-  const nameReplW = Math.max(10, namesFlex - namePatW);
+  // Rules: 6 children (type, pattern, amount, category, name, @account) → 5 gaps
+  // of 2; fixed: sel(2)+type(5)+amt(10) = 17; total reserve = 17+10 = 27
+  const rulesFlex = Math.max(30, inner - 27);
+  const rulePatW = Math.max(12, Math.floor(rulesFlex * 0.4));
+  const ruleCatW = Math.max(10, Math.floor(rulesFlex * 0.3));
+  const ruleNameW = Math.max(10, rulesFlex - rulePatW - ruleCatW);
+  // Tag rules: 5 children → 4 gaps of 2; fixed: sel(2)+type(5)+amt(10) = 17; total reserve = 17+8 = 25
+  const tagsFlex = Math.max(20, inner - 25);
+  const tagPatW = Math.max(12, Math.floor(tagsFlex * 0.5));
+  const tagNameW = Math.max(10, tagsFlex - tagPatW);
   // Categories: [sel=2] gap [name] gap [flex=14] gap [hidden=6]
   // reserve: 2+14+6 + 3gaps*2 = 28
   const catNameW = Math.max(12, inner - 28);
@@ -142,6 +151,14 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     return () => { cancelled = true; };
   }, [mode, newTagType, newTagPattern, accountCursor, newTagMinAmount, newTagMaxAmount]);
 
+  // Category picker options: index 0 = "— none —" (no category rule, i.e. a
+  // name-only rule), then one per category.
+  const catOptions: (string | null)[] = [null, ...categories];
+  const catCursorFor = (category: string | null): number => {
+    const i = category === null ? 0 : catOptions.indexOf(category);
+    return i >= 0 ? i : 0;
+  };
+
   // Account picker options: index 0 = "All accounts" (global), then one per account.
   const accountOptions: (string | null)[] = [null, ...accounts.map((a) => a.id)];
   const accountLabel = (id: string | null): string => {
@@ -156,61 +173,77 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   useEffect(() => { load(); }, [refreshKey]);
 
-  async function handleDeleteRule(id: number) {
-    const count = await deleteCategoryRule(id);
-    showStatus(`Rule deleted · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
+  // Category and name rules that fire on the same condition are one row here;
+  // each row still writes through to its own table.
+  const mergedRules = useMemo(() => mergeRules(rules, nameRules), [rules, nameRules]);
+
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  /** Deletes both records behind a merged row — either side may be absent. */
+  async function handleDeleteRule(row: MergedRule) {
+    const bits: string[] = [];
+    if (row.categoryRuleId !== null) {
+      const count = await deleteCategoryRule(row.categoryRuleId);
+      bits.push(`recategorized ${plural(count, 'transaction')}`);
+    }
+    if (row.nameRuleId !== null) {
+      await deleteNameRule(row.nameRuleId);
+      bits.push('display name cleared');
+    }
+    showStatus(`Rule deleted${bits.length ? ' · ' + bits.join(' · ') : ''}`, 3000);
     load();
   }
 
-  function handleDeleteNameRule(id: number) {
-    deleteNameRule(id);
-    showStatus('Name rule deleted');
-    load();
+  function resetRuleForm() {
+    setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setNewReplacement('');
+    setEditingRuleId(null); setEditingNameRuleId(null);
   }
 
+  /** A rule needs a pattern and something to do: a category, a display name, or both. */
+  const ruleFormValid = newPattern.trim().length > 0
+    && (catOptions[catCursor] != null || newReplacement.trim().length > 0);
+
+  /**
+   * One save, up to two writes: the picked category and the typed display name
+   * each create/update their own record, and clearing either one on an existing
+   * rule deletes that record. The category write goes first, so a bad regex is
+   * rejected before anything is persisted.
+   */
   async function saveRule() {
-    const category = categories[catCursor];
+    const category = catOptions[catCursor] ?? null;
+    const replacement = newReplacement.trim();
     const minAmt = newMinAmount.trim() ? parseFloat(newMinAmount) : null;
     const maxAmt = newMaxAmount.trim() ? parseFloat(newMaxAmount) : null;
-    let count: number;
+    const accountId = accountOptions[accountCursor] ?? null;
+    const bits: string[] = [];
     try {
-      count = await saveCategoryRule({
-        pattern: newPattern, matchType: newType, category,
-        minAmount: minAmt, maxAmount: maxAmt,
-        accountId: accountOptions[accountCursor] ?? null,
-        editingId: editingRuleId,
-      });
+      if (category !== null) {
+        const count = await saveCategoryRule({
+          pattern: newPattern, matchType: newType, category,
+          minAmount: minAmt, maxAmount: maxAmt, accountId, editingId: editingRuleId,
+        });
+        bits.push(`recategorized ${plural(count, 'transaction')}`);
+      } else if (editingRuleId !== null) {
+        const count = await deleteCategoryRule(editingRuleId);
+        bits.push(`category cleared · recategorized ${plural(count, 'transaction')}`);
+      }
+      if (replacement) {
+        await saveNameRule({
+          pattern: newPattern, matchType: newType, replacement,
+          minAmount: minAmt, maxAmount: maxAmt, accountId, editingId: editingNameRuleId,
+        });
+        bits.push(`display name "${replacement}"`);
+      } else if (editingNameRuleId !== null) {
+        await deleteNameRule(editingNameRuleId);
+        bits.push('display name cleared');
+      }
     } catch (e) {
+      // Leave the form open so the user can fix the input.
       showStatus(e instanceof Error ? e.message : 'Failed to save rule', 4000);
       return;
     }
-    setEditingRuleId(null);
-    showStatus(`Rule saved · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
-    setNewPattern('');
-    setMode('list');
-    load();
-  }
-
-  async function handleSaveNameRule() {
-    const minAmt = newNameMinAmount.trim() ? parseFloat(newNameMinAmount) : null;
-    const maxAmt = newNameMaxAmount.trim() ? parseFloat(newNameMaxAmount) : null;
-    try {
-      await saveNameRule({
-        pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
-        minAmount: minAmt, maxAmount: maxAmt,
-        accountId: accountOptions[accountCursor] ?? null,
-        editingId: editingNameRuleId,
-      });
-    } catch (e) {
-      showStatus(e instanceof Error ? e.message : 'Failed to save name rule', 4000);
-      return;
-    }
-    setEditingNameRuleId(null);
-    showStatus('Name rule saved', 3000);
-    setNewNamePattern('');
-    setNewReplacement('');
-    setNewNameMinAmount('');
-    setNewNameMaxAmount('');
+    showStatus(`Rule saved${bits.length ? ' · ' + bits.join(' · ') : ''}`, 3000);
+    resetRuleForm();
     setMode('list');
     load();
   }
@@ -247,18 +280,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   // Clearing the search filter shifts which rule sits under a given numeric
   // cursor index, so re-anchor the cursor to the rule the user was looking at
-  // (by id) — otherwise Esc-then-'x' deletes the wrong rule.
+  // — otherwise Esc-then-'x' deletes the wrong rule. A merged row has two ids,
+  // so it anchors on its match-condition key plus both ids.
   function clearSearchPreservingCursor() {
     if (section === 'rules' && filteredRules[cursor]) {
-      const id = filteredRules[cursor].id;
-      const idx = rules.findIndex((r) => r.id === id);
+      const row = filteredRules[cursor];
+      const idx = mergedRules.findIndex((m) => m.key === row.key
+        && m.categoryRuleId === row.categoryRuleId && m.nameRuleId === row.nameRuleId);
       setSearch('');
       if (idx >= 0) setCursor(idx);
-    } else if (section === 'names' && filteredNameRules[nameCursor]) {
-      const id = filteredNameRules[nameCursor].id;
-      const idx = nameRules.findIndex((r) => r.id === id);
-      setSearch('');
-      if (idx >= 0) setNameCursor(idx);
     } else if (section === 'tags' && filteredTagRules[tagRuleCursor]) {
       const id = filteredTagRules[tagRuleCursor].id;
       const idx = tagRules.findIndex((r) => r.id === id);
@@ -292,7 +322,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         return;
       }
 
-      if (section === 'rules' || section === 'names' || section === 'tags') {
+      if (section === 'rules' || section === 'tags') {
         if (input === '/') { setMode('search'); return; }
       }
 
@@ -301,39 +331,28 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
         if (input === 'a') {
-          setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setAccountCursor(0);
+          resetRuleForm();
+          // A new rule opens on "— none —" rather than on whichever category
+          // happens to sort first: a pre-selected category would quietly
+          // recategorize every matching transaction for someone who only wanted
+          // a rename. Enter guides the cursor here instead (see 'rule-form').
+          setCatCursor(0);
+          setAccountCursor(0);
           setRuleField('pattern'); setMode('rule-form');
         }
-        if (input === 'x' && filteredRules[cursor]) { void handleDeleteRule(filteredRules[cursor].id); }
+        if (input === 'x' && filteredRules[cursor]) { void handleDeleteRule(filteredRules[cursor]); }
         if (key.return && filteredRules[cursor]) {
           const r = filteredRules[cursor];
-          setEditingRuleId(r.id);
+          setEditingRuleId(r.categoryRuleId);
+          setEditingNameRuleId(r.nameRuleId);
           setNewPattern(r.pattern);
-          setNewType(r.match_type as 'name' | 'regex');
-          setNewMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
-          setNewMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
-          setCatCursor(Math.max(0, categories.indexOf(r.category)));
-          setAccountCursor(accountCursorFor(r.account_id));
+          setNewType(r.matchType as 'name' | 'regex');
+          setNewMinAmount(r.minAmount !== null ? String(r.minAmount) : '');
+          setNewMaxAmount(r.maxAmount !== null ? String(r.maxAmount) : '');
+          setNewReplacement(r.replacement ?? '');
+          setCatCursor(catCursorFor(r.category));
+          setAccountCursor(accountCursorFor(r.accountId));
           setRuleField('pattern'); setMode('rule-form');
-        }
-      } else if (section === 'names') {
-        if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
-        if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
-        if (input === 'a') {
-          setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setAccountCursor(0);
-          setNameRuleField('pattern'); setMode('name-rule-form');
-        }
-        if (input === 'x' && filteredNameRules[nameCursor]) { handleDeleteNameRule(filteredNameRules[nameCursor].id); }
-        if (key.return && filteredNameRules[nameCursor]) {
-          const r = filteredNameRules[nameCursor];
-          setEditingNameRuleId(r.id);
-          setNewNamePattern(r.pattern);
-          setNewNameType(r.match_type as 'name' | 'regex');
-          setNewNameMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
-          setNewNameMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
-          setNewReplacement(r.replacement);
-          setAccountCursor(accountCursorFor(r.account_id));
-          setNameRuleField('pattern'); setMode('name-rule-form');
         }
       } else if (section === 'tags') {
         if (key.upArrow) setTagRuleCursor((c) => Math.max(0, c - 1));
@@ -432,8 +451,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         return;
       }
     } else if (mode === 'rule-form') {
-      if (key.escape) { setEditingRuleId(null); setMode('list'); return; }
-      if (key.return) { if (newPattern.trim()) { void saveRule(); } return; }
+      if (key.escape) { resetRuleForm(); setMode('list'); return; }
+      if (key.return) {
+        if (ruleFormValid) { void saveRule(); }
+        // A pattern with nothing to do yet is a half-typed rule, not a mistake:
+        // send the cursor to Category so Enter always moves the user forward.
+        // An empty pattern has no field to guide toward, so it stays a no-op.
+        else if (newPattern.trim()) { setRuleField('category'); }
+        return;
+      }
       if (key.upArrow) { setRuleField((f) => RULE_FIELDS[Math.max(0, RULE_FIELDS.indexOf(f) - 1)]); return; }
       if (key.downArrow) { setRuleField((f) => RULE_FIELDS[Math.min(RULE_FIELDS.length - 1, RULE_FIELDS.indexOf(f) + 1)]); return; }
       if (ruleField === 'pattern') {
@@ -449,31 +475,11 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (input && !key.ctrl && !key.meta) { setNewMaxAmount((p) => p + input); return; }
       } else if (ruleField === 'category') {
         if (key.leftArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }
-        if (key.rightArrow) { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
-      } else if (ruleField === 'account') {
-        if (key.leftArrow) { setAccountCursor((c) => Math.max(0, c - 1)); return; }
-        if (key.rightArrow) { setAccountCursor((c) => Math.min(accountOptions.length - 1, c + 1)); return; }
-      }
-    } else if (mode === 'name-rule-form') {
-      if (key.escape) { setEditingNameRuleId(null); setMode('list'); return; }
-      if (key.return) { if (newNamePattern.trim() && newReplacement.trim()) { void handleSaveNameRule(); } return; }
-      if (key.upArrow) { setNameRuleField((f) => NAME_RULE_FIELDS[Math.max(0, NAME_RULE_FIELDS.indexOf(f) - 1)]); return; }
-      if (key.downArrow) { setNameRuleField((f) => NAME_RULE_FIELDS[Math.min(NAME_RULE_FIELDS.length - 1, NAME_RULE_FIELDS.indexOf(f) + 1)]); return; }
-      if (nameRuleField === 'pattern') {
-        if (key.backspace || key.delete) { setNewNamePattern((p) => p.slice(0, -1)); return; }
-        if (input && !key.ctrl && !key.meta) { setNewNamePattern((p) => p + input); return; }
-      } else if (nameRuleField === 'type') {
-        if (key.leftArrow || key.rightArrow) { setNewNameType((t) => t === 'name' ? 'regex' : 'name'); return; }
-      } else if (nameRuleField === 'min') {
-        if (key.backspace || key.delete) { setNewNameMinAmount((p) => p.slice(0, -1)); return; }
-        if (input && !key.ctrl && !key.meta) { setNewNameMinAmount((p) => p + input); return; }
-      } else if (nameRuleField === 'max') {
-        if (key.backspace || key.delete) { setNewNameMaxAmount((p) => p.slice(0, -1)); return; }
-        if (input && !key.ctrl && !key.meta) { setNewNameMaxAmount((p) => p + input); return; }
-      } else if (nameRuleField === 'replacement') {
+        if (key.rightArrow) { setCatCursor((c) => Math.min(catOptions.length - 1, c + 1)); return; }
+      } else if (ruleField === 'replacement') {
         if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setNewReplacement((p) => p + input); return; }
-      } else if (nameRuleField === 'account') {
+      } else if (ruleField === 'account') {
         if (key.leftArrow) { setAccountCursor((c) => Math.max(0, c - 1)); return; }
         if (key.rightArrow) { setAccountCursor((c) => Math.min(accountOptions.length - 1, c + 1)); return; }
       }
@@ -521,11 +527,10 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   const q = search.toLowerCase();
   const filteredRules = q
-    ? rules.filter((r) => r.pattern.toLowerCase().includes(q) || r.category.toLowerCase().includes(q))
-    : rules;
-  const filteredNameRules = q
-    ? nameRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.replacement.toLowerCase().includes(q))
-    : nameRules;
+    ? mergedRules.filter((r) => r.pattern.toLowerCase().includes(q)
+        || (r.category ?? '').toLowerCase().includes(q)
+        || (r.replacement ?? '').toLowerCase().includes(q))
+    : mergedRules;
   const filteredTagRules = q
     ? tagRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.tag_name.toLowerCase().includes(q))
     : tagRules;
@@ -540,7 +545,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         <Box gap={3}>
           {SECTIONS.map((s) => (
             <Text key={s} bold color={section === s ? C_ACCENT : undefined} dimColor={section !== s}>
-              {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : s === 'tags' ? 'Tag Rules' : 'Categories'}
+              {s === 'rules' ? 'Rules' : s === 'tags' ? 'Tag Rules' : 'Categories'}
             </Text>
           ))}
         </Box>
@@ -568,73 +573,33 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             { label: 'PATTERN', width: rulePatW },
             { label: 'AMOUNT', width: 10 },
             { label: 'CATEGORY', width: ruleCatW },
-            { label: 'PRI' },
+            { label: 'NAME', width: ruleNameW },
           ]} />
-          {visible.map((rule) => {
-            const isSelected = rule.id === filteredRules[cursor]?.id;
-            const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
-              ? `$${rule.min_amount}`
-              : rule.min_amount !== null && rule.max_amount !== null
-              ? `$${rule.min_amount}-$${rule.max_amount}`
-              : rule.min_amount !== null ? `≥$${rule.min_amount}`
-              : rule.max_amount !== null ? `≤$${rule.max_amount}`
-              : '';
-            return (
-              <SelectableRow key={rule.id} selected={isSelected}>
-                <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
-                <Text dimColor={!isSelected}>
-                  {rule.pattern.length > rulePatW ? rule.pattern.slice(0, rulePatW - 1) + '…' : rule.pattern.padEnd(rulePatW)}
-                </Text>
-                {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
-                <Text color={C_ACCENT} dimColor={!isSelected}>{rule.category.length > ruleCatW ? rule.category.slice(0, ruleCatW - 1) + '…' : rule.category.padEnd(ruleCatW)}</Text>
-                <Text dimColor>{rule.priority}</Text>
-                {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
-              </SelectableRow>
-            );
-          })}
-          <Divider />
-          <Box gap={4}>
-            <Text dimColor>{filteredRules.length}{search ? `/${rules.length}` : ''} rules</Text>
-            {uncategorized > 0 && <Text color={C_WARNING}>{uncategorized} uncategorized transactions</Text>}
-          </Box>
-        </>
-      )}
-
-      {section === 'names' && (
-        <>
-          <ColumnHeader hasCursor columns={[
-            { label: 'TYPE', width: 5 },
-            { label: 'PATTERN', width: namePatW },
-            { label: 'AMOUNT', width: 12 },
-            { label: 'REPLACEMENT' },
-          ]} />
-          {filteredNameRules.length === 0
-            ? <Box marginTop={1}><Text dimColor>{nameRules.length === 0 ? 'No name rules yet. [a] to add one.' : 'No matches.'}</Text></Box>
-            : filteredNameRules.map((rule, i) => {
-                const isSelected = nameCursor === i;
-                const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
-                  ? `$${rule.min_amount}`
-                  : rule.min_amount !== null && rule.max_amount !== null
-                  ? `$${rule.min_amount}-$${rule.max_amount}`
-                  : rule.min_amount !== null ? `≥$${rule.min_amount}`
-                  : rule.max_amount !== null ? `≤$${rule.max_amount}`
-                  : '';
+          {filteredRules.length === 0
+            ? <Box marginTop={1}><Text dimColor>{mergedRules.length === 0 ? 'No rules yet. [a] to add one.' : 'No matches.'}</Text></Box>
+            : visible.map((rule) => {
+                const isSelected = rule === filteredRules[cursor];
+                const amt = amountLabel(rule.minAmount, rule.maxAmount);
                 return (
-                  <SelectableRow key={rule.id} selected={isSelected}>
-                    <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
-                    <Text dimColor={!isSelected}>
-                      {rule.pattern.length > namePatW ? rule.pattern.slice(0, namePatW - 1) + '…' : rule.pattern.padEnd(namePatW)}
-                    </Text>
-                    {amtLabel
-                      ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 12).padEnd(12)}</Text>
-                      : <Text>{' '.repeat(12)}</Text>}
-                    <Text color={C_POSITIVE} dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
-                    {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
+                  <SelectableRow key={`${rule.categoryRuleId ?? '-'}:${rule.nameRuleId ?? '-'}`} selected={isSelected}>
+                    <Text color={C_WARNING} dimColor={!isSelected}>{rule.matchType.padEnd(5)}</Text>
+                    <Text dimColor={!isSelected}>{cell(rule.pattern, rulePatW)}</Text>
+                    {amt ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amt, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
+                    {rule.category
+                      ? <Text color={C_ACCENT} dimColor={!isSelected}>{cell(rule.category, ruleCatW)}</Text>
+                      : <Text>{' '.repeat(ruleCatW)}</Text>}
+                    {rule.replacement
+                      ? <Text color={C_POSITIVE} dimColor={!isSelected}>{cell(rule.replacement, ruleNameW)}</Text>
+                      : <Text>{' '.repeat(ruleNameW)}</Text>}
+                    {rule.accountId && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.accountId)}</Text>}
                   </SelectableRow>
                 );
               })}
           <Divider />
-          <Text dimColor>{filteredNameRules.length}{search ? `/${nameRules.length}` : ''} name rule{nameRules.length !== 1 ? 's' : ''}</Text>
+          <Box gap={4}>
+            <Text dimColor>{filteredRules.length}{search ? `/${mergedRules.length}` : ''} rules</Text>
+            {uncategorized > 0 && <Text color={C_WARNING}>{uncategorized} uncategorized transactions</Text>}
+          </Box>
         </>
       )}
 
@@ -642,30 +607,24 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         <>
           <ColumnHeader hasCursor columns={[
             { label: 'TYPE', width: 5 },
-            { label: 'PATTERN', width: rulePatW },
+            { label: 'PATTERN', width: tagPatW },
             { label: 'AMOUNT', width: 10 },
-            { label: 'TAG', width: ruleCatW },
+            { label: 'TAG', width: tagNameW },
           ]} />
           {filteredTagRules.length === 0
             ? <Box marginTop={1}><Text dimColor>{tagRules.length === 0 ? 'No tag rules yet. [a] to add one (type "all" + an account tags everything in it).' : 'No matches.'}</Text></Box>
             : filteredTagRules.map((rule, i) => {
                 const isSelected = tagRuleCursor === i;
-                const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
-                  ? `$${rule.min_amount}`
-                  : rule.min_amount !== null && rule.max_amount !== null
-                  ? `$${rule.min_amount}-$${rule.max_amount}`
-                  : rule.min_amount !== null ? `≥$${rule.min_amount}`
-                  : rule.max_amount !== null ? `≤$${rule.max_amount}`
-                  : '';
+                const amtLabel = amountLabel(rule.min_amount, rule.max_amount);
                 const patLabel = rule.match_type === 'all' ? '— all —' : rule.pattern;
                 return (
                   <SelectableRow key={rule.id} selected={isSelected}>
                     <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                     <Text dimColor={rule.match_type === 'all' || !isSelected}>
-                      {patLabel.length > rulePatW ? patLabel.slice(0, rulePatW - 1) + '…' : patLabel.padEnd(rulePatW)}
+                      {cell(patLabel, tagPatW)}
                     </Text>
                     {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
-                    <Text color={C_ACCENT} dimColor={!isSelected}>{rule.tag_name.length > ruleCatW ? rule.tag_name.slice(0, ruleCatW - 1) + '…' : rule.tag_name.padEnd(ruleCatW)}</Text>
+                    <Text color={C_ACCENT} dimColor={!isSelected}>{cell(rule.tag_name, tagNameW)}</Text>
                     {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
                   </SelectableRow>
                 );
@@ -732,29 +691,34 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       })()}
 
       {mode === 'rule-form' && (
-        <ModalPanel title={`${editingRuleId !== null ? 'Edit' : 'New'} Category Rule`}>
+        <ModalPanel title={`${editingRuleId !== null || editingNameRuleId !== null ? 'Edit' : 'New'} Rule`}>
           <Box marginTop={1} flexDirection="column" gap={1}>
             <EditTextField label="Pattern" active={ruleField === 'pattern'} value={newPattern} color={C_WARNING} placeholder="keyword or /regex/" emptyText="empty" />
             <EditToggleField label="Match type" active={ruleField === 'type'} value={newType} />
             <EditTextField label="Min $" active={ruleField === 'min'} value={newMinAmount} color={C_WARNING} placeholder="optional" />
             <EditTextField label="Max $" active={ruleField === 'max'} value={newMaxAmount} color={C_WARNING} placeholder="optional" />
-            <EditToggleField label="Category" active={ruleField === 'category'} value={categories[catCursor] ?? '—'} />
+            <EditToggleField
+              label="Category"
+              active={ruleField === 'category'}
+              // On an existing category rule, "none" is a delete — name the
+              // consequence in the picker, where the choice gets made.
+              value={catOptions[catCursor] ?? (editingRuleId !== null ? '— none (removes rule) —' : '— none —')}
+              valueColor={catOptions[catCursor] ? undefined : (editingRuleId !== null ? C_WARNING : C_DIM)}
+            />
+            <EditTextField label="Display name" active={ruleField === 'replacement'} value={newReplacement} color={C_POSITIVE} placeholder="display name" emptyText="—" />
             <EditToggleField label="Account" active={ruleField === 'account'} value={accountLabel(accountOptions[accountCursor] ?? null)} />
           </Box>
-          <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
-        </ModalPanel>
-      )}
-
-      {mode === 'name-rule-form' && (
-        <ModalPanel title={`${editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule`} borderColor={C_POSITIVE}>
-          <Box marginTop={1} flexDirection="column" gap={1}>
-            <EditTextField label="Pattern" active={nameRuleField === 'pattern'} value={newNamePattern} color={C_WARNING} placeholder="keyword or /regex/" emptyText="empty" />
-            <EditToggleField label="Match type" active={nameRuleField === 'type'} value={newNameType} />
-            <EditTextField label="Min $" active={nameRuleField === 'min'} value={newNameMinAmount} color={C_WARNING} placeholder="optional" />
-            <EditTextField label="Max $" active={nameRuleField === 'max'} value={newNameMaxAmount} color={C_WARNING} placeholder="optional" />
-            <EditTextField label="Replace with" active={nameRuleField === 'replacement'} value={newReplacement} color={C_POSITIVE} placeholder="display name" emptyText="empty" />
-            <EditToggleField label="Account" active={nameRuleField === 'account'} value={accountLabel(accountOptions[accountCursor] ?? null)} />
-          </Box>
+          {!ruleFormValid && (
+            <Box marginTop={1}>
+              {/* Once a pattern is typed, the hint names the remaining step —
+                  same wording as the GUI's rule form. */}
+              <Text dimColor>
+                {newPattern.trim()
+                  ? 'Pick a category or enter a display name to save.'
+                  : 'Needs a pattern, and a category or a display name.'}
+              </Text>
+            </Box>
+          )}
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
       )}

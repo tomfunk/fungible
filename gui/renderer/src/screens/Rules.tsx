@@ -6,12 +6,13 @@ import { Modal } from '../components/Modal.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { fmt } from '../../../../core/fmt.js';
-import type { Rule, NameRule, TagRuleRow, LinkedAccount } from '../../../../core/queries.js';
+import { mergeRules, type MergedRule } from '../../../../core/rules-merge.js';
+import type { TagRuleRow, LinkedAccount } from '../../../../core/queries.js';
 import type { TagOption } from '../../../../core/tags.js';
 import type { TagMatchType } from '../../../../core/tag-rules.js';
 import styles from './Rules.module.css';
 
-type Tab = 'rules' | 'names' | 'tags' | 'categories';
+type Tab = 'rules' | 'tags' | 'categories';
 
 const FLEX_OPTIONS = ['', 'fixed', 'flexible', 'discretionary'] as const;
 
@@ -47,14 +48,13 @@ export function Rules() {
     return a ? (a.nickname ?? a.name) : id;
   };
 
-  const [ruleForm, setRuleForm] = useState<{ editing: Rule | null } | null>(null);
-  const [nameRuleForm, setNameRuleForm] = useState<{ editing: NameRule | null } | null>(null);
+  const [ruleForm, setRuleForm] = useState<{ editing: MergedRule | null } | null>(null);
   const [tagRuleForm, setTagRuleForm] = useState<{ editing: TagRuleRow | null } | null>(null);
   const [addCatOpen, setAddCatOpen] = useState(false);
   const [renameCat, setRenameCat] = useState<string | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const TABS: Tab[] = ['rules', 'names', 'tags', 'categories'];
+  const TABS: Tab[] = ['rules', 'tags', 'categories'];
   useScreenKeys({
     Tab: () => {
       setSearch('');
@@ -63,20 +63,25 @@ export function Rules() {
     '/': () => searchRef.current?.focus(),
     a: () => {
       if (tab === 'rules') setRuleForm({ editing: null });
-      else if (tab === 'names') setNameRuleForm({ editing: null });
       else if (tab === 'tags') setTagRuleForm({ editing: null });
       else setAddCatOpen(true);
     },
     Escape: () => setSearch(''),
   });
 
+  // Category rules and name rules live in separate tables, but a row that both
+  // renames and categorizes a merchant is one rule to a person — merge them.
+  const merged = mergeRules(rules, nameRules);
+
   const q = search.toLowerCase();
-  const filteredRules = q
-    ? rules.filter((r) => r.pattern.toLowerCase().includes(q) || r.category.toLowerCase().includes(q))
-    : rules;
-  const filteredNameRules = q
-    ? nameRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.replacement.toLowerCase().includes(q))
-    : nameRules;
+  const filteredMerged = q
+    ? merged.filter(
+        (r) =>
+          r.pattern.toLowerCase().includes(q) ||
+          (r.category?.toLowerCase().includes(q) ?? false) ||
+          (r.replacement?.toLowerCase().includes(q) ?? false),
+      )
+    : merged;
   const filteredTagRules = q
     ? tagRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.tag_name.toLowerCase().includes(q))
     : tagRules;
@@ -88,10 +93,7 @@ export function Rules() {
         <h1 className={styles.title}>Rules</h1>
         <div className={styles.tabs}>
           <button className={tab === 'rules' ? styles.tabActive : styles.tab} onClick={() => setTab('rules')}>
-            Category rules ({rules.length})
-          </button>
-          <button className={tab === 'names' ? styles.tabActive : styles.tab} onClick={() => setTab('names')}>
-            Name rules ({nameRules.length})
+            Rules ({merged.length})
           </button>
           <button className={tab === 'tags' ? styles.tabActive : styles.tab} onClick={() => setTab('tags')}>
             Tag rules ({tagRules.length})
@@ -120,7 +122,6 @@ export function Rules() {
           className={styles.addBtn}
           onClick={() => {
             if (tab === 'rules') setRuleForm({ editing: null });
-            else if (tab === 'names') setNameRuleForm({ editing: null });
             else if (tab === 'tags') setTagRuleForm({ editing: null });
             else setAddCatOpen(true);
           }}
@@ -131,8 +132,8 @@ export function Rules() {
 
       {tab === 'rules' && (
         <section className={styles.panel}>
-          {filteredRules.length === 0 ? (
-            <p className="dim">{search ? 'No rules match.' : 'No category rules yet.'}</p>
+          {filteredMerged.length === 0 ? (
+            <p className="dim">{search ? 'No rules match.' : 'No rules yet.'}</p>
           ) : (
             <table className={styles.table}>
               <thead>
@@ -141,72 +142,39 @@ export function Rules() {
                   <th className={styles.th}>Pattern</th>
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Category</th>
+                  <th className={styles.th}>Display name</th>
                   <th className={styles.th}>Priority</th>
                   <th className={styles.th}>Scope</th>
                   <th className={styles.th} />
                 </tr>
               </thead>
               <tbody>
-                {filteredRules.map((r) => (
-                  <tr key={r.id} className={styles.row} onClick={() => setRuleForm({ editing: r })}>
-                    <td className="dim">{r.match_type}</td>
+                {filteredMerged.map((r) => (
+                  <tr key={r.key} className={styles.row} onClick={() => setRuleForm({ editing: r })}>
+                    <td className="dim">{r.matchType}</td>
                     <td className={styles.tdPattern}>{r.pattern}</td>
-                    <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
-                    <td className="accent">{r.category}</td>
-                    <td className="num dim">{r.priority}</td>
-                    <td className="dim">{r.account_id ? accountLabel(r.account_id) : 'All'}</td>
+                    <td className="num dim">{amountLabel(r.minAmount, r.maxAmount)}</td>
+                    <td className="accent">{r.category ?? ''}</td>
+                    <td className="warn">{r.replacement ?? ''}</td>
+                    <td className="num dim">{r.priority ?? ''}</td>
+                    <td className="dim">{r.accountId ? accountLabel(r.accountId) : 'All'}</td>
                     <td className={styles.tdActions}>
                       <button
                         className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const count = await api.rules.deleteCategoryRule(r.id);
-                          showStatus(`Rule deleted · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
-                          reload();
-                        }}
-                      >
-                        delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-      )}
-
-      {tab === 'names' && (
-        <section className={styles.panel}>
-          {filteredNameRules.length === 0 ? (
-            <p className="dim">{search ? 'No name rules match.' : 'No name rules yet.'}</p>
-          ) : (
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.th}>Type</th>
-                  <th className={styles.th}>Pattern</th>
-                  <th className={styles.th}>Amount</th>
-                  <th className={styles.th}>Display name</th>
-                  <th className={styles.th}>Scope</th>
-                  <th className={styles.th} />
-                </tr>
-              </thead>
-              <tbody>
-                {filteredNameRules.map((r) => (
-                  <tr key={r.id} className={styles.row} onClick={() => setNameRuleForm({ editing: r })}>
-                    <td className="dim">{r.match_type}</td>
-                    <td className={styles.tdPattern}>{r.pattern}</td>
-                    <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
-                    <td className="warn">{r.replacement}</td>
-                    <td className="dim">{r.account_id ? accountLabel(r.account_id) : 'All'}</td>
-                    <td className={styles.tdActions}>
-                      <button
-                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          await api.rules.deleteNameRule(r.id);
-                          showStatus('Name rule deleted');
+                          // One row, both underlying records.
+                          let recategorized: number | null = null;
+                          if (r.categoryRuleId !== null) {
+                            recategorized = await api.rules.deleteCategoryRule(r.categoryRuleId);
+                          }
+                          if (r.nameRuleId !== null) await api.rules.deleteNameRule(r.nameRuleId);
+                          showStatus(
+                            recategorized === null
+                              ? 'Rule deleted'
+                              : `Rule deleted · recategorized ${recategorized} transaction${recategorized === 1 ? '' : 's'}`,
+                            3000,
+                          );
                           reload();
                         }}
                       >
@@ -354,22 +322,9 @@ export function Rules() {
           categories={categories}
           accounts={accounts}
           onClose={() => setRuleForm(null)}
-          onSaved={(count) => {
+          onSaved={(message) => {
             setRuleForm(null);
-            showStatus(`Rule saved · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
-            reload();
-          }}
-        />
-      )}
-
-      {nameRuleForm && (
-        <NameRuleFormModal
-          editing={nameRuleForm.editing}
-          accounts={accounts}
-          onClose={() => setNameRuleForm(null)}
-          onSaved={() => {
-            setNameRuleForm(null);
-            showStatus('Name rule saved');
+            showStatus(message, 3000);
             reload();
           }}
         />
@@ -422,7 +377,7 @@ export function Rules() {
   );
 }
 
-// ── Rule form (add/edit category rule) ──────────────────────────────────────
+// ── Rule form (add/edit — one rule writes a category rule, a name rule, or both) ─
 
 function RuleFormModal({
   editing,
@@ -431,18 +386,19 @@ function RuleFormModal({
   onClose,
   onSaved,
 }: {
-  editing: Rule | null;
+  editing: MergedRule | null;
   categories: string[];
   accounts: LinkedAccount[];
   onClose: () => void;
-  onSaved: (count: number) => void;
+  onSaved: (message: string) => void;
 }) {
   const [pattern, setPattern] = useState(editing?.pattern ?? '');
-  const [matchType, setMatchType] = useState<'name' | 'regex'>((editing?.match_type as 'name' | 'regex') ?? 'name');
-  const [minAmount, setMinAmount] = useState(editing?.min_amount !== null && editing ? String(editing.min_amount) : '');
-  const [maxAmount, setMaxAmount] = useState(editing?.max_amount !== null && editing ? String(editing.max_amount) : '');
-  const [category, setCategory] = useState(editing?.category ?? categories[0] ?? '');
-  const [accountId, setAccountId] = useState<string | null>(editing?.account_id ?? null);
+  const [matchType, setMatchType] = useState<'name' | 'regex'>((editing?.matchType as 'name' | 'regex') ?? 'name');
+  const [minAmount, setMinAmount] = useState(editing?.minAmount != null ? String(editing.minAmount) : '');
+  const [maxAmount, setMaxAmount] = useState(editing?.maxAmount != null ? String(editing.maxAmount) : '');
+  const [category, setCategory] = useState(editing?.category ?? '');
+  const [replacement, setReplacement] = useState(editing?.replacement ?? '');
+  const [accountId, setAccountId] = useState<string | null>(editing?.accountId ?? null);
   const [matchCount, setMatchCount] = useState(0);
   const [error, setError] = useState('');
 
@@ -457,26 +413,59 @@ function RuleFormModal({
     }
   }, [pattern, matchType]);
 
+  const displayName = replacement.trim();
+  // A rule that neither categorizes nor renames does nothing — don't let it save.
+  const canSave = pattern.trim().length > 0 && (category !== '' || displayName.length > 0);
+
   async function save() {
-    if (!pattern.trim() || !category) return;
+    if (!canSave) return;
+    const min = minAmount.trim() ? parseFloat(minAmount) : null;
+    const max = maxAmount.trim() ? parseFloat(maxAmount) : null;
     try {
-      const count = await api.rules.saveCategoryRule({
-        pattern,
-        matchType,
-        category,
-        minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
-        maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
-        accountId,
-        editingId: editing?.id ?? null,
-      });
-      onSaved(count);
+      // Category first: both writes share the pattern, so a bad regex is
+      // rejected by the first one and cannot half-apply.
+      let recategorized: number | null = null;
+      if (category) {
+        recategorized = await api.rules.saveCategoryRule({
+          pattern,
+          matchType,
+          category,
+          minAmount: min,
+          maxAmount: max,
+          accountId,
+          editingId: editing?.categoryRuleId ?? null,
+        });
+      } else if (editing?.categoryRuleId != null) {
+        recategorized = await api.rules.deleteCategoryRule(editing.categoryRuleId);
+      }
+
+      if (displayName) {
+        await api.rules.saveNameRule({
+          pattern,
+          matchType,
+          replacement: displayName,
+          minAmount: min,
+          maxAmount: max,
+          accountId,
+          editingId: editing?.nameRuleId ?? null,
+        });
+      } else if (editing?.nameRuleId != null) {
+        await api.rules.deleteNameRule(editing.nameRuleId);
+      }
+
+      const parts = ['Rule saved'];
+      if (recategorized !== null) {
+        parts.push(`recategorized ${recategorized} transaction${recategorized === 1 ? '' : 's'}`);
+      }
+      if (displayName) parts.push(`shown as "${displayName}"`);
+      onSaved(parts.join(' · '));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save rule');
     }
   }
 
   return (
-    <Modal title={editing ? 'Edit category rule' : 'New category rule'} onClose={onClose} accent="var(--manual)">
+    <Modal title={editing ? 'Edit rule' : 'New rule'} onClose={onClose} accent="var(--manual)">
       <div className={styles.formGrid}>
         <label>Pattern</label>
         <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. UBER or ^AMZN" />
@@ -491,106 +480,13 @@ function RuleFormModal({
         <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
         <label>Category</label>
         <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">{editing?.categoryRuleId != null ? '— none (removes rule) —' : '— none —'}</option>
           {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
         </select>
-        <label>Account</label>
-        <select value={accountId ?? ''} onChange={(e) => setAccountId(e.target.value || null)}>
-          <option value="">All accounts</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.nickname ?? a.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {pattern.trim() && (
-        <p className={styles.matchHint}>
-          <span className="warn">{matchCount} transactions match</span>
-          <span className="dim"> · saving recategorizes them</span>
-        </p>
-      )}
-      {error && <p className="neg">{error}</p>}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
-          Cancel
-        </button>
-        <button className={styles.btnPrimary} onClick={() => void save()} disabled={!pattern.trim() || !category}>
-          Save
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Name rule form ──────────────────────────────────────────────────────────
-
-function NameRuleFormModal({
-  editing,
-  accounts,
-  onClose,
-  onSaved,
-}: {
-  editing: NameRule | null;
-  accounts: LinkedAccount[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [pattern, setPattern] = useState(editing?.pattern ?? '');
-  const [matchType, setMatchType] = useState<'name' | 'regex'>((editing?.match_type as 'name' | 'regex') ?? 'name');
-  const [minAmount, setMinAmount] = useState(editing?.min_amount !== null && editing ? String(editing.min_amount) : '');
-  const [maxAmount, setMaxAmount] = useState(editing?.max_amount !== null && editing ? String(editing.max_amount) : '');
-  const [replacement, setReplacement] = useState(editing?.replacement ?? '');
-  const [accountId, setAccountId] = useState<string | null>(editing?.account_id ?? null);
-  const [matchCount, setMatchCount] = useState(0);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    if (pattern.trim()) {
-      api.rules
-        .countPatternMatches(pattern, matchType)
-        .then(setMatchCount)
-        .catch(() => setMatchCount(0));
-    } else {
-      setMatchCount(0);
-    }
-  }, [pattern, matchType]);
-
-  async function save() {
-    if (!pattern.trim() || !replacement.trim()) return;
-    try {
-      await api.rules.saveNameRule({
-        pattern,
-        matchType,
-        replacement: replacement.trim(),
-        minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
-        maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
-        accountId,
-        editingId: editing?.id ?? null,
-      });
-      onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save name rule');
-    }
-  }
-
-  return (
-    <Modal title={editing ? 'Edit name rule' : 'New name rule'} onClose={onClose} accent="var(--warning)">
-      <div className={styles.formGrid}>
-        <label>Pattern</label>
-        <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. AMZN Mktp" />
-        <label>Match type</label>
-        <select value={matchType} onChange={(e) => setMatchType(e.target.value as 'name' | 'regex')}>
-          <option value="name">name (substring)</option>
-          <option value="regex">regex</option>
-        </select>
-        <label>Min $ (optional)</label>
-        <input value={minAmount} onChange={(e) => setMinAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
-        <label>Max $ (optional)</label>
-        <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
         <label>Display name</label>
         <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="e.g. Amazon" />
         <label>Account</label>
@@ -606,18 +502,18 @@ function NameRuleFormModal({
       {pattern.trim() && (
         <p className={styles.matchHint}>
           <span className="warn">{matchCount} transactions match</span>
+          {category && <span className="dim"> · saving recategorizes them</span>}
         </p>
       )}
       {error && <p className="neg">{error}</p>}
+      {pattern.trim() && !canSave && (
+        <p className={styles.saveHint}>Pick a category or enter a display name to save.</p>
+      )}
       <div className={styles.modalActions}>
         <button className={styles.btnSecondary} onClick={onClose}>
           Cancel
         </button>
-        <button
-          className={styles.btnPrimary}
-          onClick={() => void save()}
-          disabled={!pattern.trim() || !replacement.trim()}
-        >
+        <button className={styles.btnPrimary} onClick={() => void save()} disabled={!canSave}>
           Save
         </button>
       </div>

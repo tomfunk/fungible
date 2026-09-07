@@ -13,3 +13,10 @@ out/
 release/
 test-results/
 playwright-report/
+
+# Fiefdom (local-only, per-machine)
+.fiefdom/fiefs.json
+.fiefdom/fiefs/
+.fiefdom/worktrees/
+.fiefdom/bin/
+.fiefdom/cross-fief-requests.log

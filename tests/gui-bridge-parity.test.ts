@@ -42,6 +42,9 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   isSignificantDelta: 'renderer imports pure core/scorecard.ts directly',
   ratioLabel: 'renderer imports pure core/scorecard.ts directly',
 
+  // Pure rule-merge helper -- renderer imports core/rules-merge.ts directly
+  mergeRules: 'renderer imports pure core/rules-merge.ts directly',
+
   // Electron-side bridge namespaces live in gui/main/bridge.ts (not registry.ts)
   getDefaultDaysRequested: 'bridge plaid namespace (gui/main/bridge.ts)',
 
