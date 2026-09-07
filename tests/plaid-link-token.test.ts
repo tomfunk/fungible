@@ -5,7 +5,12 @@ const linkTokenCreate = vi.fn().mockResolvedValue({ data: { link_token: 'link-to
 
 vi.mock('plaid', async () => {
   const actual = await vi.importActual<typeof import('plaid')>('plaid');
-  return { ...actual, PlaidApi: vi.fn().mockImplementation(() => ({ linkTokenCreate })) };
+  // vitest 4+ no longer treats an arrow function passed to mockImplementation as
+  // new-able; core/plaid.ts does `new PlaidApi(...)`, so use a function expression.
+  const PlaidApi = vi.fn().mockImplementation(function () {
+    return { linkTokenCreate };
+  });
+  return { ...actual, PlaidApi };
 });
 
 import { Products } from 'plaid';
@@ -53,5 +58,19 @@ describe('createLinkToken', () => {
     expect(req.products).toBeUndefined();
     expect(req.transactions).toBeUndefined();
     expect(req.access_token).toBe('access-abc');
+  });
+
+  // Without this, "update link" can only re-type a password. An Item that has
+  // lost its accounts (Plaid's NO_ACCOUNTS) then fails identically after every
+  // press, because nothing in the flow ever re-opens the account picker — and at
+  // a non-OAuth institution the picker only appears when we ask for it.
+  it('enables Account Select in update mode so a link with no accounts can be repaired', async () => {
+    await createLinkToken('local-user', undefined, 'access-abc');
+    expect(lastRequest().update).toEqual({ account_selection_enabled: true });
+  });
+
+  it('does not send update options when adding a new bank', async () => {
+    await createLinkToken('local-user');
+    expect(lastRequest().update).toBeUndefined();
   });
 });

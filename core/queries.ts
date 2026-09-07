@@ -578,6 +578,10 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
 export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
+  // The bank's posting date, retained by setTransactionDate when a transaction
+  // is reattributed to another period; NULL unless `date` has been overridden.
+  // UI uses it to show "reattributed from X" and offer restore-to-posting-date.
+  original_date: string | null;
 };
 
 export function buildSearchRe(search: string): RegExp {
@@ -605,7 +609,7 @@ export async function getTransactions(filters: {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({
-    sql: `SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
+    sql: `SELECT t.id, t.date, t.original_date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
             (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
           FROM transactions t ${where}
           ORDER BY ${SORT_ORDER_BY[sort]}
