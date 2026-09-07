@@ -32,6 +32,8 @@ import {
 import {
   setTransactionCategory,
   clearTransactionOverride,
+  setTransactionDate,
+  clearTransactionDate,
   setTransactionIgnored,
   setTransactionDisplayName,
   deleteTransaction,
@@ -131,6 +133,8 @@ export const registry = {
   transactions: {
     setTransactionCategory,
     clearTransactionOverride,
+    setTransactionDate,
+    clearTransactionDate,
     setTransactionIgnored,
     setTransactionDisplayName,
     deleteTransaction,

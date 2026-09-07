@@ -519,6 +519,23 @@ describe('getTransactions — flex filter', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+describe('getTransactions — original_date', () => {
+  it('is null for transactions that have not been reattributed', async () => {
+    await insertTx({ amount: 100 });
+    const [row] = await getTransactions({});
+    expect(row.original_date).toBeNull();
+  });
+
+  it('carries the preserved posting date once a transaction is reattributed', async () => {
+    await insertTx({ amount: 100, date: '2025-01-15' });
+    await db.execute("UPDATE transactions SET original_date = '2025-01-15', date = '2024-12-31'");
+    const [row] = await getTransactions({});
+    expect(row.date).toBe('2024-12-31');
+    expect(row.original_date).toBe('2025-01-15');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
 describe('hasAccounts', () => {
   it('returns false when no accounts linked', async () => {
     await db.execute('DELETE FROM plaid_items');

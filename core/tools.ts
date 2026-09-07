@@ -20,7 +20,7 @@ import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTop
 import { applyCategoriesToAll } from './categorize.js';
 import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
-import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate } from './transactions.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
 import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
@@ -823,7 +823,9 @@ async function executeToolImpl(
       const date = str('date');
       // Reject anything SQLite's date functions would silently treat as NULL —
       // a bad date here would quietly drop the row out of every range query.
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+      // setTransactionDate enforces this too; the early return gives the agent
+      // a friendly message instead of a thrown error.
+      if (!isValidIsoDate(date)) {
         return `"${date}" is not a valid date. Use YYYY-MM-DD.`;
       }
       await setTransactionDate(str('id'), date);
