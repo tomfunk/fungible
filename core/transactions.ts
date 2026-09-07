@@ -4,6 +4,20 @@ import { rebuildDisplayNames } from './rename.js';
 import { applyCategoriesToAll } from './categorize.js';
 import { validateRegex } from './rule-utils.js';
 
+/**
+ * True when `s` is a real calendar date in YYYY-MM-DD form. Used by both the
+ * `set_transaction_date` MCP wrapper and setTransactionDate itself.
+ *
+ * The round-trip check is deliberate: `Date.parse('2025-02-30')` does NOT
+ * return NaN — V8 rolls the day over to March 2 — so a plain parse would wave
+ * impossible days through. Re-serialising and comparing catches them.
+ */
+export function isValidIsoDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 // ── Single-transaction mutations ───────────────────────────────────────────────
 
 export async function setTransactionCategory(id: string, category: string): Promise<void> {
@@ -34,8 +48,16 @@ export async function clearTransactionOverride(id: string): Promise<void> {
  * Reattribute a transaction to the period it belongs to. Preserves the bank's
  * posting date in `original_date` on the first edit, so repeated edits never
  * lose it and `clearTransactionDate` can always get back to the truth.
+ *
+ * Rejects anything that isn't a real YYYY-MM-DD date: SQLite's date functions
+ * would silently treat a malformed value as NULL, quietly dropping the row out
+ * of every range query. Callers (MCP wrapper, GUI, TUI) guard too, but this is
+ * the last line before the write.
  */
 export async function setTransactionDate(id: string, date: string): Promise<void> {
+  if (!isValidIsoDate(date)) {
+    throw new Error(`Invalid transaction date "${date}": expected YYYY-MM-DD.`);
+  }
   await db.execute({
     sql: 'UPDATE transactions SET original_date = COALESCE(original_date, date), date = ? WHERE id = ?',
     args: [date, id],

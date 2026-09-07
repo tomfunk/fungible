@@ -257,4 +257,12 @@ describe('setTransactionDate', () => {
     expect(inDec.rows.map((r) => r.id)).toEqual([id]);
     expect(inJan.rows).toHaveLength(0);
   });
+
+  it('rejects a malformed date and leaves the row untouched', async () => {
+    const id = await insertTx({ name: 'Target' });
+    await expect(setTransactionDate(id, '12/31/2024')).rejects.toThrow(/YYYY-MM-DD/);
+    await expect(setTransactionDate(id, '2025-13-01')).rejects.toThrow(/Invalid transaction date/);
+    await expect(setTransactionDate(id, '2025-02-30')).rejects.toThrow(/Invalid transaction date/);
+    expect(await dateOf(id)).toEqual({ date: '2025-01-15', original_date: null });
+  });
 });

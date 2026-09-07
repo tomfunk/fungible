@@ -770,7 +770,8 @@ describe('Transactions', () => {
     r.stdin.write('\r');
     await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
     r.stdin.write('\x1b[B'); // name → category
-    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // category → date
+    r.stdin.write('\x1b[B'); // date → pattern
     await waitFor(() => expect(frame(r)).toContain('optional')); // Pattern field active (placeholder)
     for (const ch of 'Trader') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('transactions match'));
@@ -782,7 +783,8 @@ describe('Transactions', () => {
     r.stdin.write('\r');
     await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
     r.stdin.write('\x1b[B'); // name → category
-    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // category → date
+    r.stdin.write('\x1b[B'); // date → pattern
     r.stdin.write('\x1b[B'); // pattern → type
     await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // name inactive = type field reached
     r.stdin.write('\x1b[C'); // → toggle name → regex
@@ -798,8 +800,10 @@ describe('Transactions', () => {
     r.stdin.write('\x1b[B'); // name → category
     await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
     r.stdin.write('\x1b[C'); // cycle Grocery → Income
+    await waitFor(() => expect(frame(r)).toContain('← Income  →'));
     // Navigate to Pattern and type a pattern
-    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // category → date
+    r.stdin.write('\x1b[B'); // date → pattern
     await waitFor(() => expect(frame(r)).toContain('optional'));
     for (const ch of 'Trader') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('transactions match'));
@@ -809,6 +813,77 @@ describe('Transactions', () => {
       expect(f).not.toContain('optional'); // panel closed
       expect(f).toContain('Saved:');
     });
+  });
+
+  it('edit panel shows a Date field prefilled with the transaction date', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      // Trader Joes' posting date, prefilled into the panel's Date field
+      expect(flat(r)).toContain('Date [ 2026-05-14 ]');
+    });
+  });
+
+  it('editing the Date field and Enter reattributes the transaction', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    r.stdin.write('\x1b[B'); // name → category
+    r.stdin.write('\x1b[B'); // category → date
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // date field active
+    // Clear the prefilled date and type a new one in April
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f'); // backspace ×10
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD')); // field emptied → placeholder
+    for (const ch of '2026-04-30') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('2026-04-30'));
+    r.stdin.write('\r'); // save
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Date set to 2026-04-30');
+      // Row now sorts/reads under the reattributed date and out of the May window
+      expect(f).not.toContain('Trader Joes');
+    });
+  });
+
+  it('a malformed date shows an error and does not crash', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery'));
+    r.stdin.write('\x1b[B'); // name → category
+    r.stdin.write('\x1b[B'); // category → date
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f');
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD'));
+    for (const ch of '2026-13') r.stdin.write(ch); // wrong shape — rejected before core
+    await waitFor(() => expect(frame(r)).toContain('2026-13'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Invalid date');
+      expect(f).toContain('Trader Joes'); // still there, panel stayed put, no crash
+    });
+  });
+
+  it('marks a reattributed row and restores its posting date with [d]', async () => {
+    // Reattribute a May row's date to April, keeping its posting date.
+    await db.execute({
+      sql: 'UPDATE transactions SET original_date = ?, date = ? WHERE id = ?',
+      args: ['2026-04-28', '2026-05-14', 'tx-groc-2'],
+    });
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    // Row carries the reattribution marker (asterisk flush against the date)
+    await waitFor(() => expect(frame(r)).toContain('2026-05-14*'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('posted 2026-04-28')); // edit panel context line
+    r.stdin.write('\x1b'); // Esc back to the list
+    await waitFor(() => expect(frame(r)).not.toContain('posted 2026-04-28'));
+    r.stdin.write('d'); // restore posting date
+    await waitFor(() => expect(frame(r)).toContain('Date restored to 2026-04-28'));
+    await waitFor(() => expect(frame(r)).not.toContain('2026-05-14*'));
   });
 
   // The tag panel titles itself with whatever row the cursor is on, so its
