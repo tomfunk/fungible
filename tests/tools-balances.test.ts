@@ -51,9 +51,10 @@ describe('getBalances with a loan account', () => {
     const out = await executeTool('get_balances', {});
     expect(out).toContain('Home Mortgage: $300,000.00');
     expect(out).toContain('Total liabilities: $300,000.00');
-    // Negative net worth once the mortgage is subtracted (fmt renders the sign;
-    // the tool prefixes another '-', a pre-existing double-sign quirk).
-    expect(out).toContain('$295,000.00');
+    // Net worth goes negative once the mortgage is subtracted; fmt() owns the
+    // single leading sign (no double '-').
+    expect(out).toContain('Net worth: -$295,000.00');
+    expect(out).not.toContain('--$');
   });
 });
 
