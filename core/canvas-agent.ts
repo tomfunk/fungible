@@ -117,7 +117,7 @@ export async function loadCanvasContext(): Promise<CanvasContext> {
     `Monthly surplus:   ${fmt(health.monthlySavings)} (savings rate: ${Math.round(health.savingsRate)}%)`,
     `Cash (checking/savings): ${fmtCompact(health.cash)}`,
     `Taxable investments (brokerage): ${fmtCompact(taxableBrokerage)}  ← no withdrawal restrictions`,
-    `Total accessible (cash + brokerage): ${fmtCompact(health.liquid)}`,
+    `Total liquid (cash + brokerage): ${fmtCompact(health.liquid)}`,
     `Retirement accounts (401k/IRA/Roth): ${fmtCompact(health.retirement)}  ← restricted until ~59½`,
     `Credit card debt:  ${fmtCompact(health.totalDebt)}`,
     health.loanDebt > 0 ? `Loan debt (mortgage/auto/student): ${fmtCompact(health.loanDebt)}` : null,

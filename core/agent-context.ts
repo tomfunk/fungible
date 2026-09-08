@@ -87,7 +87,8 @@ export async function getBalances(): Promise<BalanceSummary> {
         WHEN 'investment'  THEN 1
         WHEN 'other'       THEN 2
         WHEN 'credit'      THEN 3
-        ELSE 4
+        WHEN 'loan'        THEN 4
+        ELSE 5
       END,
       bh.balance DESC
   `);
@@ -275,7 +276,7 @@ export const APP_CONTEXT = `
   \`date\`, so they reflect the reattribution. Survives re-syncs.
 - \`ignored\`: soft-hides a transaction from all totals (transfers, reimbursements, refunds, etc.).
 - \`hidden_categories\`: categories excluded from all totals and charts (e.g. "Transfer").
-- Accounts: type is one of depository, investment, credit, other.
+- Accounts: type is one of depository, investment, credit, loan, other.
 - Manual assets are stored as accounts with type='other', subtype='manual'.
 - Balances are stored in balance_history (account_id, date, balance). Most recent = current balance.
 
@@ -298,8 +299,10 @@ export const APP_CONTEXT = `
 
 ## Net Worth Calculation
 - Assets: depository + investment + other (if balance > 0)
-- Liabilities: credit accounts
+- Liabilities: credit + loan accounts (credit cards, plus mortgage / auto / student loans)
 - Net Worth = Assets − Liabilities
+- Loan balances are subtracted, so FIRE progress reflects mortgage debt. To net a
+  house out, add it as a manual asset or leave the mortgage unlinked.
 
 ## FIRE Calculation (Financial Health screen)
 - FIRE Number = (avg monthly expenses × 12) / withdrawal_rate
