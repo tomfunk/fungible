@@ -255,34 +255,55 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       </Box>
 
       {/* ── Debt (only shown if there is debt) ─────────────────────────────── */}
-      {data.totalDebt > 0 && (
+      {(data.totalDebt > 0 || data.loanDebt > 0) && (
         <Box flexDirection="column" marginTop={1}>
           <SectionHeader>DEBT</SectionHeader>
-          <Box gap={3} marginTop={1}>
-            <Text dimColor>{'Net cash'.padEnd(L)}</Text>
-            <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
-              {fmtSigned(netCash).padStart(V)}
-            </Text>
-            <Text dimColor>
-              {netCash >= 0
-                ? 'could pay off now'
-                : `${fmtCompact(data.cash)} cash · ${fmtCompact(data.totalDebt)} debt`}
-            </Text>
-          </Box>
-          {netCash < 0 && (
-            <Box gap={3}>
-              <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
-              {debtMonths === null ? (
-                <Text color={C_NEGATIVE}>{'no surplus'.padStart(V)}</Text>
-              ) : (
-                <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
-                  {fmtMonths(debtMonths).padStart(V)}
+          {data.loanDebt > 0 && (
+            <>
+              <Box gap={3} marginTop={1}>
+                <Text dimColor>{'Credit cards'.padEnd(L)}</Text>
+                <Text bold color={C_NEGATIVE}>{fmt(data.totalDebt).padStart(V)}</Text>
+              </Box>
+              <Box gap={3}>
+                <Text dimColor>{'Loans'.padEnd(L)}</Text>
+                <Text bold color={C_NEGATIVE}>{fmt(data.loanDebt).padStart(V)}</Text>
+                <Text dimColor>mortgage / auto / student</Text>
+              </Box>
+              <Box gap={3}>
+                <Text dimColor>{'Total'.padEnd(L)}</Text>
+                <Text bold color={C_NEGATIVE}>{fmt(data.totalDebt + data.loanDebt).padStart(V)}</Text>
+              </Box>
+            </>
+          )}
+          {data.totalDebt > 0 && (
+            <>
+              <Box gap={3} marginTop={1}>
+                <Text dimColor>{'Net cash'.padEnd(L)}</Text>
+                <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
+                  {fmtSigned(netCash).padStart(V)}
                 </Text>
+                <Text dimColor>
+                  {netCash >= 0
+                    ? 'could pay off now'
+                    : `${fmtCompact(data.cash)} cash · ${fmtCompact(data.totalDebt)} debt`}
+                </Text>
+              </Box>
+              {netCash < 0 && (
+                <Box gap={3}>
+                  <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
+                  {debtMonths === null ? (
+                    <Text color={C_NEGATIVE}>{'no surplus'.padStart(V)}</Text>
+                  ) : (
+                    <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
+                      {fmtMonths(debtMonths).padStart(V)}
+                    </Text>
+                  )}
+                  <Text dimColor>
+                    {debtMonths !== null ? `${fmtCompact(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
+                  </Text>
+                </Box>
               )}
-              <Text dimColor>
-                {debtMonths !== null ? `${fmtCompact(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
-              </Text>
-            </Box>
+            </>
           )}
         </Box>
       )}
