@@ -6,4 +6,5 @@
 export const isAssetAccount = (a: { type: string; balance: number }): boolean =>
   a.type === 'depository' || a.type === 'investment' || (a.type === 'other' && a.balance > 0);
 
-export const isLiabilityAccount = (a: { type: string }): boolean => a.type === 'credit';
+export const isLiabilityAccount = (a: { type: string }): boolean =>
+  a.type === 'credit' || a.type === 'loan';

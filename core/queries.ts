@@ -825,11 +825,11 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
         ELSE 0
       END) AS assets,
-      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS liabilities,
+      SUM(CASE WHEN a.type IN ('credit', 'loan') THEN pl.balance ELSE 0 END) AS liabilities,
       SUM(CASE
         WHEN a.type IN ('depository', 'investment') THEN pl.balance
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
-        WHEN a.type = 'credit' THEN -pl.balance
+        WHEN a.type IN ('credit', 'loan') THEN -pl.balance
         ELSE 0
       END) AS net_worth
     FROM period_last pl
@@ -860,7 +860,7 @@ export async function getAccountsWithBalances(): Promise<{ accounts: AccountBala
     db.execute(`
       SELECT bh.date,
         SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END) as assets,
-        SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
+        SUM(CASE WHEN a.type IN ('credit','loan') THEN bh.balance ELSE 0 END) as liabilities
       FROM balance_history bh
       JOIN accounts a ON a.id = bh.account_id
       WHERE a.excluded = 0

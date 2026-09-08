@@ -686,6 +686,35 @@ describe('excluded accounts', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+describe('loan accounts count as liabilities in net worth', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    // Checking asset, a credit card, and a mortgage — all Plaid balances stored positive.
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('chk', 'Checking', 'depository', 'checking', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('cc', 'Visa', 'credit', 'credit card', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('mtg', 'Mortgage', 'loan', 'mortgage', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('chk', 50000, '2025-01-31')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('cc', 2000, '2025-01-31')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('mtg', 300000, '2025-01-31')", args: [] });
+  });
+
+  it('subtracts the loan balance in getNetWorthHistory', async () => {
+    const hist = await getNetWorthHistory('month');
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(50000);
+    expect(hist[0].liabilities).toBe(302000);      // credit card + mortgage
+    expect(hist[0].net_worth).toBe(-252000);       // 50000 - 2000 - 300000
+  });
+
+  it('subtracts the loan balance in the getAccountsWithBalances history series', async () => {
+    const { history } = await getAccountsWithBalances();
+    expect(history.at(-1)!.liabilities).toBe(302000);
+    expect(history.at(-1)!.net).toBe(-252000);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
 describe('getLinkedAccounts — awaiting-first-sync placeholders', () => {
   beforeEach(async () => {
     await db.execute('DELETE FROM plaid_items');
