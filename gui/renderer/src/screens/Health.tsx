@@ -68,6 +68,8 @@ export function Health() {
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
+  const combinedDebt = data.totalDebt + data.loanDebt;
+  const hasLoanDebt = data.loanDebt > 0;
 
   return (
     <div className={styles.screen}>
@@ -141,7 +143,7 @@ export function Health() {
             <span className={`num ${runwayClass(liquidMonths, 12, 6)} ${styles.metricValue}`}>{fmtMonths(liquidMonths)}</span>
             <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.liquid)} incl. brokerage</span>
           </div>
-          {data.totalDebt > 0 && (
+          {combinedDebt > 0 && !hasLoanDebt && (
             <div className={styles.metric}>
               <span className={styles.metricLabel}>Debt</span>
               <span className={`num neg ${styles.metricValue}`}>
@@ -153,6 +155,37 @@ export function Health() {
                   : `${fmtCompact(Math.abs(netCash))} more than cash`}
               </span>
             </div>
+          )}
+          {hasLoanDebt && (
+            <>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Credit cards</span>
+                <span className={`num ${data.totalDebt > 0 ? 'neg' : 'dim'} ${styles.metricValue}`}>
+                  {fmtCompact(data.totalDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>
+                  {data.totalDebt === 0
+                    ? 'no card balance'
+                    : netCash >= 0
+                      ? `covered · ${fmtCompact(netCash)} net cash`
+                      : `${fmtCompact(Math.abs(netCash))} more than cash`}
+                </span>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Loans</span>
+                <span className={`num neg ${styles.metricValue}`}>
+                  {fmtCompact(data.loanDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>mortgage / auto / student</span>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Total</span>
+                <span className={`num neg ${styles.metricValue}`}>
+                  {fmtCompact(combinedDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>subtracted from net worth</span>
+              </div>
+            </>
           )}
           {data.totalDebt > 0 && netCash < 0 && (
             <div className={styles.metric}>

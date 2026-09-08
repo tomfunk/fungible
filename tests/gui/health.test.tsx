@@ -42,6 +42,27 @@ describe('GUI Health', () => {
     expect(screen.getByText('Years to FIRE')).toBeTruthy();
   });
 
+  it('breaks debt into credit cards, loans and a combined total when a loan account exists', async () => {
+    await db.execute("UPDATE balance_history SET balance = 450.00 WHERE account_id = 'test-credit'");
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, institution_name, mask) VALUES ('test-mortgage', 'Home Loan', 'loan', 'mortgage', 'Test Bank', '0003')");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('test-mortgage', 300000.00, '2026-05-20')");
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Credit cards')).toBeTruthy());
+    expect(screen.getByText('Loans')).toBeTruthy();
+    // Combined-total row
+    const totalRow = screen.getByText('Total').closest('div')!;
+    expect(totalRow.textContent).toContain('subtracted from net worth');
+    // The single generic "Debt" row is not rendered once the breakdown shows
+    expect(screen.queryByText('Debt')).toBeNull();
+  });
+
+  it('shows a single Debt row when there is no loan debt', async () => {
+    await db.execute("UPDATE balance_history SET balance = 450.00 WHERE account_id = 'test-credit'");
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Debt')).toBeTruthy());
+    expect(screen.queryByText('Loans')).toBeNull();
+  });
+
   it('renders the four assumption dials', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
