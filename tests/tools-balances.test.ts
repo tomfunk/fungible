@@ -29,6 +29,34 @@ describe('getBalances with an excluded account', () => {
   });
 });
 
+describe('getBalances with a loan account', () => {
+  beforeEach(async () => {
+    // Add a mortgage alongside the checking account seeded above.
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, institution_name, mask, excluded) VALUES ('mtg', 'Home Mortgage', 'loan', 'mortgage', 'Test Bank', '7777', 0)");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('mtg', 300000.00, '2026-05-20')");
+  });
+
+  it('classifies the loan as a liability and subtracts it from net worth', async () => {
+    const b = await getBalances();
+    const mtg = [...b.accounts].find((a) => a.name === 'Home Mortgage')!;
+    expect(mtg.isLiability).toBe(true);
+    expect(mtg.isAsset).toBe(false);
+    expect(b.totalAssets).toBe(5000);
+    expect(b.totalLiabilities).toBe(300000);
+    expect(b.loanDebt).toBe(300000);          // still reported separately
+    expect(b.netWorth).toBe(-295000);
+  });
+
+  it('lists the mortgage under Liabilities in the get_balances tool output', async () => {
+    const out = await executeTool('get_balances', {});
+    expect(out).toContain('Home Mortgage: $300,000.00');
+    expect(out).toContain('Total liabilities: $300,000.00');
+    // Negative net worth once the mortgage is subtracted (fmt renders the sign;
+    // the tool prefixes another '-', a pre-existing double-sign quirk).
+    expect(out).toContain('$295,000.00');
+  });
+});
+
 describe('get_balances tool output', () => {
   it('shows a carved-out "Excluded" section and leaves net worth untouched', async () => {
     const out = await executeTool('get_balances', {});

@@ -69,7 +69,7 @@ export async function loadHealthData(): Promise<HealthData> {
     db.execute(`
       SELECT
         COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END), 0) -
-        COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
+        COALESCE(SUM(CASE WHEN a.type IN ('credit','loan') THEN bh.balance ELSE 0 END), 0) AS net_worth
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.excluded = 0
