@@ -38,7 +38,7 @@ Personal finance, keyboard-first. Available as a **terminal UI** or a **desktop 
 - **Manual assets** — track a house, car, or other asset by name and value
 - **Category & name rules** — substring or regex rules that auto-categorize and rename transactions; survives re-syncs
 - **Spending flexibility** — tag categories as fixed / flexible / discretionary; see breakdown on Dashboard
-- **Delta mode** — per-category spending deltas vs prior period, same period last year, and 12-month rolling average; heat-map coloring
+- **Scorecard** — categories flagged over / under the typical month against a 12-month median baseline, with a net verdict and optional delta columns (prior period, same period last year, 12-month average); heat-map coloring
 - **Tags** — label transactions across accounts (trips, projects, events) and view summaries by tag
 - **Net worth** — balance history with asset/liability breakdown; by account or by type
 - **Financial health** — cash and liquid runway, FIRE number and progress, years to retirement with adjustable assumptions

@@ -38,18 +38,20 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 |-----|--------|
 | `r` | Cycle time range (Week → Month → Quarter → Year → All Time) |
 | `← →` | Previous / next period |
-| `Tab` | Cycle views: Categories → Flex → Account picker |
-| `↑ ↓` | Select category (Categories view) or account (Account view) |
-| `Enter` | Drill into transactions for selected category / account |
+| `Tab` | Cycle views: Categories → Flex → Account → Owner (Owner shown once an account has an owner) |
+| `↑ ↓` | Select row in the active view |
+| `Enter` | Drill into transactions for the selected row |
+| `m` | Top merchants for the selected category (Categories view, not in scorecard) |
 | `Space` | Toggle account filter (Account view) |
-| `c` | Clear account filter |
-| `d` | Toggle delta mode (spending vs prior period / same period last year / 12-month avg) |
+| `c` | Clear account filter (Account view) |
+| `s` | Toggle scorecard — categories over / under the typical month |
+| `x` | In scorecard: switch compact bars ↔ delta columns |
 | `f` | Open filter panel |
 | `/` | Search transactions by name (regex); filters category totals live |
 
-In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account.
+In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account. In **Owner** view, spending is split by the owner assigned to each account.
 
-In **delta mode**, the bar chart is replaced by three delta columns — vs prev period, vs same period last year, and vs 12-month rolling average — color-coded green / yellow / red by deviation. Not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
+In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER against their 12-month median, with a net verdict at the bottom. `x` swaps the compact bars for delta columns against three baselines — prev period, same period last year, and 12-month average — color-coded green / yellow / red by deviation. Scorecard is not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
 
 ## Transactions `[2]`
 
