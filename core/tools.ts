@@ -573,7 +573,7 @@ async function executeToolImpl(
         'Liabilities:',
         ...b.accounts.filter((a) => a.isLiability).map((a) => `  ${a.name}: ${fmt(a.balance)}`),
         `  Total liabilities: ${fmt(b.totalLiabilities)}`,
-        `Net worth: ${b.netWorth >= 0 ? '' : '-'}${fmt(b.netWorth)}`,
+        `Net worth: ${fmt(b.netWorth)}`,
         `Cash (checking/savings): ${fmt(b.cash)}`,
         `Liquid (incl. brokerage): ${fmt(b.liquid)}`,
         ...(b.excludedAccounts.length ? [
@@ -591,7 +591,7 @@ async function executeToolImpl(
       const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
       const hasPretax = h.pretaxMonthly > 0;
       return [
-        `Net worth: ${h.netWorth >= 0 ? '' : '-'}${fmt(h.netWorth, 0)}`,
+        `Net worth: ${fmt(h.netWorth, 0)}`,
         `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash, 0)} in checking/savings)`,
         `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid, 0)} incl. brokerage)`,
         `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses, 0)}`,
