@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
+import { loadHealthData, yearsToFire, coastYears, computeSavingsRate, type HealthData } from '../core/health.js';
 import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../core/settings.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
 import { SectionHeader, PageHeader, DialRow } from './components/index.js';
@@ -161,13 +161,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const years          = yearsToFire(data.netWorth, monthlySavings + pretaxSavings, fireNumber, growth);
   const coast          = coastYears(data.netWorth, fireNumber, growth);
 
-  const grossIncome = data.monthlyIncome + pretaxSavings;
-  const savingsRate = grossIncome > 0
-    ? ((monthlySavings + pretaxSavings) / grossIncome) * 100
-    : null;
-  const rawSavingsRate = data.monthlyIncome > 0
-    ? (monthlySavings / data.monthlyIncome) * 100
-    : null;
+  const grossIncome    = data.monthlyIncome + pretaxSavings;
+  const savingsRate    = computeSavingsRate(data.monthlyIncome, monthlySavings, pretaxSavings);
+  const rawSavingsRate = computeSavingsRate(data.monthlyIncome, monthlySavings, 0);
 
   const netCash        = data.cash - data.totalDebt;
   const remainingDebt  = Math.max(0, data.totalDebt - data.cash);
