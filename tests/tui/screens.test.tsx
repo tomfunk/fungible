@@ -101,7 +101,7 @@ const noop = () => {};
 beforeEach(async () => {
   vi.mocked(loadProfile).mockResolvedValue(null); // no household members unless a test sets one
   for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
-                     'category_rules', 'name_rules', 'hidden_categories', 'balance_history']) {
+                     'category_rules', 'name_rules', 'hidden_categories', 'balance_history', 'settings']) {
     await db.execute(`DELETE FROM ${tbl}`);
   }
   await seedTuiData(db);
@@ -1280,6 +1280,37 @@ describe('Settings', () => {
       expect(frame(r)).toContain('1990');
       expect(frame(r)).not.toContain('▊');
     });
+  });
+
+  it('renders an APPEARANCE section with a Theme row defaulting to Default', () => {
+    const r = settings();
+    const f = frame(r);
+    expect(f).toContain('APPEARANCE');
+    expect(f).toContain('Theme');
+    expect(f).toContain('Default');
+  });
+
+  it('left/right on the Theme row cycles themes and shows the restart hint', async () => {
+    const r = settings();
+    // self-name(0) -> self-year(1) -> add-spouse(2) -> add-child(3) -> theme(4)
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('restart to apply'));
+    r.stdin.write('\x1B[C'); // right arrow
+    await waitFor(() => expect(frame(r)).toContain('High Contrast'));
+    r.stdin.write('\x1B[D'); // left arrow back
+    await waitFor(() => expect(frame(r)).toContain('Default'));
+  });
+
+  it('persists the theme choice and reloads it on remount', async () => {
+    const r = settings();
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('restart to apply'));
+    r.stdin.write('\x1B[C'); // -> high-contrast
+    await waitFor(() => expect(frame(r)).toContain('High Contrast'));
+    cleanup();
+
+    const r2 = settings();
+    await waitFor(() => expect(frame(r2)).toContain('High Contrast'));
   });
 });
 

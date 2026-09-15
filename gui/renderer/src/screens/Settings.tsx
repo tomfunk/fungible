@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useStatus } from '../hooks/useStatus.js';
 import type { Profile, HouseholdMember } from '../../../../core/profile.js';
 import { KeyHints } from '../components/KeyHints.js';
+import { useUiPrefs, type PaletteName } from '../hooks/useUiPrefs.js';
 import styles from './Settings.module.css';
 
 const MIN_YEAR = 1900;
@@ -86,6 +87,8 @@ export function Settings() {
       <KeyHints hints="[1-9·0] screens" />
       <h1 className={styles.title}>Settings</h1>
 
+      <AppearancePanel />
+
       <section className={styles.panel}>
         <h2>Household</h2>
         <p className="dim">
@@ -141,6 +144,39 @@ export function Settings() {
 
       {statusEl}
     </div>
+  );
+}
+
+const PALETTE_OPTIONS: { value: PaletteName; label: string }[] = [
+  { value: 'default', label: 'Default' },
+  { value: 'high-contrast', label: 'High contrast' },
+  { value: 'deuteranopia', label: 'Deuteranopia' },
+  { value: 'protanopia', label: 'Protanopia' },
+  { value: 'monochrome', label: 'Monochrome' },
+];
+
+function AppearancePanel() {
+  const { palette, setPalette } = useUiPrefs();
+
+  return (
+    <section className={styles.panel}>
+      <h2>Appearance</h2>
+      <p className="dim">Color palette for charts and status colors. Applies immediately.</p>
+
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>
+          Color palette
+          <span className={styles.configHint}>Colorblind-friendly options — remaps red/green or drops hue entirely</span>
+        </label>
+        <select aria-label="Color palette" value={palette} onChange={(e) => setPalette(e.target.value as PaletteName)}>
+          {PALETTE_OPTIONS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </section>
   );
 }
 

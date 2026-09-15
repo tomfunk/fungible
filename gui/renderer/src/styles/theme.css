@@ -41,6 +41,52 @@
   --flex-discretionary: #0969da;
 }
 
+/* Color palettes — a second axis, independent of dark/light. Each block
+   overrides only the semantic accent colors so it composes on top of
+   whichever :root / :root[data-theme='light'] block is already active. */
+
+:root[data-palette='high-contrast'] {
+  --positive: #00c853;
+  --negative: #d50000;
+  --warning: #ff6d00;
+  --manual: #aa00ff;
+  --accent: #00b8d4;
+  --flex-fixed: #d50000;
+  --flex-flexible: #ff6d00;
+  --flex-discretionary: #2962ff;
+}
+
+/* Deuteranopia and protanopia both confuse red/green, so both remap the
+   positive/negative/flex axis to blue/orange (Okabe & Ito's colorblind-safe
+   qualitative palette) rather than trying to distinguish two red-green
+   variants. */
+:root[data-palette='deuteranopia'],
+:root[data-palette='protanopia'] {
+  --positive: #0072b2;
+  --negative: #e69f00;
+  --warning: #f0e442;
+  --manual: #cc79a7;
+  --accent: #56b4e9;
+  --flex-fixed: #e69f00;
+  --flex-flexible: #f0e442;
+  --flex-discretionary: #56b4e9;
+}
+
+/* Monochrome drops hue entirely — distinctions are lightness steps only
+   (darkest/boldest = negative, brightest = accent). See the .neg/.pos
+   weight bump below, which leans on font-weight too since the GUI (unlike
+   the TUI's Ink Text props) can afford it without touching call sites. */
+:root[data-palette='monochrome'] {
+  --positive: #c8ccd1;
+  --negative: #6b7280;
+  --warning: #9ca3af;
+  --manual: #b0b6bd;
+  --accent: #e2e5e9;
+  --flex-fixed: #6b7280;
+  --flex-flexible: #9ca3af;
+  --flex-discretionary: #b0b6bd;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -112,6 +158,13 @@ select:focus {
 }
 .manual {
   color: var(--manual);
+}
+
+:root[data-palette='monochrome'] .neg {
+  font-weight: 700;
+}
+:root[data-palette='monochrome'] .pos {
+  font-weight: 600;
 }
 
 /* Scrollbars */
