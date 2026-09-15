@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
-import { computeSavingsRate } from '../../../../core/health.js';
+import { computeSavingsRate } from '../../../../core/savings-rate.js';
 import { KeyHints } from '../components/KeyHints.js';
 import styles from './Health.module.css';
 
