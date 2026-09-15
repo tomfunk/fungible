@@ -11,7 +11,6 @@ const BASE: HealthData = {
   avgMonthlyExpenses: 4000,
   monthlyIncome: 8000,
   monthlySavings: 2000,
-  savingsRate: 25,
   cash: 30000,
   liquid: 50000,
   retirement: 100000,
