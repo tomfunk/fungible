@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
+import { computeSavingsRate } from '../../../../core/health.js';
 import { KeyHints } from '../components/KeyHints.js';
 import styles from './Health.module.css';
 
@@ -63,8 +64,8 @@ export function Health() {
   const liquidMonths = spend > 0 ? data.liquid / spend : 0;
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
   const grossIncome = data.monthlyIncome + pretax;
-  const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
-  const rawSavingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
+  const savingsRate = computeSavingsRate(data.monthlyIncome, savings, pretax);
+  const rawSavingsRate = computeSavingsRate(data.monthlyIncome, savings, 0);
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
