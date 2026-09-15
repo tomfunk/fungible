@@ -5,7 +5,7 @@
  */
 
 import { db } from './db.js';
-import { yearsToFire } from './health.js';
+import { yearsToFire, computeSavingsRate } from './health.js';
 import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
 import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
 import { isAssetAccount, isLiabilityAccount } from './account-class.js';
@@ -168,9 +168,7 @@ export async function getFinancialHealth(
   const avgMonthlySavings  = Number(expRow.avg_savings);
   const pretaxMonthly      = pretaxRaw ? parseFloat(pretaxRaw) : 0;
   const grossMonthlyIncome = avgMonthlyIncome + pretaxMonthly;
-  const savingsRate        = grossMonthlyIncome > 0
-    ? ((avgMonthlySavings + pretaxMonthly) / grossMonthlyIncome) * 100
-    : null;
+  const savingsRate        = computeSavingsRate(avgMonthlyIncome, avgMonthlySavings, pretaxMonthly);
 
   const cashRunwayMonths   = avgMonthlyExpenses > 0 ? balances.cash   / avgMonthlyExpenses : 0;
   const liquidRunwayMonths = avgMonthlyExpenses > 0 ? balances.liquid / avgMonthlyExpenses : 0;

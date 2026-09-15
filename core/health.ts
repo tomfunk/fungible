@@ -6,7 +6,6 @@ export type HealthData = {
   avgMonthlyExpenses: number;
   monthlyIncome: number;
   monthlySavings: number;
-  savingsRate: number;  // monthlySavings / monthlyIncome as a percentage
   cash: number;
   liquid: number;       // cash + taxable brokerage
   retirement: number;   // 401k / IRA / Roth / HSA — restricted until ~59½
@@ -92,7 +91,6 @@ export async function loadHealthData(): Promise<HealthData> {
     avgMonthlyExpenses: Number(expRow.avg_expenses),
     monthlyIncome,
     monthlySavings,
-    savingsRate:        monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0,
     cash:               Number(cashRow.cash),
     liquid:             Number(liqRow.liquid),
     retirement:         Number(retRow.retirement),
@@ -132,4 +130,22 @@ export function coastYears(
   } catch {
     return null;
   }
+}
+
+/**
+ * Savings rate as a percentage of gross (pretax-inclusive) monthly income.
+ * monthlyIncome/monthlySavings are take-home (transactions-only); pretaxMonthly
+ * (401k/HSA contributions, not visible in transactions) is added to both sides
+ * so the rate reflects total savings against gross pay. Returns null when
+ * gross income is 0 (nothing to divide by).
+ */
+export function computeSavingsRate(
+  monthlyIncome: number,
+  monthlySavings: number,
+  pretaxMonthly: number,
+): number | null {
+  const grossMonthlyIncome = monthlyIncome + pretaxMonthly;
+  return grossMonthlyIncome > 0
+    ? ((monthlySavings + pretaxMonthly) / grossMonthlyIncome) * 100
+    : null;
 }

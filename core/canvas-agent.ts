@@ -1,7 +1,8 @@
 import { streamResponse } from './llm-provider.js';
-import { loadHealthData } from './health.js';
+import { loadHealthData, computeSavingsRate } from './health.js';
 import { loadProfile } from './profile.js';
 import { fmt, fmtCompact } from './fmt.js';
+import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
 import type { CanvasSpec } from './canvas-spec.js';
 
 // Pure canvas types + evaluator moved to canvas-spec.ts (renderer-safe);
@@ -87,9 +88,14 @@ export type CanvasContext = {
 };
 
 export async function loadCanvasContext(): Promise<CanvasContext> {
-  const health = await loadHealthData();
+  const [health, pretaxRaw, profile] = await Promise.all([
+    loadHealthData(),
+    getSetting(PRETAX_MONTHLY_KEY),
+    loadProfile(),
+  ]);
   const taxableBrokerage = health.liquid - health.cash;
-  const profile = await loadProfile();
+  const pretaxMonthly = pretaxRaw ? parseFloat(pretaxRaw) : 0;
+  const savingsRate = computeSavingsRate(health.monthlyIncome, health.monthlySavings, pretaxMonthly);
   const currentYear = new Date().getFullYear();
 
   const householdLines: string[] = [];
@@ -114,7 +120,7 @@ export async function loadCanvasContext(): Promise<CanvasContext> {
     ...householdLines,
     `Monthly income:    ${fmt(health.monthlyIncome)} (12-month avg)`,
     `Monthly expenses:  ${fmt(health.avgMonthlyExpenses)} (12-month avg)`,
-    `Monthly surplus:   ${fmt(health.monthlySavings)} (savings rate: ${Math.round(health.savingsRate)}%)`,
+    `Monthly surplus:   ${fmt(health.monthlySavings)} (savings rate: ${savingsRate !== null ? `${Math.round(savingsRate)}%` : 'n/a'})`,
     `Cash (checking/savings): ${fmtCompact(health.cash)}`,
     `Taxable investments (brokerage): ${fmtCompact(taxableBrokerage)}  ← no withdrawal restrictions`,
     `Total liquid (cash + brokerage): ${fmtCompact(health.liquid)}`,
