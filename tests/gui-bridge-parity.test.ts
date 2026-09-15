@@ -45,6 +45,9 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // Pure rule-merge helper -- renderer imports core/rules-merge.ts directly
   mergeRules: 'renderer imports pure core/rules-merge.ts directly',
 
+  // Pure savings-rate helper — both TUI and GUI import core/health.ts directly
+  computeSavingsRate: 'renderer imports pure core/health.ts helper directly (same as TUI)',
+
   // Electron-side bridge namespaces live in gui/main/bridge.ts (not registry.ts)
   getDefaultDaysRequested: 'bridge plaid namespace (gui/main/bridge.ts)',
 
