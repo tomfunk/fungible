@@ -4,6 +4,20 @@ export const RANGE_LABELS: Record<Range, string> = {
   week: 'Week', month: 'Month', last30: '30 Days', quarter: 'Quarter', year: 'Year', alltime: 'All',
 };
 
+// Two different "12-month average" definitions live in this codebase and must
+// never both be silently called "12-month average" again (see issue #178):
+// - trailing-365d: a rolling `date('now', '-12 months')` window, used by
+//   health/runway metrics (loadHealthData, getFinancialHealth).
+// - calendar-12mo: 12 discrete calendar-period windows averaged/medianed
+//   together, used by the drift/scorecard comparisons.
+// Every surface that quotes one of these numbers should read basisLabel off
+// the data instead of hardcoding wording, so the two never drift apart in name.
+export type MetricBasis = 'trailing-365d' | 'calendar-12mo';
+export const BASIS_LABEL: Record<MetricBasis, string> = {
+  'trailing-365d': 'trailing 12mo',
+  'calendar-12mo': '12 complete periods',
+};
+
 // last30 is a trailing 30-day window; the anchor is the window START (today−29
 // when anchored to now), keeping the anchor-is-period-start convention of the
 // other ranges. Unlike calendar ranges it never has unelapsed days.

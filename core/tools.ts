@@ -13,7 +13,7 @@ import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
 import { solveTVM } from './calculator.js';
-import { getDriftWindows, getPeriodStart, formatPeriodLabel } from './dateUtils.js';
+import { getDriftWindows, getPeriodStart, formatPeriodLabel, BASIS_LABEL } from './dateUtils.js';
 import { bucketDrift, ratioLabel } from './scorecard.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
@@ -115,7 +115,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'get_scorecard',
-    description: 'Spending scorecard: which categories are significantly over or under the typical month (12-month median baseline), with per-category deltas and a net verdict. Use for "how am I doing lately / where did my spending go wrong". Defaults to the trailing 30 days, which is fully populated even early in a calendar month.',
+    description: 'Spending scorecard: which categories are significantly over or under the typical month (12-complete-period median baseline), with per-category deltas and a net verdict. Use for "how am I doing lately / where did my spending go wrong". Defaults to the trailing 30 days, which is fully populated even early in a calendar month.',
     parameters: {
       type: 'object',
       properties: {
@@ -594,9 +594,9 @@ async function executeToolImpl(
         `Net worth: ${fmt(h.netWorth, 0)}`,
         `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash, 0)} in checking/savings)`,
         `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid, 0)} incl. brokerage)`,
-        `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses, 0)}`,
-        `Avg monthly income (12 mo): ${fmt(h.avgMonthlyIncome, 0)} take-home${hasPretax ? ` · ${fmt(h.grossMonthlyIncome, 0)} gross (incl. ${fmt(h.pretaxMonthly, 0)}/mo pretax)` : ''}`,
-        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)} take-home${hasPretax ? ` · ${fmt(h.avgMonthlySavings + h.pretaxMonthly, 0)} gross (incl. pretax)` : ''}`,
+        `Avg monthly expenses (${h.basisLabel}): ${fmt(h.avgMonthlyExpenses, 0)}`,
+        `Avg monthly income (${h.basisLabel}): ${fmt(h.avgMonthlyIncome, 0)} take-home${hasPretax ? ` · ${fmt(h.grossMonthlyIncome, 0)} gross (incl. ${fmt(h.pretaxMonthly, 0)}/mo pretax)` : ''}`,
+        `Avg monthly savings (${h.basisLabel}): ${fmt(h.avgMonthlySavings, 0)} take-home${hasPretax ? ` · ${fmt(h.avgMonthlySavings + h.pretaxMonthly, 0)} gross (incl. pretax)` : ''}`,
         h.savingsRate !== null ? `Savings rate: ${h.savingsRate.toFixed(1)}%${hasPretax ? ` incl. pretax (${((h.avgMonthlySavings / h.grossMonthlyIncome) * 100).toFixed(1)}% take-home only)` : ''}` : null,
         `FIRE number: ${fmt(h.fireNumber, 0)}`,
         `FIRE progress: ${(h.fireProgress * 100).toFixed(1)}%`,
@@ -632,7 +632,7 @@ async function executeToolImpl(
       const overMark = (r: CategoryDrift) =>
         r.median12m === 0 || r.current / r.median12m >= 1.3 ? '🔴' : '🟡';
 
-      const out: string[] = [`Scorecard — ${label} · vs typical month (12-month median)`];
+      const out: string[] = [`Scorecard — ${label} · vs typical month (${rows[0]?.basisLabel ?? BASIS_LABEL['calendar-12mo']})`];
       if (over.length) {
         out.push('', 'OVER');
         for (const r of over) out.push(line(r, overMark(r)));
