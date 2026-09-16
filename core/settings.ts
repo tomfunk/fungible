@@ -11,6 +11,15 @@ export const DEFAULT_START_DATE_KEY = 'plaid_default_start_date';
 export const PRETAX_MONTHLY_KEY = 'pretax_monthly';
 
 /**
+ * Settings key for whether backupDb() should also copy the encryption key file
+ * into the backup directory. Defaults to off ('false'/unset): bundling the key
+ * with the encrypted data it protects defeats the point of encryption for
+ * anyone whose backup folder leaves the machine (cloud sync, external drive,
+ * NAS). See issue #179 for the tradeoff and core/backup.ts for the consumer.
+ */
+export const BACKUP_INCLUDE_KEY_KEY = 'backup_include_key';
+
+/**
  * Extra days added on top of the start-date calculation. Plaid's docs don't
  * specify the timezone used to compute the history window, so a small buffer
  * guards against losing the first day to a server/local timezone difference.

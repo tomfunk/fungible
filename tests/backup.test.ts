@@ -23,18 +23,23 @@ vi.mock('../core/db.js', async () => {
 
 import { db } from '../core/db.js';
 import { backupDb } from '../core/backup.js';
+import { setSetting, BACKUP_INCLUDE_KEY_KEY } from '../core/settings.js';
 
 const BACKUP_DIR = path.join(TEST_DATA_DIR, 'backups');
 const TODAY = new Date().toISOString().slice(0, 10);
 const BACKUP_PATH = path.join(BACKUP_DIR, `fungible.${TODAY}.bak`);
+const KEY_PATH = path.join(TEST_DATA_DIR, 'key');
+const KEY_BACKUP_PATH = path.join(BACKUP_DIR, `key.${TODAY}.bak`);
 
 beforeEach(async () => {
   // Fake db file on disk so the existsSync guard passes
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   fs.writeFileSync(path.join(TEST_DATA_DIR, 'fungible.db'), '');
+  fs.writeFileSync(KEY_PATH, 'dummy-key-material');
   // Reset backup dir and in-memory data between tests
   if (fs.existsSync(BACKUP_DIR)) fs.rmSync(BACKUP_DIR, { recursive: true });
   await db.execute('DELETE FROM tags');
+  await db.execute('DELETE FROM settings');
 });
 
 afterAll(() => {
@@ -93,5 +98,63 @@ describe('backupDb', () => {
     }
 
     expect(fs.existsSync(BACKUP_PATH)).toBe(false);
+  });
+
+  describe('key backup (backupIncludeKey setting)', () => {
+    it('does not back up the key file when the setting is off (default)', async () => {
+      await backupDb();
+
+      expect(fs.existsSync(KEY_BACKUP_PATH)).toBe(false);
+    });
+
+    it('backs up the key file, chmod 0o600, when the setting is on', async () => {
+      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
+
+      await backupDb();
+
+      expect(fs.existsSync(KEY_BACKUP_PATH)).toBe(true);
+      expect(fs.readFileSync(KEY_BACKUP_PATH, 'utf8')).toBe('dummy-key-material');
+      expect(fs.statSync(KEY_BACKUP_PATH).mode & 0o777).toBe(0o600);
+    });
+
+    it('does not back up the key when the setting is on but no key file exists', async () => {
+      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
+      fs.unlinkSync(KEY_PATH);
+
+      await backupDb();
+
+      expect(fs.existsSync(KEY_BACKUP_PATH)).toBe(false);
+    });
+
+    it('does not overwrite an existing key backup for today', async () => {
+      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
+      await backupDb();
+      fs.writeFileSync(KEY_PATH, 'rotated-key-material');
+
+      await backupDb();
+
+      expect(fs.readFileSync(KEY_BACKUP_PATH, 'utf8')).toBe('dummy-key-material');
+    });
+
+    it('rotates key backups older than keepDays, same cadence as db backups', async () => {
+      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
+        fs.writeFileSync(path.join(BACKUP_DIR, `key.${d}.bak`), '');
+      }
+
+      process.env.FUNGIBLE_BACKUP_DAYS = '2';
+      try {
+        await backupDb();
+      } finally {
+        delete process.env.FUNGIBLE_BACKUP_DAYS;
+      }
+
+      const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.bak'));
+      expect(files).not.toContain('key.2026-01-01.bak');
+      expect(files).not.toContain('key.2026-01-02.bak');
+      expect(files).toContain('key.2026-01-03.bak');
+      expect(files).toContain(`key.${TODAY}.bak`);
+    });
   });
 });
