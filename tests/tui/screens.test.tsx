@@ -33,6 +33,7 @@ import * as accountsApi from '../../core/accounts.js';
 import * as refreshApi from '../../core/transactions-refresh.js';
 import * as syncApi from '../../core/sync.js';
 import * as dedupApi from '../../core/dedup.js';
+import * as keyHealthApi from '../../core/key-health.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
@@ -1311,6 +1312,40 @@ describe('Settings', () => {
 
     const r2 = settings();
     await waitFor(() => expect(frame(r2)).toContain('High Contrast'));
+  });
+
+  // Issue #179: the ~/.fungible/key file decrypts linked Plaid tokens, so it's
+  // opt-in-only in backups (bundling it with the encrypted data it protects
+  // defeats the point for anyone whose backup folder leaves the machine).
+  it('renders a BACKUP section with the include-key toggle defaulting to Off', () => {
+    const r = settings();
+    const f = frame(r);
+    expect(f).toContain('BACKUP');
+    expect(f).toContain('Include key');
+    expect(f).toContain('Off');
+  });
+
+  it('left/right on the include-key row toggles it On and shows the toggle hint', async () => {
+    const r = settings();
+    // self-name(0) -> self-year(1) -> add-spouse(2) -> add-child(3) -> theme(4) -> backup-include-key(5)
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('←→ toggle'));
+    r.stdin.write('\x1B[C'); // right arrow
+    await waitFor(() => expect(frame(r)).toContain('On'));
+    r.stdin.write('\x1B[D'); // left arrow back
+    await waitFor(() => expect(frame(r)).toContain('Off'));
+  });
+
+  it('persists the include-key toggle and reloads it on remount', async () => {
+    const r = settings();
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('←→ toggle'));
+    r.stdin.write('\x1B[C'); // -> On
+    await waitFor(() => expect(frame(r)).toContain('On'));
+    cleanup();
+
+    const r2 = settings();
+    await waitFor(() => expect(frame(r2)).toContain('On'));
   });
 });
 
@@ -2756,6 +2791,52 @@ describe('Accounts', () => {
         await new Promise((res) => setTimeout(res, 50));
         expect(flat(r)).not.toContain('Delete sync cursor and resync');
         expect(spy).not.toHaveBeenCalled();
+      });
+    });
+
+    // A lost or swapped encryption key (issue #179) silently breaks every Plaid
+    // connection at once, so it gets a persistent banner above the Links list
+    // rather than a per-row badge. checkKeyHealth is mocked here rather than
+    // exercised through the real key file / plaid_items decrypt path — that
+    // logic is core's, covered by core's own tests.
+    describe('encryption key health banner', () => {
+      afterEach(() => vi.restoreAllMocks());
+
+      it('shows no banner when the key is healthy', async () => {
+        vi.spyOn(keyHealthApi, 'checkKeyHealth').mockResolvedValue({ ok: true });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => expect(flat(r)).toContain('connection'));
+        expect(flat(r)).not.toContain('Encryption key');
+      });
+
+      it('flags a missing key file with the affected account count', async () => {
+        vi.spyOn(keyHealthApi, 'checkKeyHealth').mockResolvedValue({
+          ok: false, reason: 'missing_key', linkedAccountCount: 2,
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => {
+          const f = flat(r);
+          expect(f).toContain('Encryption key missing');
+          expect(f).toContain("2 linked accounts can't sync");
+        });
+      });
+
+      it('flags a key that no longer decrypts stored tokens, singular count', async () => {
+        vi.spyOn(keyHealthApi, 'checkKeyHealth').mockResolvedValue({
+          ok: false, reason: 'decrypt_failed', linkedAccountCount: 1,
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => {
+          const f = flat(r);
+          expect(f).toContain("Encryption key doesn't match this database");
+          expect(f).toContain('1 linked account may need re-linking');
+        });
       });
     });
   });
