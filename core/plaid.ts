@@ -50,6 +50,17 @@ export function getPlaidClient(): PlaidApi {
  * includes `transactions.days_requested` — so `daysRequested` is ignored when
  * updating. That window is fixed when the Item is created and cannot be
  * widened later. See https://plaid.com/docs/link/update-mode/
+ *
+ * `update.account_selection_enabled` is what makes the update actually able to
+ * *repair* a connection rather than only re-type its password. Plain update mode
+ * re-authorizes credentials and nothing else, so an Item whose accounts have gone
+ * away — Plaid reports `NO_ACCOUNTS`, typically after the institution renumbers
+ * an account or the user's earlier Account Select choice stops matching anything
+ * — fails the same way after every "update link" press. Enabling Account Select
+ * re-presents the account picker, which is the only in-app path back. OAuth
+ * institutions in the US always show their own picker regardless of this flag;
+ * the ones that need it are the non-OAuth institutions, where without it the
+ * button is a no-op for exactly the failure it looks like it should fix.
  */
 export async function createLinkToken(userId: string, daysRequested?: number, accessToken?: string) {
   const response = await getPlaidClient().linkTokenCreate({
@@ -58,7 +69,7 @@ export async function createLinkToken(userId: string, daysRequested?: number, ac
     country_codes: [CountryCode.Us],
     language: 'en',
     ...(accessToken
-      ? { access_token: accessToken }
+      ? { access_token: accessToken, update: { account_selection_enabled: true } }
       : {
           products: [Products.Transactions],
           // Omitting transactions lets Plaid apply its 90-day default

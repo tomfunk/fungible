@@ -7,7 +7,7 @@ import { CanvasView } from '../../tui/Canvas.js';
 // ─── generateCanvas (mocked LLM) ──────────────────────────────────────────────
 
 const MOCK_HEALTH = {
-  avgMonthlyExpenses: 12000, monthlyIncome: 15000, monthlySavings: 3000, savingsRate: 20,
+  avgMonthlyExpenses: 12000, monthlyIncome: 15000, monthlySavings: 3000,
   cash: 60000, liquid: 800000, retirement: 900000, totalDebt: 20000, loanDebt: 0, netWorth: 1_800_000,
 };
 
@@ -24,8 +24,9 @@ const MOCK_SPEC: CanvasSpec = {
   ],
 };
 
-vi.mock('../../core/health.js', () => ({ loadHealthData: async () => MOCK_HEALTH }));
+vi.mock('../../core/health.js', () => ({ loadHealthData: async () => MOCK_HEALTH, computeSavingsRate: () => 20 }));
 vi.mock('../../core/profile.js', () => ({ loadProfile: async () => null, householdMembers: () => [] }));
+vi.mock('../../core/settings.js', () => ({ getSetting: async () => null, PRETAX_MONTHLY_KEY: 'pretax_monthly' }));
 vi.mock('../../core/llm-provider.js', () => ({
   streamResponse: vi.fn(async function* () {
     yield { type: 'tool_use', id: 'test-id', name: 'render_canvas', input: MOCK_SPEC };

@@ -13,8 +13,10 @@ import { setSyncResult } from '../core/sync-status.js';
 import { notifyChange } from '../core/refresh.js';
 import { plaidErrorMessage } from '../core/plaid.js';
 import { rebuildDisplayNames } from '../core/rename.js';
+import { getSetting } from '../core/settings.js';
 import { App } from './App.js';
 import { Setup } from './Setup.js';
+import { applyTheme, THEME_KEY } from './ui.js';
 import { startMcpHttpServer } from '../mcp/http.js';
 import { startApiServer } from '../api/server.js';
 
@@ -38,6 +40,7 @@ const isDemo = process.argv.includes('--demo');
 
 await initDb();
 if (!isDemo) backupDb().catch(() => {});
+applyTheme((await getSetting(THEME_KEY)) ?? 'default');
 
 if (process.argv.includes('--setup')) {
   render(<Setup />);

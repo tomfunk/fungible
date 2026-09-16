@@ -15,7 +15,7 @@ export type MerchantSummaryRow = {
 // The catch-all category. Unlike a real category, it legitimately mixes income
 // (e.g. an un-ruled paycheck) with spending, so we never net the two together —
 // see summarizeBuckets.
-const UNCATEGORIZED = 'Uncategorized';
+export const UNCATEGORIZED = 'Uncategorized';
 
 /**
  * Turn per-category {outflow, inflow} buckets into an income/expense/byCategory
@@ -40,6 +40,41 @@ function summarizeBuckets(rows: { category: string; outflow: number; inflow: num
   byCategory.sort((a, b) => b.total - a.total);
   return { income, expenses, net: income - expenses, byCategory };
 }
+
+/**
+ * Trailing-12-month income / expense / savings averages, netted per category by
+ * the same rule as summarizeBuckets: a reimbursement sitting inside an expense
+ * category reduces that category's spend instead of inflating expenses AND
+ * income at once. Summing raw outflows here would overstate avg_expenses, which
+ * feeds runway, the FIRE number, and years-to-FIRE.
+ *
+ * Shared by loadHealthData (TUI/GUI Health tab) and getFinancialHealth (agent),
+ * which must not drift apart.
+ */
+export const TRAILING_12MO_AVERAGES_SQL = `
+  SELECT
+    COALESCE(SUM(spend), 0) / 12.0            AS avg_expenses,
+    COALESCE(SUM(inc), 0) / 12.0              AS avg_income,
+    COALESCE(SUM(inc) - SUM(spend), 0) / 12.0 AS avg_savings
+  FROM (
+    SELECT
+      CASE WHEN category = '${UNCATEGORIZED}' THEN outflow
+           WHEN outflow > inflow THEN outflow - inflow ELSE 0 END AS spend,
+      CASE WHEN category = '${UNCATEGORIZED}' THEN inflow
+           WHEN inflow > outflow THEN inflow - outflow ELSE 0 END AS inc
+    FROM (
+      SELECT category,
+        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)  AS outflow,
+        SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS inflow
+      FROM transactions
+      WHERE date >= date('now', '-12 months')
+        AND pending = 0 AND ignored = 0
+        AND category NOT IN (SELECT category FROM hidden_categories)
+        AND category != 'Transfer'
+      GROUP BY category
+    )
+  )
+`;
 
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
@@ -543,6 +578,10 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
 export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
+  // The bank's posting date, retained by setTransactionDate when a transaction
+  // is reattributed to another period; NULL unless `date` has been overridden.
+  // UI uses it to show "reattributed from X" and offer restore-to-posting-date.
+  original_date: string | null;
 };
 
 export function buildSearchRe(search: string): RegExp {
@@ -570,7 +609,7 @@ export async function getTransactions(filters: {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({
-    sql: `SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
+    sql: `SELECT t.id, t.date, t.original_date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
             (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
           FROM transactions t ${where}
           ORDER BY ${SORT_ORDER_BY[sort]}
@@ -786,11 +825,11 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
         ELSE 0
       END) AS assets,
-      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS liabilities,
+      SUM(CASE WHEN a.type IN ('credit', 'loan') THEN pl.balance ELSE 0 END) AS liabilities,
       SUM(CASE
         WHEN a.type IN ('depository', 'investment') THEN pl.balance
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
-        WHEN a.type = 'credit' THEN -pl.balance
+        WHEN a.type IN ('credit', 'loan') THEN -pl.balance
         ELSE 0
       END) AS net_worth
     FROM period_last pl
@@ -821,7 +860,7 @@ export async function getAccountsWithBalances(): Promise<{ accounts: AccountBala
     db.execute(`
       SELECT bh.date,
         SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END) as assets,
-        SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
+        SUM(CASE WHEN a.type IN ('credit','loan') THEN bh.balance ELSE 0 END) as liabilities
       FROM balance_history bh
       JOIN accounts a ON a.id = bh.account_id
       WHERE a.excluded = 0

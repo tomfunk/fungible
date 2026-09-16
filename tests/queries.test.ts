@@ -519,6 +519,23 @@ describe('getTransactions — flex filter', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+describe('getTransactions — original_date', () => {
+  it('is null for transactions that have not been reattributed', async () => {
+    await insertTx({ amount: 100 });
+    const [row] = await getTransactions({});
+    expect(row.original_date).toBeNull();
+  });
+
+  it('carries the preserved posting date once a transaction is reattributed', async () => {
+    await insertTx({ amount: 100, date: '2025-01-15' });
+    await db.execute("UPDATE transactions SET original_date = '2025-01-15', date = '2024-12-31'");
+    const [row] = await getTransactions({});
+    expect(row.date).toBe('2024-12-31');
+    expect(row.original_date).toBe('2025-01-15');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
 describe('hasAccounts', () => {
   it('returns false when no accounts linked', async () => {
     await db.execute('DELETE FROM plaid_items');
@@ -665,6 +682,35 @@ describe('excluded accounts', () => {
     const linked = await getLinkedAccounts();
     expect(linked.find((a) => a.id === '529')!.excluded).toBe(true);
     expect(linked.find((a) => a.id === 'brk')!.excluded).toBe(false);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('loan accounts count as liabilities in net worth', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    // Checking asset, a credit card, and a mortgage — all Plaid balances stored positive.
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('chk', 'Checking', 'depository', 'checking', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('cc', 'Visa', 'credit', 'credit card', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('mtg', 'Mortgage', 'loan', 'mortgage', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('chk', 50000, '2025-01-31')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('cc', 2000, '2025-01-31')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('mtg', 300000, '2025-01-31')", args: [] });
+  });
+
+  it('subtracts the loan balance in getNetWorthHistory', async () => {
+    const hist = await getNetWorthHistory('month');
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(50000);
+    expect(hist[0].liabilities).toBe(302000);      // credit card + mortgage
+    expect(hist[0].net_worth).toBe(-252000);       // 50000 - 2000 - 300000
+  });
+
+  it('subtracts the loan balance in the getAccountsWithBalances history series', async () => {
+    const { history } = await getAccountsWithBalances();
+    expect(history.at(-1)!.liabilities).toBe(302000);
+    expect(history.at(-1)!.net).toBe(-252000);
   });
 });
 

@@ -466,6 +466,7 @@ function EditModal({
 }) {
   const [name, setName] = useState('');
   const [cat, setCat] = useState(tx.category);
+  const [date, setDate] = useState(tx.date);
   const [pattern, setPattern] = useState('');
   const [matchType, setMatchType] = useState<'name' | 'regex'>('name');
   const [matchCount, setMatchCount] = useState(0);
@@ -482,10 +483,20 @@ function EditModal({
     }
   }, [pattern, matchType]);
 
+  // Non-null only once the date has been reattributed away from the bank's
+  // posting date.
+  const originalDate = tx.original_date;
+
+  async function restoreDate() {
+    await api.transactions.clearTransactionDate(tx.id);
+    onSaved('Date restored to posting date');
+  }
+
   async function save() {
     const newDisplay = name.trim();
     const nameChanged = newDisplay.length > 0;
     const catChanged = cat !== tx.category;
+    const dateChanged = date !== tx.date && date.length > 0;
 
     if (pattern.trim()) {
       const saved: string[] = [];
@@ -506,7 +517,15 @@ function EditModal({
     } else {
       if (nameChanged) await api.transactions.setTransactionDisplayName(tx.id, newDisplay);
       if (catChanged) await api.transactions.setTransactionCategory(tx.id, cat);
-      onSaved(nameChanged || catChanged ? 'Transaction updated' : 'No changes');
+      if (dateChanged) {
+        try {
+          await api.transactions.setTransactionDate(tx.id, date);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Failed to set date');
+          return;
+        }
+      }
+      onSaved(nameChanged || catChanged || dateChanged ? 'Transaction updated' : 'No changes');
     }
   }
 
@@ -525,6 +544,8 @@ function EditModal({
             </option>
           ))}
         </select>
+        <label>Date</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={isRule} />
         <label>Pattern</label>
         <input
           value={pattern}
@@ -537,6 +558,14 @@ function EditModal({
           <option value="regex">regex</option>
         </select>
       </div>
+      {originalDate && !isRule && (
+        <p className={styles.dateHint}>
+          <span className="dim">Reattributed from {originalDate}</span>
+          <button className={styles.restoreBtn} onClick={() => void restoreDate()}>
+            restore posting date
+          </button>
+        </p>
+      )}
       {isRule && (
         <p className={styles.ruleHint}>
           <span className="warn">{matchCount} transactions match</span>

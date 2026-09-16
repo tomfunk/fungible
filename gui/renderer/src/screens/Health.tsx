@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
+import { computeSavingsRate } from '../../../../core/savings-rate.js';
 import { KeyHints } from '../components/KeyHints.js';
 import styles from './Health.module.css';
 
@@ -63,11 +64,13 @@ export function Health() {
   const liquidMonths = spend > 0 ? data.liquid / spend : 0;
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
   const grossIncome = data.monthlyIncome + pretax;
-  const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
-  const rawSavingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
+  const savingsRate = computeSavingsRate(data.monthlyIncome, savings, pretax);
+  const rawSavingsRate = computeSavingsRate(data.monthlyIncome, savings, 0);
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
+  const combinedDebt = data.totalDebt + data.loanDebt;
+  const hasLoanDebt = data.loanDebt > 0;
 
   return (
     <div className={styles.screen}>
@@ -141,7 +144,7 @@ export function Health() {
             <span className={`num ${runwayClass(liquidMonths, 12, 6)} ${styles.metricValue}`}>{fmtMonths(liquidMonths)}</span>
             <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.liquid)} incl. brokerage</span>
           </div>
-          {data.totalDebt > 0 && (
+          {combinedDebt > 0 && !hasLoanDebt && (
             <div className={styles.metric}>
               <span className={styles.metricLabel}>Debt</span>
               <span className={`num neg ${styles.metricValue}`}>
@@ -153,6 +156,37 @@ export function Health() {
                   : `${fmtCompact(Math.abs(netCash))} more than cash`}
               </span>
             </div>
+          )}
+          {hasLoanDebt && (
+            <>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Credit cards</span>
+                <span className={`num ${data.totalDebt > 0 ? 'neg' : 'dim'} ${styles.metricValue}`}>
+                  {fmtCompact(data.totalDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>
+                  {data.totalDebt === 0
+                    ? 'no card balance'
+                    : netCash >= 0
+                      ? `covered · ${fmtCompact(netCash)} net cash`
+                      : `${fmtCompact(Math.abs(netCash))} more than cash`}
+                </span>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Loans</span>
+                <span className={`num neg ${styles.metricValue}`}>
+                  {fmtCompact(data.loanDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>mortgage / auto / student</span>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Total</span>
+                <span className={`num neg ${styles.metricValue}`}>
+                  {fmtCompact(combinedDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>subtracted from net worth</span>
+              </div>
+            </>
           )}
           {data.totalDebt > 0 && netCash < 0 && (
             <div className={styles.metric}>

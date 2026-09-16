@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
   setTransactionDisplayName, deleteTransaction,
+  setTransactionDate, clearTransactionDate,
   upsertCategoryRule, upsertNameRule,
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
@@ -27,11 +28,17 @@ import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, 
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
+// TxRow.original_date (from core/queries.ts) is non-null only when a
+// transaction has been reattributed to another period; it holds the bank's
+// true posting date.
 type Tx = TxRow;
 
 
 type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all';
-type EditField = 'name' | 'category' | 'pattern' | 'type';
+type EditField = 'name' | 'category' | 'date' | 'pattern' | 'type';
+
+/** Reattributed dates are always stored as ISO YYYY-MM-DD; reject anything else before calling core. */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
 
@@ -74,6 +81,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   // Edit panel state
   const [editField, setEditField] = useState<EditField>('name');
   const [editName, setEditName] = useState('');
+  const [editDate, setEditDate] = useState('');
   const [editCatCursor, setEditCatCursor] = useState(0);
   const [editPattern, setEditPattern] = useState('');
   const [editMatchType, setEditMatchType] = useState<'name' | 'regex'>('name');
@@ -113,7 +121,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const setTyping = useSetTyping();
   useEffect(() => {
     const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all'
-      || (mode === 'edit' && (editField === 'name' || editField === 'pattern'));
+      || (mode === 'edit' && (editField === 'name' || editField === 'pattern' || editField === 'date'));
     setTyping(isTextInput);
   }, [mode, editField]);
 
@@ -128,6 +136,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     void getAllCategories().then((cats) => {
       setCategories(cats);
       setEditName('');
+      setEditDate(selected.date);
       setEditPattern('');
       setEditMatchType('name');
       setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
@@ -187,12 +196,28 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     });
   }
 
-  function saveToTransaction() {
+  async function saveToTransaction() {
     if (!selected) return;
     const newCat = categories[editCatCursor];
     const newDisplay = editName.trim();
+    const newDate = editDate.trim();
     const nameChanged = newDisplay.length > 0;
     const catChanged = newCat !== selected.category;
+    const dateChanged = newDate.length > 0 && newDate !== selected.date;
+
+    if (dateChanged) {
+      if (!ISO_DATE_RE.test(newDate)) {
+        showStatus('Invalid date — use YYYY-MM-DD', 4000);
+        return;
+      }
+      try {
+        // core also validates and rejects impossible dates (e.g. 2026-02-31).
+        await setTransactionDate(selected.id, newDate);
+      } catch (e) {
+        showStatus(e instanceof Error ? e.message : 'Invalid date', 4000);
+        return;
+      }
+    }
 
     if (nameChanged) {
       setTransactionDisplayName(selected.id, newDisplay);
@@ -201,7 +226,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       setTransactionCategory(selected.id, newCat);
     }
 
-    if (nameChanged || catChanged) showStatus('Transaction updated');
+    if (nameChanged || catChanged || dateChanged) {
+      showStatus(dateChanged && !nameChanged && !catChanged ? `Date set to ${newDate}` : 'Transaction updated');
+    }
     setMode('list');
     load(search, true);
   }
@@ -246,6 +273,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     clearTransactionOverride(selected.id);
     showStatus('Override cleared');
     load(search, true);
+  }
+
+  function clearDateOverride() {
+    if (!selected?.original_date) return;
+    const posted = selected.original_date;
+    void clearTransactionDate(selected.id).then(() => {
+      showStatus(`Date restored to ${posted}`);
+      load(search, true);
+    });
   }
 
   const filteredTags = tagInput
@@ -341,10 +377,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     }
 
     if (mode === 'edit') {
-      const EDIT_FIELDS: EditField[] = ['name', 'category', 'pattern', 'type'];
+      const EDIT_FIELDS: EditField[] = ['name', 'category', 'date', 'pattern', 'type'];
       if (key.escape) { setMode('list'); return; }
       if (key.return) {
-        if (editPattern.trim()) { void saveAsRule(); } else { saveToTransaction(); }
+        if (editPattern.trim()) { void saveAsRule(); } else { void saveToTransaction(); }
         return;
       }
       if (key.upArrow) { setEditField((f) => EDIT_FIELDS[Math.max(0, EDIT_FIELDS.indexOf(f) - 1)]); return; }
@@ -355,6 +391,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       } else if (editField === 'category') {
         if (key.leftArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
         if (key.rightArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      } else if (editField === 'date') {
+        if (key.backspace || key.delete) { setEditDate((d) => d.slice(0, -1)); return; }
+        // Only the characters an ISO date is made of, so the buffer can't drift
+        // into something core will just reject on save.
+        if (input && !key.ctrl && !key.meta && /^[0-9-]+$/.test(input)) { setEditDate((d) => d + input); return; }
       } else if (editField === 'pattern') {
         if (key.backspace || key.delete) { setEditPattern((p) => p.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setEditPattern((p) => p + input); return; }
@@ -428,6 +469,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         return;
       }
       if (input === 'c' && selected?.manual_category) clearOverride();
+      if (input === 'd' && selected?.original_date) clearDateOverride();
       if (input === 'C' && txs.length > 0) {
         clearOverridesBulk(txs.map((t) => t.id));
         const count = txs.filter((t) => t.manual_category).length;
@@ -525,7 +567,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete  ·  [S] sync`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  ${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
           : '[/] search'}
       </Text>
 
@@ -559,7 +601,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box key={tx.id} flexDirection="column">
             <SelectableRow selected={isSelected}>
               <Text color={isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
-                {tx.date}
+                {tx.date}{tx.original_date ? <Text color={C_MANUAL}>*</Text> : null}
               </Text>
               <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW).padEnd(descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
@@ -662,9 +704,16 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} flexDirection="column" gap={1}>
             <EditTextField label="Name" labelWidth={12} active={editField === 'name'} value={editName} color={C_WARNING} placeholder="type new name…" emptyText="(unchanged)" />
             <EditToggleField label="Category" labelWidth={12} active={editField === 'category'} value={categories[editCatCursor] ?? '—'} />
+            <EditTextField label="Date" labelWidth={12} active={editField === 'date'} value={editDate} color={C_WARNING} placeholder="YYYY-MM-DD" emptyText="—" />
             <EditTextField label="Pattern" labelWidth={12} active={editField === 'pattern'} value={editPattern} color={C_MANUAL} placeholder="optional — saves as rule" emptyText="—" />
             <EditToggleField label="Match type" labelWidth={12} active={editField === 'type'} value={editMatchType} />
           </Box>
+
+          {selected.original_date ? (
+            <Box marginTop={1}>
+              <Text dimColor>posted {selected.original_date} · [Esc] then [d] restores it</Text>
+            </Box>
+          ) : null}
 
           {editPattern.trim() ? (
             <Box marginTop={1} gap={2}>
