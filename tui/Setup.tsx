@@ -389,6 +389,12 @@ export function Setup() {
           <Box marginTop={1} flexDirection="column">
             <Text>Run <Text color={C_ACCENT}>fungible</Text> to launch.</Text>
           </Box>
+          <Box marginTop={1}>
+            <Text dimColor>
+              Your ~/.fungible/key file protects your linked banks — treat it like a password.
+              Back it up in Settings if you want it included in your daily backups.
+            </Text>
+          </Box>
           <Box marginTop={1}><Text dimColor>Press Enter to exit</Text></Box>
         </Box>
       )}

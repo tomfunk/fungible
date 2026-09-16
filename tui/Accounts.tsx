@@ -16,6 +16,7 @@ import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, getLinkedItems, type LinkedAccount, type CsvAccount, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
+import { checkKeyHealth, type KeyHealth } from '../core/key-health.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountExcluded, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
@@ -87,6 +88,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
+
+  // Whether the on-disk encryption key can still decrypt this database's Plaid
+  // tokens — a lost or swapped key silently breaks every connection (#179).
+  // Checked once on mount; a persistent banner above the Links list is the
+  // right severity here since it affects every item at once, not a single row.
+  const [keyHealth, setKeyHealth] = useState<KeyHealth | null>(null);
+  useEffect(() => { void checkKeyHealth().then(setKeyHealth); }, []);
 
   // Accounts view state
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
@@ -1161,6 +1169,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {/* ── Links view ────────────────────────────────────────────────── */}
       {mainView === 'links' && (
         <Box flexDirection="column" marginTop={1}>
+          {keyHealth && !keyHealth.ok && (
+            <Box marginBottom={1}>
+              <Text bold color={C_NEGATIVE}>
+                {keyHealth.reason === 'missing_key'
+                  ? `⚠ Encryption key missing — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} can't sync until it's restored.`
+                  : `⚠ Encryption key doesn't match this database — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} may need re-linking.`}
+              </Text>
+            </Box>
+          )}
           {linkedItems.length === 0 ? (
             <>
               <Text dimColor>No bank connections yet.</Text>
