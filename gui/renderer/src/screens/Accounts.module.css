@@ -5,6 +5,15 @@
   max-width: 1100px;
 }
 
+.keyBanner {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: 6px;
+}
+
 .topBar {
   display: flex;
   align-items: center;
