@@ -4,6 +4,7 @@ import { SCREEN_KEYS } from '../../shared/nav.js';
 import { api } from './api.js';
 import { RefreshProvider, useRefreshKey } from './hooks/useRefresh.js';
 import { SyncStatusProvider, useSyncStatus } from './hooks/useSyncStatus.js';
+import { KeyStatusProvider } from './hooks/useKeyStatus.js';
 import { NavContext } from './hooks/useNav.js';
 import { FilterProvider } from './hooks/useFilter.js';
 import { UiPrefsProvider } from './hooks/useUiPrefs.js';
@@ -126,11 +127,13 @@ export function App() {
   return (
     <RefreshProvider>
       <SyncStatusProvider>
-        <FilterProvider>
-          <UiPrefsProvider>
-            <AppInner />
-          </UiPrefsProvider>
-        </FilterProvider>
+        <KeyStatusProvider>
+          <FilterProvider>
+            <UiPrefsProvider>
+              <AppInner />
+            </UiPrefsProvider>
+          </FilterProvider>
+        </KeyStatusProvider>
       </SyncStatusProvider>
     </RefreshProvider>
   );

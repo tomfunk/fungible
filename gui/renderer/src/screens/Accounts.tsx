@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
+import { useKeyStatus } from '../hooks/useKeyStatus.js';
 import { Modal } from '../components/Modal.js';
 import type { LinkedAccount, CsvAccount, LinkedItem } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
@@ -69,6 +70,10 @@ export function Accounts() {
   // Item ids that failed the most recent sync (from either the startup or the
   // user-triggered path), pushed from main — used to badge account rows.
   const { failingItems } = useSyncStatus();
+  // Whether the on-disk encryption key can still decrypt this database's Plaid
+  // tokens — a lost or swapped key silently breaks every connection (#179).
+  // Checked once on mount; persistent state, so it's a banner, not a toast.
+  const keyHealth = useKeyStatus();
 
   async function forceSync() {
     if (syncing) return;
@@ -203,6 +208,14 @@ export function Accounts() {
   return (
     <div className={styles.screen}>
       <KeyHints hints="[1-9·0] screens   [tab] view   [s] sync" />
+      {!keyHealth.ok && (
+        <div className={styles.keyBanner}>
+          ⚠{' '}
+          {keyHealth.reason === 'missing_key'
+            ? `Encryption key missing — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} can't sync until it's restored.`
+            : `Encryption key doesn't match this database — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} may need re-linking.`}
+        </div>
+      )}
       <div className={styles.topBar}>
         <h1 className={styles.title}>Accounts</h1>
         <div className={styles.tabs}>

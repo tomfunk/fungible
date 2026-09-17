@@ -118,8 +118,8 @@ export async function loadCanvasContext(): Promise<CanvasContext> {
 
   const financialContext = [
     ...householdLines,
-    `Monthly income:    ${fmt(health.monthlyIncome)} (12-month avg)`,
-    `Monthly expenses:  ${fmt(health.avgMonthlyExpenses)} (12-month avg)`,
+    `Monthly income:    ${fmt(health.monthlyIncome)} (${health.basisLabel})`,
+    `Monthly expenses:  ${fmt(health.avgMonthlyExpenses)} (${health.basisLabel})`,
     `Monthly surplus:   ${fmt(health.monthlySavings)} (savings rate: ${savingsRate !== null ? `${Math.round(savingsRate)}%` : 'n/a'})`,
     `Cash (checking/savings): ${fmtCompact(health.cash)}`,
     `Taxable investments (brokerage): ${fmtCompact(taxableBrokerage)}  ← no withdrawal restrictions`,

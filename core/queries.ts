@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { buildFilterClause, buildFilterConditions, type Filter } from './filters.js';
+import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
 
 export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
@@ -259,6 +260,9 @@ export type DriftSlice    = {
   // Median of the rolling windows — robust to one-off spikes (a single $7K
   // medical month shouldn't inflate the "typical" baseline the way a mean does).
   median12m: number; medianDelta: number;
+  // The rolling windows are 12 complete calendar periods (not the trailing-365d
+  // window health/runway metrics use — see issue #178 / core/dateUtils.ts).
+  basis: MetricBasis; basisLabel: string;
 };
 export type CategoryDrift = { category: string } & DriftSlice;
 export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
@@ -339,6 +343,7 @@ function sliceFor(current: number, last: number, year: number, rolling: number[]
     current, lastPeriodDelta: current - last, lastYearDelta: current - year,
     avg12mDelta: current - avg12m, avg12m,
     median12m, medianDelta: current - median12m,
+    basis: 'calendar-12mo', basisLabel: BASIS_LABEL['calendar-12mo'],
   };
 }
 

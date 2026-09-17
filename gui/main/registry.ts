@@ -70,7 +70,8 @@ import {
   renameCategory,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
-import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../../core/settings.js';
+import { getSetting, setSetting, PRETAX_MONTHLY_KEY, BACKUP_INCLUDE_KEY_KEY } from '../../core/settings.js';
+import { checkKeyHealth } from '../../core/key-health.js';
 import {
   buildTrendViews,
   getPeriodTotals,
@@ -200,6 +201,7 @@ export const registry = {
     deleteDuplicate,
     deleteAllDuplicates,
     getCsvPlaidDupeCandidates,
+    checkKeyHealth,
   },
   categorize: {
     applyCategoriesToAll,
@@ -255,5 +257,7 @@ export const registry = {
   settings: {
     getPretaxMonthly: () => getSetting(PRETAX_MONTHLY_KEY),
     setPretaxMonthly: (v: string) => setSetting(PRETAX_MONTHLY_KEY, v),
+    getBackupIncludeKey: () => getSetting(BACKUP_INCLUDE_KEY_KEY),
+    setBackupIncludeKey: (v: string) => setSetting(BACKUP_INCLUDE_KEY_KEY, v),
   },
 } as const;

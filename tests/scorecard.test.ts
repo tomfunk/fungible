@@ -9,6 +9,7 @@ const row = (category: string, current: number, median12m: number): CategoryDrif
   lastPeriodDelta: 0, lastYearDelta: 0,
   avg12m: median12m, avg12mDelta: current - median12m,
   median12m, medianDelta: current - median12m,
+  basis: 'calendar-12mo', basisLabel: '12 complete periods',
 });
 
 describe('isSignificantDelta', () => {

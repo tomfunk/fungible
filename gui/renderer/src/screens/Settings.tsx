@@ -142,6 +142,8 @@ export function Settings() {
 
       <ConfigPanel showStatus={showStatus} />
 
+      <BackupPanel />
+
       {statusEl}
     </div>
   );
@@ -272,6 +274,42 @@ function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
         >
           {saving ? 'Saving…' : 'Save to .env'}
         </button>
+      </div>
+    </section>
+  );
+}
+
+function BackupPanel() {
+  const [includeKey, setIncludeKey] = useState(false);
+
+  useEffect(() => {
+    void api.settings.getBackupIncludeKey().then((v) => setIncludeKey(v === 'true'));
+  }, []);
+
+  function toggle(checked: boolean) {
+    setIncludeKey(checked);
+    void api.settings.setBackupIncludeKey(checked ? 'true' : 'false');
+  }
+
+  return (
+    <section className={styles.panel}>
+      <h2>Backup</h2>
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>
+          Include encryption key
+          <span className={styles.configHint}>
+            Your encryption key protects your linked banks. Off by default — turning this on
+            includes it in your daily backups.
+          </span>
+        </label>
+        <label className={styles.checkboxRow}>
+          <input
+            type="checkbox"
+            checked={includeKey}
+            onChange={(e) => toggle(e.target.checked)}
+          />
+          <span>{includeKey ? 'On' : 'Off'}</span>
+        </label>
       </div>
     </section>
   );

@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { calcN } from './calculator.js';
 import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
+import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
 
 export type HealthData = {
   avgMonthlyExpenses: number;
@@ -12,11 +13,46 @@ export type HealthData = {
   totalDebt: number;    // credit cards
   loanDebt: number;     // mortgage / auto / student loans
   netWorth: number;
+  basis: MetricBasis;   // which "12-month average" definition avgMonthlyExpenses/monthlyIncome/monthlySavings use
+  basisLabel: string;
 };
 
+export type Trailing12moAverages = {
+  avgExpenses: number;
+  avgIncome: number;
+  avgSavings: number;
+  basis: MetricBasis;
+  basisLabel: string;
+};
+
+/**
+ * Trailing-365-day income/expense/savings averages (rolling `date('now','-12
+ * months')` window, not aligned to calendar months). Shared by loadHealthData
+ * (TUI/GUI Health tab) and getFinancialHealth (agent), which must not drift
+ * apart — see TRAILING_12MO_AVERAGES_SQL for the SQL itself.
+ *
+ * This is one of two "12-month average" definitions in the app (see issue
+ * #178) — the other is the drift/scorecard's calendar-12mo baseline
+ * (queries.ts sliceFor). Every consumer carries basis/basisLabel so surfaces
+ * can say which one they're quoting instead of both being called the same
+ * generic name.
+ */
+export async function getTrailing12moAverages(): Promise<Trailing12moAverages> {
+  const result = await db.execute(TRAILING_12MO_AVERAGES_SQL);
+  const row = result.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
+  const basis: MetricBasis = 'trailing-365d';
+  return {
+    avgExpenses: Number(row.avg_expenses),
+    avgIncome:   Number(row.avg_income),
+    avgSavings:  Number(row.avg_savings),
+    basis,
+    basisLabel: BASIS_LABEL[basis],
+  };
+}
+
 export async function loadHealthData(): Promise<HealthData> {
-  const [expRes, cashRes, liquidRes, retirementRes, debtRes, loanRes, nwRes] = await Promise.all([
-    db.execute(TRAILING_12MO_AVERAGES_SQL),
+  const [avgs, cashRes, liquidRes, retirementRes, debtRes, loanRes, nwRes] = await Promise.all([
+    getTrailing12moAverages(),
     db.execute(`
       SELECT COALESCE(SUM(bh.balance), 0) AS cash
       FROM accounts a
@@ -76,7 +112,6 @@ export async function loadHealthData(): Promise<HealthData> {
     `),
   ]);
 
-  const expRow  = expRes.rows[0]        as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
   const cashRow = cashRes.rows[0]       as unknown as { cash: number };
   const liqRow  = liquidRes.rows[0]     as unknown as { liquid: number };
   const retRow  = retirementRes.rows[0] as unknown as { retirement: number };
@@ -84,19 +119,18 @@ export async function loadHealthData(): Promise<HealthData> {
   const loanRow = loanRes.rows[0]       as unknown as { loan_debt: number };
   const nwRow   = nwRes.rows[0]         as unknown as { net_worth: number };
 
-  const monthlyIncome   = Number(expRow.avg_income);
-  const monthlySavings  = Number(expRow.avg_savings);
-
   return {
-    avgMonthlyExpenses: Number(expRow.avg_expenses),
-    monthlyIncome,
-    monthlySavings,
+    avgMonthlyExpenses: avgs.avgExpenses,
+    monthlyIncome:      avgs.avgIncome,
+    monthlySavings:     avgs.avgSavings,
     cash:               Number(cashRow.cash),
     liquid:             Number(liqRow.liquid),
     retirement:         Number(retRow.retirement),
     totalDebt:          Number(debtRow.total_debt),
     loanDebt:           Number(loanRow.loan_debt),
     netWorth:           Number(nwRow.net_worth),
+    basis:              avgs.basis,
+    basisLabel:         avgs.basisLabel,
   };
 }
 
