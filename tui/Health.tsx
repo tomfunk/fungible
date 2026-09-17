@@ -5,6 +5,7 @@ import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js
 import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, computeSavingsRate, type HealthData } from '../core/health.js';
 import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../core/settings.js';
+import { BASIS_LABEL } from '../core/dateUtils.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
 import { SectionHeader, PageHeader, DialRow } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -40,7 +41,7 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, retirement: 0, totalDebt: 0, loanDebt: 0, netWorth: 0 };
+const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, retirement: 0, totalDebt: 0, loanDebt: 0, netWorth: 0, basis: 'trailing-365d', basisLabel: BASIS_LABEL['trailing-365d'] };
 
 export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();

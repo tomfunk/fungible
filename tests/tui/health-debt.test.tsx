@@ -17,6 +17,8 @@ const BASE: HealthData = {
   totalDebt: 0,
   loanDebt: 0,
   netWorth: 150000,
+  basis: 'trailing-365d',
+  basisLabel: 'trailing 12mo',
 };
 
 let health: HealthData = { ...BASE };
