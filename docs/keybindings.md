@@ -51,7 +51,7 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 
 In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account. In **Owner** view, spending is split by the owner assigned to each account.
 
-In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER against their 12-month median, with a net verdict at the bottom. `x` swaps the compact bars for delta columns against three baselines — prev period, same period last year, and 12-month average — color-coded green / yellow / red by deviation. Scorecard is not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
+In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER against their typical-month median, with a net verdict at the bottom. `x` swaps the compact bars for delta columns against three baselines — prev period, same period last year, and typical-month average (12 complete calendar periods) — color-coded green / yellow / red by deviation. Scorecard is not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
 
 ## Transactions `[2]`
 

@@ -109,7 +109,7 @@ Same set across MCP and HTTP.
 | `tag_transaction` | Add or remove a tag on a transaction |
 | `get_balances` | Current balances, net worth, total cash and liquid |
 | `get_financial_health` | Runway, FIRE number, years to retirement |
-| `get_drift` | Per-category spending deltas vs prior period, last year, and 12-month avg |
+| `get_drift` | Per-category spending deltas vs prior period, last year, and typical-month avg (12 complete calendar periods, elapsed-day-clipped) |
 | `get_trends` | Month-by-month spending trends for the last N months |
 | `get_net_worth_history` | Net worth over time grouped by day, week, month, quarter, or year |
 | `get_finance_guide` | Opinionated personal finance guidance by topic |

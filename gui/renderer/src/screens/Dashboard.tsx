@@ -13,6 +13,7 @@ import {
   getDriftWindows,
   RANGES,
   RANGE_LABELS,
+  BASIS_LABEL,
   type Range,
 } from '../../../../core/dateUtils.js';
 import type { AccountRow, CategoryDrift, DriftSlice, FlexSummary } from '../../../../core/queries.js';
@@ -68,6 +69,10 @@ function Bar({ value, max, color }: { value: number; max: number; color?: string
 }
 
 type DriftSortCol = 'category' | 'current' | 'lastPeriodDelta' | 'lastYearDelta' | 'avg12mDelta';
+
+// Disambiguates this basis from the trailing-365d one Health uses — see
+// issue #178 / core/dateUtils.ts BASIS_LABEL.
+const DRIFT_BASIS_TOOLTIP = 'Median of the last 12 complete calendar periods (partial current period excluded)';
 
 export function Dashboard() {
   const { txFilter, navigate } = useNav();
@@ -175,6 +180,10 @@ export function Dashboard() {
     ? Math.max(1, ...[...scorecard.over, ...scorecard.under].map((r) => Math.abs(r.medianDelta)))
     : 1;
   const scoreTotal = (catDrift ?? []).reduce((s, r) => s + r.current, 0);
+  // Read the basis off the actual drift rows rather than hardcoding wording,
+  // so this never drifts from the calendar-12mo definition core computes
+  // (see issue #178). Falls back when the rows are empty (e.g. no history yet).
+  const driftBasisLabel = catDrift && catDrift.length > 0 ? catDrift[0].basisLabel : BASIS_LABEL['calendar-12mo'];
 
   function goPeriod(delta: -1 | 1) {
     if (range === 'alltime') return;
@@ -190,12 +199,13 @@ export function Dashboard() {
     setAnchor(getPeriodStart(r, now));
   }
 
-  function driftHeader(col: DriftSortCol, label: string) {
+  function driftHeader(col: DriftSortCol, label: string, title?: string) {
     const active = driftSort.col === col;
     return (
       <th
         className={active ? styles.thActive : styles.th}
         onClick={() => setDriftSort((s) => ({ col, desc: s.col === col ? !s.desc : true }))}
+        title={title}
       >
         {label} {active ? (driftSort.desc ? '↓' : '↑') : ''}
       </th>
@@ -392,7 +402,11 @@ export function Dashboard() {
 
       {view === 'categories' && !merchantDrill && (
         <section className={styles.panel}>
-          <h2>{scorecardMode && !detailMode ? 'Spending by category · vs typical (12m median)' : 'Spending by category'}</h2>
+          <h2>
+            {scorecardMode && !detailMode
+              ? `Spending by category · vs typical month (${driftBasisLabel})`
+              : 'Spending by category'}
+          </h2>
           {scorecardMode && range === 'alltime' ? (
             <p className="dim">Scorecard not available for All Time range.</p>
           ) : scorecardMode && detailMode ? (
@@ -406,7 +420,7 @@ export function Dashboard() {
                     {driftHeader('current', 'Amount')}
                     {driftHeader('lastPeriodDelta', 'vs prev')}
                     {driftHeader('lastYearDelta', 'yr ago')}
-                    {driftHeader('avg12mDelta', '12m avg')}
+                    {driftHeader('avg12mDelta', '12m avg', DRIFT_BASIS_TOOLTIP)}
                   </tr>
                 </thead>
                 <tbody>
@@ -440,7 +454,7 @@ export function Dashboard() {
                     <th className={styles.th}>Amount</th>
                     <th className={styles.th}>Δ typical</th>
                     <th className={styles.th}></th>
-                    <th className={styles.th}>× med</th>
+                    <th className={styles.th} title={DRIFT_BASIS_TOOLTIP}>× med</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -538,7 +552,7 @@ export function Dashboard() {
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>vs prev</th>
                   <th className={styles.th}>yr ago</th>
-                  <th className={styles.th}>12m avg</th>
+                  <th className={styles.th} title={DRIFT_BASIS_TOOLTIP}>12m avg</th>
                 </tr>
               </thead>
               <tbody>
@@ -567,7 +581,7 @@ export function Dashboard() {
                   <th className={styles.th}>Tier</th>
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Δ typical</th>
-                  <th className={styles.th}>× med</th>
+                  <th className={styles.th} title={DRIFT_BASIS_TOOLTIP}>× med</th>
                 </tr>
               </thead>
               <tbody>

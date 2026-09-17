@@ -5,10 +5,10 @@
  */
 
 import { db } from './db.js';
-import { yearsToFire, computeSavingsRate } from './health.js';
-import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
+import { yearsToFire, computeSavingsRate, getTrailing12moAverages } from './health.js';
 import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
 import { isAssetAccount, isLiabilityAccount } from './account-class.js';
+import type { MetricBasis } from './dateUtils.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,8 @@ export type FinancialHealth = {
   fireNumber: number;          // at 4% withdrawal
   fireProgress: number;        // 0–1 ratio
   yearsToFire: number | null;  // null = >100 years; includes pretax in savings
+  basis: MetricBasis;          // which "12-month average" definition the avg* fields use
+  basisLabel: string;
 };
 
 export type MonthlyTrendRow = {
@@ -157,15 +159,14 @@ export async function getFinancialHealth(
 ): Promise<FinancialHealth> {
   const balances = await getBalances();
 
-  const [expResult, pretaxRaw] = await Promise.all([
-    db.execute(TRAILING_12MO_AVERAGES_SQL),
+  const [avgs, pretaxRaw] = await Promise.all([
+    getTrailing12moAverages(),
     getSetting(PRETAX_MONTHLY_KEY),
   ]);
-  const expRow = expResult.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
 
-  const avgMonthlyExpenses = Number(expRow.avg_expenses);
-  const avgMonthlyIncome   = Number(expRow.avg_income);
-  const avgMonthlySavings  = Number(expRow.avg_savings);
+  const avgMonthlyExpenses = avgs.avgExpenses;
+  const avgMonthlyIncome   = avgs.avgIncome;
+  const avgMonthlySavings  = avgs.avgSavings;
   const pretaxMonthly      = pretaxRaw ? parseFloat(pretaxRaw) : 0;
   const grossMonthlyIncome = avgMonthlyIncome + pretaxMonthly;
   const savingsRate        = computeSavingsRate(avgMonthlyIncome, avgMonthlySavings, pretaxMonthly);
@@ -197,6 +198,8 @@ export async function getFinancialHealth(
     fireNumber,
     fireProgress,
     yearsToFire: yearsToFireVal,
+    basis: avgs.basis,
+    basisLabel: avgs.basisLabel,
   };
 }
 
