@@ -144,10 +144,18 @@ export function CanvasView({ spec }: { spec: CanvasSpec }) {
 
   const setDial = (dial: DialDef, v: number) => setValues((prev) => ({ ...prev, [dial.key]: clampDial(dial, v) }));
 
+  // Filter BEFORE rendering — a hidden element is excluded entirely (not just visually
+  // hidden), so it doesn't occupy layout space or get picked up downstream. Dial values
+  // themselves were already seeded from every dial above (visible or not), so a hidden
+  // dial's value survives being hidden and reshown (freeze, not reset).
+  const visibleElements = spec.elements
+    .map((el, i) => ({ el, i }))
+    .filter(({ el }) => el.visible === undefined || evalExpr(el.visible, values) !== 0);
+
   return (
     <div className={styles.canvas}>
       <h2 className={styles.canvasTitle}>{spec.title}</h2>
-      {spec.elements.map((el, i) => {
+      {visibleElements.map(({ el, i }) => {
         if (el.type === 'section') {
           return (
             <h3 key={i} className={styles.sectionLabel}>
@@ -167,43 +175,72 @@ export function CanvasView({ spec }: { spec: CanvasSpec }) {
           const val = values[d.key] ?? d.default;
           const modified = val !== d.default;
           const hasRange = d.min !== undefined && d.max !== undefined;
+          const compact = d.format === 'toggle' || d.format === 'select';
           return (
-            <div key={i} className={styles.dial}>
+            <div key={i} className={compact ? `${styles.dial} ${styles.dialCompact}` : styles.dial}>
               <div className={styles.dialTop}>
                 <span className={styles.dialLabel} title={d.hint}>
                   {d.label}
                 </span>
-                <span className={`num ${styles.dialValue}`}>{fmtDialValue(val, d.format)}</span>
+                {d.format !== 'toggle' && (
+                  <span className={`num ${styles.dialValue}`}>{fmtDialValue(val, d.format, d.options)}</span>
+                )}
               </div>
               <div className={styles.dialControls}>
-                <button className={styles.stepBtn} onClick={() => setDial(d, val - d.step)}>
-                  −
-                </button>
-                {hasRange ? (
-                  <input
-                    type="range"
-                    className={styles.slider}
-                    min={d.min}
-                    max={d.max}
-                    step={d.step}
-                    value={val}
+                {d.format === 'toggle' ? (
+                  <label className={styles.toggle}>
+                    <input
+                      type="checkbox"
+                      checked={val !== 0}
+                      onChange={(e) => setDial(d, e.target.checked ? 1 : 0)}
+                    />
+                    <span className={styles.toggleTrack} />
+                    <span className={styles.toggleThumb} />
+                  </label>
+                ) : d.format === 'select' ? (
+                  <select
+                    className={styles.selectInput}
+                    value={String(Math.round(val))}
                     onChange={(e) => setDial(d, parseFloat(e.target.value))}
-                  />
+                  >
+                    {(d.options ?? []).map((opt, idx) => (
+                      <option key={idx} value={idx}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
                 ) : (
-                  <input
-                    type="number"
-                    className={styles.numInput}
-                    value={val}
-                    step={d.step}
-                    onChange={(e) => {
-                      const n = parseFloat(e.target.value);
-                      if (!isNaN(n)) setDial(d, n);
-                    }}
-                  />
+                  <>
+                    <button className={styles.stepBtn} onClick={() => setDial(d, val - d.step)}>
+                      −
+                    </button>
+                    {hasRange ? (
+                      <input
+                        type="range"
+                        className={styles.slider}
+                        min={d.min}
+                        max={d.max}
+                        step={d.step}
+                        value={val}
+                        onChange={(e) => setDial(d, parseFloat(e.target.value))}
+                      />
+                    ) : (
+                      <input
+                        type="number"
+                        className={styles.numInput}
+                        value={val}
+                        step={d.step}
+                        onChange={(e) => {
+                          const n = parseFloat(e.target.value);
+                          if (!isNaN(n)) setDial(d, n);
+                        }}
+                      />
+                    )}
+                    <button className={styles.stepBtn} onClick={() => setDial(d, val + d.step)}>
+                      +
+                    </button>
+                  </>
                 )}
-                <button className={styles.stepBtn} onClick={() => setDial(d, val + d.step)}>
-                  +
-                </button>
                 {modified && (
                   <button className={styles.resetBtn} onClick={() => setDial(d, d.default)}>
                     reset

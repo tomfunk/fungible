@@ -1,8 +1,20 @@
 import React from 'react';
+import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
+import { render as inkRender } from 'ink';
 import { evalExpr, fmtValue, fmtDialValue, type CanvasSpec } from '../../core/canvas-agent.js';
 import { CanvasView } from '../../tui/Canvas.js';
+
+async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  let lastErr: unknown;
+  while (Date.now() < deadline) {
+    try { assertion(); return; } catch (e) { lastErr = e; }
+    await new Promise((res) => setTimeout(res, 10));
+  }
+  throw lastErr;
+}
 
 // ─── generateCanvas (mocked LLM) ──────────────────────────────────────────────
 
@@ -253,8 +265,8 @@ describe('fmtValue', () => {
 });
 
 describe('fmtDialValue', () => {
-  it('formats dollar with full precision', () => {
-    expect(fmtDialValue(500, 'dollar')).toBe('$500.00');
+  it('formats dollar, dropping cents for whole values', () => {
+    expect(fmtDialValue(500, 'dollar')).toBe('$500');
     expect(fmtDialValue(1234.56, 'dollar')).toBe('$1,234.56');
   });
 
@@ -304,7 +316,7 @@ describe('CanvasView', () => {
     const { lastFrame } = render(<CanvasView spec={MORTGAGE_SPEC} />);
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Home price');
-    expect(frame).toContain('$500,000.00');
+    expect(frame).toContain('$500,000');
     expect(frame).toContain('Down payment');
     expect(frame).toContain('Interest rate');
   });
@@ -315,5 +327,424 @@ describe('CanvasView', () => {
     const frame = lastFrame() ?? '';
     expect(frame).toContain('Monthly payment');
     expect(frame).toContain('$2,528');
+  });
+});
+
+// ─── CanvasView — toggle dial ─────────────────────────────────────────────────
+
+const TOGGLE_SPEC: CanvasSpec = {
+  title: 'Toggle Test',
+  elements: [
+    { type: 'dial', dial: { key: 'autopay', label: 'Autopay', default: 0, step: 1, min: 0, max: 1, format: 'toggle', hint: 'pay automatically' } },
+  ],
+};
+
+describe('CanvasView — toggle dial', () => {
+  it('renders Off/On via fmtDialValue', () => {
+    const { lastFrame } = render(<CanvasView spec={TOGGLE_SPEC} />);
+    expect(lastFrame()).toContain('Off');
+  });
+
+  it('flips On with the right arrow and Off again with the right arrow', async () => {
+    const r = render(<CanvasView spec={TOGGLE_SPEC} />);
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('On'));
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('Off'));
+  });
+
+  it('flips with the left arrow too — either direction toggles', async () => {
+    const r = render(<CanvasView spec={TOGGLE_SPEC} />);
+    r.stdin.write('\x1B[D');
+    await waitFor(() => expect(r.lastFrame()).toContain('On'));
+    r.stdin.write('\x1B[D');
+    await waitFor(() => expect(r.lastFrame()).toContain('Off'));
+  });
+
+  it('resets to default with [r]', async () => {
+    const r = render(<CanvasView spec={TOGGLE_SPEC} />);
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('On'));
+    r.stdin.write('r');
+    await waitFor(() => expect(r.lastFrame()).toContain('Off'));
+  });
+
+  it('does not enter numeric edit mode on Enter', async () => {
+    const r = render(<CanvasView spec={TOGGLE_SPEC} />);
+    r.stdin.write('\r');
+    await new Promise((res) => setTimeout(res, 30));
+    expect(r.lastFrame()).not.toContain('Enter confirm');
+    expect(r.lastFrame()).toContain('Off');
+  });
+});
+
+// ─── CanvasView — select dial ─────────────────────────────────────────────────
+
+const SELECT_SPEC: CanvasSpec = {
+  title: 'Select Test',
+  elements: [
+    {
+      type: 'dial',
+      dial: {
+        key: 'filing', label: 'Filing status', default: 0, step: 1, format: 'select',
+        options: ['Single', 'Married filing jointly', 'Head of household'],
+        hint: 'tax filing status',
+      },
+    },
+  ],
+};
+
+describe('CanvasView — select dial', () => {
+  it('renders options[value] via fmtDialValue', () => {
+    const { lastFrame } = render(<CanvasView spec={SELECT_SPEC} />);
+    expect(lastFrame()).toContain('Single');
+  });
+
+  it('cycles forward through options with the right arrow, wrapping at the end', async () => {
+    const r = render(<CanvasView spec={SELECT_SPEC} />);
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('Married filing jointly'));
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('Head of household'));
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('Single'));
+  });
+
+  it('cycles backward with the left arrow, wrapping at the start', async () => {
+    const r = render(<CanvasView spec={SELECT_SPEC} />);
+    r.stdin.write('\x1B[D');
+    await waitFor(() => expect(r.lastFrame()).toContain('Head of household'));
+  });
+
+  it('resets to the default index with [r]', async () => {
+    const r = render(<CanvasView spec={SELECT_SPEC} />);
+    r.stdin.write('\x1B[C');
+    await waitFor(() => expect(r.lastFrame()).toContain('Married filing jointly'));
+    r.stdin.write('r');
+    await waitFor(() => expect(r.lastFrame()).toContain('Single'));
+  });
+
+  it('does not enter numeric edit mode on Enter', async () => {
+    const r = render(<CanvasView spec={SELECT_SPEC} />);
+    r.stdin.write('\r');
+    await new Promise((res) => setTimeout(res, 30));
+    expect(r.lastFrame()).not.toContain('Enter confirm');
+  });
+});
+
+// ─── CanvasView — `visible` filtering ─────────────────────────────────────────
+
+const VISIBILITY_SPEC: CanvasSpec = {
+  title: 'Visibility Test',
+  elements: [
+    { type: 'section', label: 'INPUTS' },
+    { type: 'dial', dial: { key: 'showExtra', label: 'Show extra', default: 1, step: 1, min: 0, max: 1, format: 'toggle', hint: 'toggle extra section' } },
+    { type: 'dial', dial: { key: 'sub', label: 'Sub dial', default: 5, step: 1, min: 0, max: 10, format: 'integer', hint: 'sub value' }, visible: 'showExtra == 1' },
+    { type: 'text', content: 'extra info here', visible: 'showExtra == 1' },
+    { type: 'dial', dial: { key: 'other', label: 'Other', default: 3, step: 1, min: 0, format: 'integer', hint: 'always visible' } },
+    { type: 'section', label: 'RESULTS' },
+    { type: 'output', output: { label: 'Doubled', expr: 'sub * 2', format: 'integer' } },
+  ],
+};
+
+describe('CanvasView — visible filtering', () => {
+  it('shows a gated element when its `visible` expression is truthy', () => {
+    const { lastFrame } = render(<CanvasView spec={VISIBILITY_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Sub dial');
+    expect(frame).toContain('extra info here');
+  });
+
+  it('hides a gated element once its `visible` expression evaluates falsy, and it is skipped from dial nav', async () => {
+    const r = render(<CanvasView spec={VISIBILITY_SPEC} />);
+    // cursor starts on "Show extra" — flip it off, hiding the sub dial and text.
+    r.stdin.write('\x1B[C');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('Sub dial');
+      expect(frame).not.toContain('extra info here');
+      expect(frame).toContain('Other');
+    });
+
+    // nav should now skip straight from "Show extra" to "Other".
+    r.stdin.write('\x1B[B'); // down
+    // "Other" row should be selected (integer step hint only shown on the selected row)
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+  });
+
+  it('freezes a hidden dial\'s value instead of resetting it — it survives hide → show', async () => {
+    const r = render(<CanvasView spec={VISIBILITY_SPEC} />);
+    // move to the sub dial and change its value
+    r.stdin.write('\x1B[B'); // down to "Sub dial"
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+    r.stdin.write('\x1B[C'); // 5 -> 6
+    r.stdin.write('\x1B[C'); // 6 -> 7
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Doubled');
+      expect(frame).toContain('14'); // 7 * 2
+    });
+
+    // move back up to the toggle and hide the sub dial
+    r.stdin.write('\x1B[A'); // up to "Show extra"
+    await waitFor(() => expect(r.lastFrame()).toContain('← → toggle'));
+    r.stdin.write('\x1B[C'); // flip off — sub dial now hidden
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('Sub dial');
+      // output still reflects the frozen value of 7, not a reset to default (5)
+      expect(frame).toContain('14');
+    });
+
+    // show it again — value should still be 7, not reset to the default of 5
+    r.stdin.write('\x1B[C'); // flip back on
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Sub dial');
+      expect(frame).toContain('14');
+    });
+  });
+
+  it('does not crash and lands the cursor somewhere sane when the selected dial hides itself', async () => {
+    const SELF_HIDE_SPEC: CanvasSpec = {
+      title: 'Self hide',
+      elements: [
+        { type: 'dial', dial: { key: 'enabled', label: 'Enabled', default: 1, step: 1, min: 0, max: 1, format: 'toggle', hint: 'enable this option' }, visible: 'enabled != 0' },
+        { type: 'dial', dial: { key: 'fallback', label: 'Fallback', default: 3, step: 1, min: 0, format: 'integer', hint: 'always visible' } },
+      ],
+    };
+    const r = render(<CanvasView spec={SELF_HIDE_SPEC} />);
+    // cursor starts on "Enabled" (first visible dial); flip it off — it hides itself.
+    expect(() => r.stdin.write('\x1B[C')).not.toThrow();
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('Enabled');
+      // cursor should have fallen back to the remaining visible dial without crashing.
+      expect(frame).toContain('Fallback');
+      expect(frame).toContain('← → ±1');
+    });
+
+    // further navigation and interaction on the fallback dial should work normally.
+    expect(() => r.stdin.write('\x1B[C')).not.toThrow();
+    await waitFor(() => expect(r.lastFrame()).toContain('4')); // 3 -> 4
+  });
+});
+
+// ─── CanvasView — row height stays constant regardless of hint length ────────
+// Regression test for issue #145 follow-up: a long unselected hint used to wrap
+// to a second line while the selected row's short control hint didn't, so moving
+// the cursor changed that row's height and reflowed every row below it.
+
+const LONG_HINT_SPEC: CanvasSpec = {
+  title: 'Long Hint Test',
+  elements: [
+    { type: 'dial', dial: { key: 'a', label: 'First dial', default: 1, step: 1, min: 0, max: 1, format: 'toggle', hint: 'bound to your 12-month income average, only appears when the toggle above is on and stays that way' } },
+    { type: 'dial', dial: { key: 'b', label: 'Second dial', default: 3, step: 1, min: 0, format: 'integer', hint: 'short hint' } },
+  ],
+};
+
+describe('CanvasView — constant row height regardless of hint length', () => {
+  it('renders the same total line count whether the long-hint dial is selected or not', async () => {
+    const r = render(<CanvasView spec={LONG_HINT_SPEC} />);
+    // Initial state: the long-hint dial is selected, so it shows its short control
+    // hint ("← → toggle") — nothing to truncate yet.
+    const lineCountSelected = (r.lastFrame() ?? '').split('\n').length;
+
+    r.stdin.write('\x1B[B'); // move selection down to the short-hint dial — the
+    // long-hint dial is now unselected and must render its full (long) hint,
+    // truncated to fit on one line rather than wrapping.
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+    const lineCountUnselected = (r.lastFrame() ?? '').split('\n').length;
+
+    expect(lineCountUnselected).toBe(lineCountSelected);
+  });
+
+  it('truncates the long hint instead of wrapping it onto a second line', async () => {
+    const r = render(<CanvasView spec={LONG_HINT_SPEC} />);
+    r.stdin.write('\x1B[B'); // deselect the long-hint dial so it renders its hint text
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+    const frame = r.lastFrame() ?? '';
+    // The full hint text must not appear verbatim (it would if wrapped in full);
+    // a truncated prefix should still be visible, on the same line as the label.
+    expect(frame).not.toContain('only appears when the toggle above is on and stays that way');
+    expect(frame).toContain('First dial');
+    expect(frame).toContain('bound to your');
+  });
+});
+
+// ─── CanvasView — long dial label doesn't wrap or break column alignment ─────
+// Regression test for a real user report: a dial label longer than LABEL_W (18)
+// used to render at full length via `label.padEnd(labelWidth)`, which only pads
+// short strings and does nothing to long ones — Ink then wrapped the oversized
+// label inside the row's constrained-width Box, dragging the value bracket and
+// everything after it onto a second/third line and destroying the row's column
+// alignment. The label column must now truncate with an ellipsis instead.
+
+const LONG_LABEL = 'This is a way too long dial label';
+
+const LONG_LABEL_SPEC: CanvasSpec = {
+  title: 'Long Label Test',
+  elements: [
+    { type: 'dial', dial: { key: 'normal', label: 'Normal dial', default: 5, step: 1, min: 0, max: 10, format: 'integer', hint: 'a normal-length label' } },
+    { type: 'dial', dial: { key: 'long', label: LONG_LABEL, default: 5, step: 1, min: 0, max: 10, format: 'integer', hint: 'a way-too-long label' } },
+  ],
+};
+
+describe('CanvasView — long dial label stays on one line', () => {
+  it('does not grow the frame\'s line count when a label exceeds the label column width', () => {
+    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_SPEC} />);
+    const lines = (lastFrame() ?? '').split('\n');
+    // title + 2 dial rows, no wrapped continuation lines from the oversized label
+    expect(lines.length).toBe(3);
+  });
+
+  it('truncates the long label with an ellipsis instead of wrapping it', () => {
+    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).not.toContain(LONG_LABEL);
+    expect(frame).toContain('…');
+  });
+
+  it('keeps the value bracket aligned in the same column as a normal-length-label row', () => {
+    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_SPEC} />);
+    const lines = (lastFrame() ?? '').split('\n').filter((l) => l.includes('['));
+    expect(lines.length).toBe(2);
+    const bracketCols = lines.map((l) => l.indexOf('['));
+    expect(bracketCols[0]).toBe(bracketCols[1]);
+  });
+});
+
+// ─── CanvasView — long label + large dollar value doesn't break the value bracket ──
+// Second half of the same user report: "numbers end with '.', values outside/below
+// the box". The `[ value ]` construction used to be three independent sibling
+// Text nodes (open bracket, padded value, close bracket, plus a fourth cursor node
+// while editing) with no bounded width of their own — same defect the label column
+// had, just one column over. Under width pressure (a long label on another row
+// forcing the layout narrower, or simply a formatted value wider than the nominal
+// column, e.g. "$1,093,388.68") each node could wrap independently, dropping the
+// closing "]" — or trailing digits — onto their own line. DialRow now wraps the
+// whole bracket+value(+cursor) construction in one fixed-width TruncatedText so
+// Yoga measures and truncates it as a single unit instead.
+//
+// ink-testing-library hardcodes its virtual terminal to 100 columns, which is wide
+// enough that this row never actually gets squeezed — so a plain `render()` call
+// exercises the "value wider than the nominal column" half of the fix but not the
+// "genuinely narrow terminal" half. `renderAtWidth` below reimplements
+// ink-testing-library's own render() (see node_modules/ink-testing-library) with a
+// configurable `columns`, so the squeeze case gets covered too.
+
+function renderAtWidth(width: number, tree: React.ReactElement) {
+  class Stdout extends EventEmitter {
+    columns = width;
+    frames: string[] = [];
+    _lastFrame?: string;
+    write = (frame: string) => { this.frames.push(frame); this._lastFrame = frame; };
+    lastFrame = () => this._lastFrame;
+  }
+  class Stderr extends EventEmitter {
+    frames: string[] = [];
+    _lastFrame?: string;
+    write = (frame: string) => { this.frames.push(frame); this._lastFrame = frame; };
+    lastFrame = () => this._lastFrame;
+  }
+  class Stdin extends EventEmitter {
+    isTTY = true;
+    write = () => {};
+    setEncoding = () => {};
+    setRawMode = () => {};
+    resume = () => {};
+    pause = () => {};
+    ref = () => {};
+    unref = () => {};
+    read = () => null;
+  }
+  const stdout = new Stdout();
+  const instance = inkRender(tree, {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: new Stderr() as unknown as NodeJS.WriteStream,
+    stdin: new Stdin() as unknown as NodeJS.ReadStream,
+    debug: true,
+    exitOnCtrlC: false,
+    patchConsole: false,
+  });
+  return { lastFrame: stdout.lastFrame, unmount: instance.unmount };
+}
+
+const LONG_LABEL_AND_VALUE_SPEC: CanvasSpec = {
+  title: 'Long Label And Value Test',
+  elements: [
+    { type: 'dial', dial: { key: 'normal', label: 'Normal dial', default: 5, step: 1, min: 0, max: 10, format: 'integer', hint: 'a normal-length label' } },
+    { type: 'dial', dial: { key: 'long', label: LONG_LABEL, default: 1_093_388.68, step: 1, min: 0, format: 'dollar', hint: 'a way-too-long label' } },
+  ],
+};
+
+describe('CanvasView — long label + large dollar value keeps the value bracket on one line', () => {
+  it('does not grow the frame\'s line count at the default (100-column) width', () => {
+    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_AND_VALUE_SPEC} />);
+    const lines = (lastFrame() ?? '').split('\n');
+    expect(lines.length).toBe(3);
+  });
+
+  it('keeps the closing bracket on the same line as the opening bracket at the default width', () => {
+    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_AND_VALUE_SPEC} />);
+    const lines = (lastFrame() ?? '').split('\n');
+    const valueLine = lines.find((l) => l.includes('$1,093,388.68'));
+    expect(valueLine).toBeDefined();
+    expect(valueLine).toContain('[');
+    expect(valueLine).toContain(']');
+    expect(valueLine!.indexOf('[')).toBeLessThan(valueLine!.indexOf(']'));
+  });
+
+  it.each([80, 70, 60, 50, 40])(
+    'keeps every row to one line and the bracket intact at a squeezed %i-column width',
+    (width) => {
+      const { lastFrame, unmount } = renderAtWidth(width, <CanvasView spec={LONG_LABEL_AND_VALUE_SPEC} />);
+      const lines = (lastFrame() ?? '').split('\n').filter((l) => l.trim().length > 0);
+      // Title + one row per dial — never more, however narrow the terminal:
+      // a value/label that can't fit gets truncated, not wrapped onto a new line.
+      expect(lines.length).toBe(3);
+      const bracketLines = lines.filter((l) => l.includes('['));
+      expect(bracketLines.length).toBe(2);
+      for (const line of bracketLines) {
+        // The closing bracket must be present and on the same line as the
+        // opening one — never dropped, and never pushed to its own line.
+        expect(line).toContain('[');
+        expect(line).toContain(']');
+        expect(line.indexOf('[')).toBeLessThan(line.indexOf(']'));
+      }
+      unmount();
+    },
+  );
+});
+
+// ─── CanvasView — value column stays aligned across rows of very different widths ──
+// Third act of the same user report: fixing the per-row overflow (above) by sizing
+// each row's box to `Math.max(valueWidth, displayValue.length)` traded one bug for
+// another — a row with an unusually long formatted value (e.g. a 7-figure balance)
+// got a wider box *only for that row*, so its closing bracket landed in a different
+// column than every other row's. The fix is to compute the value-column width once
+// per canvas (the widest formatted value across every visible dial+output) and share
+// it across all rows, instead of letting each row size itself independently.
+
+const MIXED_WIDTH_VALUE_SPEC: CanvasSpec = {
+  title: 'Mixed Width Value Test',
+  elements: [
+    { type: 'dial', dial: { key: 'small', label: 'Small dial', default: 100, step: 10, min: 0, format: 'dollar', hint: 'a small dollar value' } },
+    { type: 'dial', dial: { key: 'large', label: 'Large dial', default: 1_093_389, step: 1000, min: 0, format: 'dollar', hint: 'a much larger dollar value' } },
+  ],
+};
+
+describe('CanvasView — value column width is shared across rows, not per-row', () => {
+  it('opens and closes the value bracket at the same column for every row', () => {
+    const { lastFrame } = render(<CanvasView spec={MIXED_WIDTH_VALUE_SPEC} />);
+    const lines = (lastFrame() ?? '').split('\n').filter((l) => l.includes('['));
+    expect(lines.length).toBe(2);
+    const openCols = lines.map((l) => l.indexOf('['));
+    const closeCols = lines.map((l) => l.indexOf(']'));
+    // Both rows' boxes must line up in the same columns — not just each row's own
+    // bracket pair being internally consistent (that was already true after the
+    // previous fix; this is the cross-row alignment that fix broke).
+    expect(openCols[0]).toBe(openCols[1]);
+    expect(closeCols[0]).toBe(closeCols[1]);
   });
 });

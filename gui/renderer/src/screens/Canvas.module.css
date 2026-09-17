@@ -146,6 +146,81 @@
   gap: 8px;
 }
 
+.dialCompact {
+  gap: 3px;
+  padding: 4px 0;
+}
+
+.toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 44px;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggleTrack {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  pointer-events: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.toggleThumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  pointer-events: none;
+  transition: transform 0.15s, background 0.15s;
+}
+
+.toggle input:checked ~ .toggleTrack {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.toggle input:checked ~ .toggleThumb {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
+.toggle input:focus-visible ~ .toggleTrack {
+  border-color: var(--accent);
+}
+
+.selectInput {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  flex: 1;
+  max-width: 220px;
+}
+
+.selectInput:hover {
+  border-color: var(--accent);
+}
+
 .stepBtn {
   width: 26px;
   height: 26px;

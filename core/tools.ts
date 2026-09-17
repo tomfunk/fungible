@@ -29,6 +29,8 @@ import { validateRegex } from './rule-utils.js';
 import type { ToolDef } from './llm-provider.js';
 
 import { CANVAS_SPEC_PATH, appendHistory, searchHistory, getHistoryEntry, deleteHistoryEntry } from './canvas-history.js';
+import { resolveCanvasBindings } from './canvas-agent.js';
+import type { CanvasSpec } from './canvas-spec.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -942,9 +944,12 @@ async function executeToolImpl(
 
     case 'show_canvas': {
       const specStr = str('spec');
-      const spec = JSON.parse(specStr);
+      const spec = JSON.parse(specStr) as CanvasSpec;
+      // History stores the unresolved spec (binding + its original stale default) —
+      // bindings are re-resolved against live data on every load, never baked in.
       const entry = appendHistory({ title: spec.title ?? 'Untitled', prompt: str('prompt'), spec });
-      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...spec, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      const resolved = await resolveCanvasBindings(spec);
+      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...resolved, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
       return `Canvas "${entry.title}" rendered on screen 9 (id: ${entry.id}).`;
     }
 
@@ -959,7 +964,10 @@ async function executeToolImpl(
     case 'load_canvas': {
       const entry = getHistoryEntry(str('id'));
       if (!entry) return `No canvas found with id "${str('id')}".`;
-      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...entry.spec, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      // entry.spec is the unresolved spec from history — resolve fresh on every
+      // reopen rather than trusting a previously-resolved snapshot.
+      const resolved = await resolveCanvasBindings(entry.spec);
+      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...resolved, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
       return `Canvas "${entry.title}" loaded on screen 9.`;
     }
 

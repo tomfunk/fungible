@@ -4,7 +4,7 @@ import { fmt, fmtPct, fmtPctSigned, fmtCompact, fmtCompactSigned, fmtMonths } fr
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type DialFormat = 'dollar' | 'percent' | 'integer' | 'months' | 'years';
+export type DialFormat = 'dollar' | 'percent' | 'integer' | 'months' | 'years' | 'toggle' | 'select';
 
 export type DialDef = {
   key: string;
@@ -15,6 +15,13 @@ export type DialDef = {
   max?: number;
   format: DialFormat;
   hint: string;
+  // Required by convention when format === 'select' — the dial's numeric value is the
+  // 0-based index into this array. Not enforced in the type system.
+  options?: string[];
+  // Recognized live-metric key (see BINDING_KEYS in canvas-agent.ts). When present,
+  // resolveCanvasBindings() overwrites `default` with the live value at load/generate
+  // time; unrecognized/unresolvable bindings leave `default` untouched.
+  binding?: string;
 };
 
 export type OutputDef = {
@@ -26,10 +33,10 @@ export type OutputDef = {
 };
 
 export type CanvasElement =
-  | { type: 'section'; label: string }
-  | { type: 'text';    content: string }
-  | { type: 'dial';    dial: DialDef }
-  | { type: 'output';  output: OutputDef };
+  | { type: 'section'; label: string; visible?: string }
+  | { type: 'text';    content: string; visible?: string }
+  | { type: 'dial';    dial: DialDef; visible?: string }
+  | { type: 'output';  output: OutputDef; visible?: string };
 
 export type CanvasSpec = {
   title: string;
@@ -42,6 +49,14 @@ export type CanvasSpec = {
 // parentheses, unary +/-, arithmetic, comparisons, ternary, Math.{pow,log,abs,
 // round,floor,ceil}. Unknown identifiers resolve to NaN; anything outside the
 // grammar throws and is caught as NaN.
+//
+// `CanvasElement.visible` reuses this exact evaluator against the same dial-value
+// scope outputs use (dial keys → numeric value; never output values, preserving the
+// no-cross-output-reference rule). A renderer treats the element as visible when
+// `evalExpr(visible, dialValues) !== 0`. This fails OPEN on a malformed expression:
+// evalExpr returns NaN on error, and `NaN !== 0` is `true` in JS, so a broken
+// `visible` expression shows the element rather than silently hiding it — consistent
+// with how a broken output `expr` renders "—" instead of disappearing.
 
 const MATH_FNS: Record<string, (...a: number[]) => number> = {
   pow: Math.pow, log: Math.log, abs: Math.abs,
@@ -160,16 +175,27 @@ export function fmtValue(n: number, format: DialFormat, signed = false): string 
     case 'months':  return fmtMonths(n);
     case 'years':   return `${Math.ceil(n)} yr`;
     case 'integer': return String(Math.round(n));
+    // toggle/select are dial-only formats by convention, but DialFormat is shared
+    // with OutputDef — handle them defensively rather than rendering "undefined".
+    case 'toggle':  return n !== 0 ? 'On' : 'Off';
+    case 'select':  return String(Math.round(n));
   }
 }
 
-export function fmtDialValue(n: number, format: DialFormat): string {
+// `options` is only meaningful (and only needed) when format === 'select' — it's the
+// dial's options array, used to render the label for the current 0-based index.
+export function fmtDialValue(n: number, format: DialFormat, options?: string[]): string {
   if (!isFinite(n) || isNaN(n)) return '—';
   switch (format) {
-    case 'dollar':  return fmt(n);
+    case 'dollar':  return Number.isInteger(n) ? fmt(n, 0) : fmt(n);
     case 'percent': return fmtPct(n);
     case 'months':  return fmtMonths(n);
     case 'years':   return `${n} yr`;
     case 'integer': return String(Math.round(n));
+    case 'toggle':  return n !== 0 ? 'On' : 'Off';
+    case 'select': {
+      const idx = Math.round(n);
+      return options && idx >= 0 && idx < options.length ? options[idx] : '—';
+    }
   }
 }

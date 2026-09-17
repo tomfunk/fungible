@@ -45,7 +45,7 @@ describe('GUI CanvasView', () => {
     expect(screen.getByText('INPUTS')).toBeTruthy();
     expect(screen.getByText(/Adjust the dials/)).toBeTruthy();
     expect(screen.getByText('Balance')).toBeTruthy();
-    expect(screen.getByText('$20,000.00')).toBeTruthy();
+    expect(screen.getByText('$20,000')).toBeTruthy();
     expect(screen.getByText('Months to payoff')).toBeTruthy();
     // 20000 @ 22% APR with $500/mo → 72.8 months
     expect(screen.getByText('72.8 mo')).toBeTruthy();
@@ -56,10 +56,10 @@ describe('GUI CanvasView', () => {
     const monthlyDial = screen.getByText('Monthly payment').closest('div')!.parentElement!;
     const plus = Array.from(monthlyDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    expect(screen.getByText('$550.00')).toBeTruthy();
+    expect(screen.getByText('$550')).toBeTruthy();
     expect(screen.queryByText('72.8 mo')).toBeNull(); // recomputed
     await userEvent.click(screen.getByText('reset'));
-    expect(screen.getByText('$500.00')).toBeTruthy();
+    expect(screen.getByText('$500')).toBeTruthy();
     expect(screen.getByText('72.8 mo')).toBeTruthy();
   });
 
@@ -69,6 +69,82 @@ describe('GUI CanvasView', () => {
     const slider = aprDial.querySelector('input[type="range"]') as HTMLInputElement;
     expect(slider).toBeTruthy();
     expect(slider.max).toBe('40');
+  });
+});
+
+const TOGGLE_SELECT_SPEC: CanvasSpec = {
+  title: 'Extra Income',
+  elements: [
+    { type: 'dial', dial: { key: 'hasRaise', label: 'Got a raise?', default: 0, step: 1, format: 'toggle', hint: 'toggle raise' } },
+    {
+      type: 'dial',
+      dial: {
+        key: 'filingStatus',
+        label: 'Filing status',
+        default: 0,
+        step: 1,
+        format: 'select',
+        hint: 'tax filing status',
+        options: ['Single', 'Married filing jointly', 'Head of household'],
+      },
+    },
+    { type: 'section', label: 'RAISE DETAILS', visible: 'hasRaise' },
+    {
+      type: 'dial',
+      dial: { key: 'raiseAmount', label: 'Raise amount', default: 5000, step: 500, min: 0, format: 'dollar', hint: 'annual raise' },
+      visible: 'hasRaise',
+    },
+    { type: 'output', output: { label: 'Status label', expr: 'filingStatus', format: 'integer', color: 'neutral' } },
+  ],
+};
+
+describe('GUI CanvasView toggle/select dials and visible filtering', () => {
+  it('renders a toggle dial as a checkbox and stores 0/1, with no redundant On/Off text', async () => {
+    renderScreen(<CanvasView spec={TOGGLE_SELECT_SPEC} />);
+    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    expect(screen.queryByText('Off')).toBeNull();
+    await userEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    expect(screen.queryByText('On')).toBeNull();
+  });
+
+  it('renders a select dial as a native select with options as the value', async () => {
+    renderScreen(<CanvasView spec={TOGGLE_SELECT_SPEC} />);
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    expect(select.value).toBe('0');
+    expect(screen.getAllByText('Single').length).toBeGreaterThan(0);
+    await userEvent.selectOptions(select, '1');
+    expect(select.value).toBe('1');
+    expect(screen.getAllByText('Married filing jointly').length).toBeGreaterThan(0);
+  });
+
+  it('hides an element whose visible expression is false, excluding it from render', () => {
+    renderScreen(<CanvasView spec={TOGGLE_SELECT_SPEC} />);
+    expect(screen.queryByText('RAISE DETAILS')).toBeNull();
+    expect(screen.queryByText('Raise amount')).toBeNull();
+  });
+
+  it('shows a visible-gated element once its condition becomes true, and freezes its value across hide/show', async () => {
+    renderScreen(<CanvasView spec={TOGGLE_SELECT_SPEC} />);
+    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+    await userEvent.click(checkbox); // hasRaise -> 1
+    expect(screen.getByText('RAISE DETAILS')).toBeTruthy();
+    expect(screen.getByText('Raise amount')).toBeTruthy();
+
+    // change the now-visible dial away from its default
+    const raiseDial = screen.getByText('Raise amount').closest('div')!.parentElement!;
+    const plus = Array.from(raiseDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
+    await userEvent.click(plus);
+    expect(screen.getByText('$5,500')).toBeTruthy();
+
+    // hide it again
+    await userEvent.click(checkbox); // hasRaise -> 0
+    expect(screen.queryByText('Raise amount')).toBeNull();
+
+    // reshow — value should have survived (frozen), not reset to the 5000 default
+    await userEvent.click(checkbox); // hasRaise -> 1
+    expect(screen.getByText('$5,500')).toBeTruthy();
   });
 });
 

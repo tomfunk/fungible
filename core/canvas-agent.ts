@@ -9,6 +9,30 @@ import type { CanvasSpec } from './canvas-spec.js';
 // re-exported here so existing importers keep working.
 export * from './canvas-spec.js';
 
+// ─── Dial bindings ──────────────────────────────────────────────────────────────
+// Closed vocabulary of live-metric keys a dial's `binding` field may reference.
+// Each is sourced from the same functions loadCanvasContext already calls for the
+// equivalent LLM-context line, so this inherits the existing loans-as-liabilities
+// and 12-month-average fixes rather than reimplementing any arithmetic.
+
+export const BINDING_KEYS = [
+  'monthly_income_12mo_avg',
+  'monthly_expenses_12mo_avg',
+  'monthly_surplus_12mo_avg',
+  'cash_balance',
+  'taxable_brokerage',
+  'liquid_assets',
+  'retirement_balance',
+  'credit_card_debt',
+  'loan_debt',
+  'net_worth',
+  'savings_rate_pct',
+  'self_age',
+  'spouse_age',
+] as const;
+
+export type BindingKey = typeof BINDING_KEYS[number];
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 function buildSystemPrompt(financialContext: string): string {
@@ -53,6 +77,37 @@ Example: monthly mortgage payment with principal P, monthly rate r, n payments:
 8. Set \`signed: true\` on outputs that represent deltas or values that can be negative — e.g. net savings, surplus/deficit, change in portfolio. This shows an explicit +/- prefix so the sign is always unambiguous
 9. For any projection with a multi-year time horizon (retirement, investment growth, net worth, savings goals), show values in **real (inflation-adjusted) dollars** as the primary output — not nominal. Add an \`inflation\` dial (key: "inflation", default: 3, step: 0.5, min: 0, max: 8, format: "percent", hint: "annual inflation"). Convert nominal to real with: \`nominal / Math.pow(1 + inflation/100, years)\`. Label the output "Real value (today's $)" or similar. A nominal output may appear secondary.
 10. If the live data includes household ages, use them to pre-fill age-related dials and personalize narrative (e.g. "years until retirement" = retirement_age - current_age). If age is not provided, add an \`age\` dial (default: 35, step: 1, min: 18, max: 80, format: "integer", hint: "your current age") so the user can set it accurately.
+
+## Dial bindings — keep dials fresh across reopens
+
+A dial's \`default\` is a one-time snapshot; every time the canvas is (re)opened, any dial carrying a recognized \`binding\` key gets its \`default\` refreshed from live data automatically — no code involved, this happens after you generate the spec. So whenever a dial maps to one of the keys below, set **both** \`binding\` (the key) and \`default\` (today's value, as the fallback if the binding can't resolve) — never \`binding\` without a matching \`default\`.
+
+Binding keys: \`monthly_income_12mo_avg\`, \`monthly_expenses_12mo_avg\`, \`monthly_surplus_12mo_avg\`, \`cash_balance\`, \`taxable_brokerage\`, \`liquid_assets\`, \`retirement_balance\`, \`credit_card_debt\`, \`loan_debt\`, \`net_worth\`, \`savings_rate_pct\`, \`self_age\`, \`spouse_age\`.
+
+Example — a dial for current cash that stays current on every reopen:
+  { "type": "dial", "dial": { "key": "cash", "label": "Cash on hand", "default": 42000, "step": 1000, "min": 0, "format": "dollar", "hint": "checking + savings", "binding": "cash_balance" }}
+
+## Toggle dials
+
+Use \`format: "toggle"\` for a yes/no input. The value is always 0 or 1 — no \`min\`/\`max\`/\`step\`. It renders as "On"/"Off" and the user flips it with ← →.
+
+Example:
+  { "type": "dial", "dial": { "key": "has_bonus", "label": "Annual bonus?", "default": 0, "step": 1, "format": "toggle", "hint": "expecting a bonus this year" }}
+
+## Select dials
+
+Use \`format: "select"\` when a dial should step through a small set of named choices instead of a number. Add \`options\`: an array of display strings. The dial's value is the 0-based index into \`options\` — no \`min\`/\`max\`/\`step\` (min/max are implied by the array length).
+
+Example:
+  { "type": "dial", "dial": { "key": "filing_status", "label": "Filing status", "default": 0, "step": 1, "format": "select", "options": ["Single", "Married filing jointly", "Married filing separately", "Head of household"], "hint": "tax filing status" }}
+
+## Conditional visibility
+
+Any element — \`section\`, \`text\`, \`dial\`, or \`output\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys only, no output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice.
+
+Example — a bonus amount dial only shown when the bonus toggle is on:
+  { "type": "dial", "dial": { "key": "has_bonus", "label": "Annual bonus?", "default": 0, "step": 1, "format": "toggle", "hint": "expecting a bonus this year" }},
+  { "type": "dial", "dial": { "key": "bonus_amount", "label": "Bonus amount", "default": 5000, "step": 500, "min": 0, "format": "dollar", "hint": "expected bonus" }, "visible": "has_bonus == 1" }
 
 ## Existing screen conventions (for consistency)
 
@@ -132,6 +187,94 @@ export async function loadCanvasContext(): Promise<CanvasContext> {
   return { system: buildSystemPrompt(financialContext), tool: CANVAS_TOOL };
 }
 
+// ─── Dial binding resolution ────────────────────────────────────────────────────
+// Called at the load/generate boundary in core/tools.ts (show_canvas, load_canvas)
+// — never mid-session — so an open canvas the user is actively adjusting is never
+// overwritten. Resolves against the spec as stored in/going into canvas-history.json
+// (binding + its original stale default), not a previously-resolved snapshot, so
+// every reopen re-fetches live numbers.
+
+// Dollar-valued bindings get rounded to the nearest whole dollar — health.ts's
+// 12-month-average fields in particular come out with 10+ decimal places of
+// spurious precision (e.g. 18207.755833333333), which is meaningless on a dollar
+// amount and, unlike the display label, renders verbatim in the GUI's plain
+// <input type="number">.
+const DOLLAR_BINDING_KEYS = new Set<BindingKey>([
+  'monthly_income_12mo_avg',
+  'monthly_expenses_12mo_avg',
+  'monthly_surplus_12mo_avg',
+  'cash_balance',
+  'taxable_brokerage',
+  'liquid_assets',
+  'retirement_balance',
+  'credit_card_debt',
+  'loan_debt',
+  'net_worth',
+]);
+
+// Rounds a resolved binding value to the precision appropriate for its unit, before
+// it is ever assigned to a dial's `default`. Scoped strictly to that assignment —
+// never applied to a dial's step/min/max or to a value the user has typed in.
+function roundForBinding(key: BindingKey, value: number): number {
+  if (DOLLAR_BINDING_KEYS.has(key)) return Math.round(value);
+  if (key === 'savings_rate_pct') return Math.round(value * 10) / 10; // matches fmtPct's 1-decimal display
+  if (key === 'self_age' || key === 'spouse_age') return Math.round(value); // already whole; defensive
+  return value;
+}
+
+export async function resolveCanvasBindings(spec: CanvasSpec): Promise<CanvasSpec> {
+  let values: Partial<Record<BindingKey, number>> = {};
+  try {
+    const [health, pretaxRaw, profile] = await Promise.all([
+      loadHealthData(),
+      getSetting(PRETAX_MONTHLY_KEY),
+      loadProfile(),
+    ]);
+    const taxableBrokerage = health.liquid - health.cash;
+    const pretaxMonthly = pretaxRaw ? parseFloat(pretaxRaw) : 0;
+    const savingsRate = computeSavingsRate(health.monthlyIncome, health.monthlySavings, pretaxMonthly);
+    const currentYear = new Date().getFullYear();
+    const selfAge = profile?.self.birthYear ? currentYear - profile.self.birthYear : undefined;
+    const spouseAge = profile?.spouse?.birthYear ? currentYear - profile.spouse.birthYear : undefined;
+
+    const raw: Partial<Record<BindingKey, number>> = {
+      monthly_income_12mo_avg:   health.monthlyIncome,
+      monthly_expenses_12mo_avg: health.avgMonthlyExpenses,
+      monthly_surplus_12mo_avg:  health.monthlySavings,
+      cash_balance:              health.cash,
+      taxable_brokerage:         taxableBrokerage,
+      liquid_assets:             health.liquid,
+      retirement_balance:        health.retirement,
+      credit_card_debt:          health.totalDebt,
+      loan_debt:                 health.loanDebt,
+      net_worth:                 health.netWorth,
+      ...(savingsRate !== null ? { savings_rate_pct: savingsRate } : {}),
+      ...(selfAge !== undefined ? { self_age: selfAge } : {}),
+      ...(spouseAge !== undefined ? { spouse_age: spouseAge } : {}),
+    };
+
+    for (const [key, value] of Object.entries(raw) as [BindingKey, number][]) {
+      values[key] = roundForBinding(key, value);
+    }
+  } catch {
+    // Fail-soft: if live data can't be loaded at all, leave every dial's existing
+    // (possibly stale) hardcoded default untouched rather than throwing.
+    return spec;
+  }
+
+  return {
+    ...spec,
+    elements: spec.elements.map((el) => {
+      if (el.type !== 'dial') return el;
+      const binding = el.dial.binding as BindingKey | undefined;
+      if (!binding || !Object.prototype.hasOwnProperty.call(values, binding)) return el;
+      const resolved = values[binding];
+      if (resolved === undefined || !isFinite(resolved)) return el;
+      return { ...el, dial: { ...el.dial, default: resolved } };
+    }),
+  };
+}
+
 // ─── Canvas generation ────────────────────────────────────────────────────────
 
 const CANVAS_TOOL = {
@@ -151,6 +294,7 @@ const CANVAS_TOOL = {
             type: { type: 'string', enum: ['section', 'text', 'dial', 'output'] },
             label:   { type: 'string' },
             content: { type: 'string' },
+            visible: { type: 'string', description: 'Boolean expression, same grammar as output expr — dial keys only. Element shows when non-zero.' },
             dial: {
               type: 'object',
               required: ['key', 'label', 'default', 'step', 'format', 'hint'],
@@ -161,8 +305,10 @@ const CANVAS_TOOL = {
                 step:    { type: 'number' },
                 min:     { type: 'number' },
                 max:     { type: 'number' },
-                format:  { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years'] },
+                format:  { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select'] },
                 hint:    { type: 'string' },
+                options: { type: 'array', items: { type: 'string' }, description: 'Required when format is "select" — display strings; the dial value is the 0-based index into this array.' },
+                binding: { type: 'string', enum: [...BINDING_KEYS], description: 'Recognized live-metric key. When set, `default` is refreshed from live data on every load/reopen; always also set `default` as the fallback.' },
               },
             },
             output: {
@@ -171,7 +317,7 @@ const CANVAS_TOOL = {
               properties: {
                 label:  { type: 'string' },
                 expr:   { type: 'string' },
-                format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years'] },
+                format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select'] },
                 color:  { type: 'string', enum: ['positive', 'negative', 'neutral', 'accent'] },
                 signed: { type: 'boolean' },
               },
