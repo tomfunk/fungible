@@ -205,20 +205,14 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
   });
 });
 
-// KNOWN GAP found while writing this regression test (see the dedicated test
-// below): the canvas expression grammar in core/canvas-spec.ts has no `&&`/`||`
-// logical operators at all — the lexer's punctuation class doesn't even include
-// `&`, so `has_option == 1 && strategy == 1` throws a parse error, evalExpr()
-// catches it and returns NaN, and per the documented "fails OPEN" convention
-// (NaN !== 0 is true) the element renders as ALWAYS VISIBLE regardless of dial
-// values — the opposite of the intended AND gate. This is a real bug/gap in
-// core/canvas-spec.ts, not a GUI issue, and out of this fief's land to fix.
-// Worked around here with the logically-equivalent nested ternary
-// (`cond1 ? (cond2 ? 1 : 0) : 0`), which the existing grammar already supports,
-// so the *actual* thing this file is meant to prove — that chained/nested
-// `visible` conditions across elements fall out for free from each element's
-// `visible` being re-evaluated independently on every render — still gets real
-// coverage below.
+// core/canvas-spec.ts's expression grammar now supports real `&&`/`||` logical
+// operators (previously it had none: `&` wasn't even tokenized, so
+// `has_option == 1 && strategy == 1` threw a parse error, evalExpr() caught it
+// and returned NaN, and per the documented "fails OPEN" convention (NaN !== 0
+// is true) the element rendered as ALWAYS VISIBLE regardless of dial values —
+// the opposite of the intended AND gate). This is now fixed; see the
+// regression test below and the natural `&&` used directly in
+// CHAINED_VISIBLE_SPEC's `strategy_detail` dial.
 //
 // Three-level chain: has_option (toggle) gates whether `strategy` (select) renders
 // at all, and `strategy`'s own chosen option in turn gates whether `strategy_detail`
@@ -243,26 +237,25 @@ const CHAINED_VISIBLE_SPEC: CanvasSpec = {
     {
       type: 'dial',
       dial: { key: 'strategy_detail', label: 'Strategy detail', default: 42, step: 1, min: 0, format: 'integer', hint: 'detail dial' },
-      visible: 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0',
+      visible: 'has_option == 1 && strategy == 1',
     },
   ],
 };
 
-describe('GUI CanvasView expression grammar has no logical AND/OR (documents a real gap)', () => {
-  it('a `visible` expression combining two conditions with && fails to parse and fails OPEN (always visible), not closed', () => {
+describe('GUI CanvasView chained visible condition uses real && instead of the nested-ternary workaround', () => {
+  it('`&&` in a `visible` expression behaves as a logical AND, identically to the old nested-ternary equivalent', () => {
     const expr = 'has_option == 1 && strategy == 1';
-    // Neither "false AND false" nor "true AND true" behaves as a logical AND —
-    // both come back NaN because `&&` isn't tokenized at all, so an element gated
-    // by an expression like this would render unconditionally, regardless of the
-    // intended gate.
-    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBeNaN();
-    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBeNaN();
-    // The nested-ternary equivalent used in CHAINED_VISIBLE_SPEC below, by
-    // contrast, correctly implements AND with the grammar as it exists today.
-    const equivalent = 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0';
-    expect(evalExpr(equivalent, { has_option: 0, strategy: 0 })).toBe(0);
-    expect(evalExpr(equivalent, { has_option: 1, strategy: 0 })).toBe(0);
-    expect(evalExpr(equivalent, { has_option: 1, strategy: 1 })).toBe(1);
+    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBe(0);
+    expect(evalExpr(expr, { has_option: 1, strategy: 0 })).toBe(0);
+    expect(evalExpr(expr, { has_option: 0, strategy: 1 })).toBe(0);
+    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBe(1);
+
+    // same truth table as the nested-ternary workaround this expression replaces
+    const nestedTernaryEquivalent = 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0';
+    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 0, strategy: 0 }));
+    expect(evalExpr(expr, { has_option: 1, strategy: 0 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 1, strategy: 0 }));
+    expect(evalExpr(expr, { has_option: 0, strategy: 1 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 0, strategy: 1 }));
+    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 1, strategy: 1 }));
   });
 });
 
