@@ -293,8 +293,14 @@
   display: none;
 }
 
+.yearField {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .listYearInput {
-  width: 60px;
+  width: 52px;
   text-align: right;
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -302,6 +308,24 @@
 
 .listYearInput::-webkit-inner-spin-button {
   display: none;
+}
+
+/* Small +/- steppers alongside the typeable year fields — same idea as
+   DialRow's .stepBtn, sized down to fit inline in a list row. */
+.yearStepBtn {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.yearStepBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .listYearSep {

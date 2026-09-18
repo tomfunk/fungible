@@ -23,10 +23,16 @@ export type LoadedCanvasSpec = CanvasSpec & { _historyId?: string };
 const LABEL_W = 18;
 const VALUE_W = 12;
 const LIST_LABEL_W = 18;
-const LIST_DATES_W = 9; // floor width, e.g. "2020-2040"
+const LIST_START_W = 4;  // floor width, e.g. "2045" or "any"
+const LIST_END_W = 7;    // floor width, e.g. "ongoing"
 
-// One list row contributes exactly these 3 cursor stops, in this order.
-const LIST_CELLS = ['label', 'amount', 'dates'] as const;
+// A list row's start/end year cells step through this range before falling
+// off the bounded end into "no bound" (see stepStartYear/stepEndYear below).
+const MIN_ROW_YEAR = new Date().getFullYear() - 20;
+const MAX_ROW_YEAR = new Date().getFullYear() + 50;
+
+// One list row contributes exactly these 4 cursor stops, in this order.
+const LIST_CELLS = ['label', 'amount', 'start', 'end'] as const;
 type ListCell = typeof LIST_CELLS[number];
 
 // Flattened top-level cursor stop — a dial, one cell of a list row, or (for an
@@ -77,37 +83,44 @@ function stepDialValue(dial: DialDef, dir: 1 | -1, val: number): number {
   return dialStep(dial, dir, val);
 }
 
-// Renders a list row's [startYear, endYear] bounds as one compact editable string:
-// "2020-2040" (both bounds), "2020-" (open-ended), "-2040" (no start), or "" when
-// neither is set (callers show a "—" placeholder for that last case — this function
-// returns "" so it round-trips cleanly through the edit buffer via
-// parseDateRangeInput below, rather than trying to parse the placeholder glyph).
-function dateRangeText(row: ListRowDef): string {
-  if (row.startYear === undefined && row.endYear === undefined) return '';
-  if (row.startYear !== undefined && row.endYear !== undefined) return `${row.startYear}-${row.endYear}`;
-  if (row.startYear !== undefined) return `${row.startYear}-`;
-  return `-${row.endYear}`;
+// A row's start year steps through [undefined, MIN_ROW_YEAR, ..., MAX_ROW_YEAR].
+// undefined means "no start bound" (active from the past). Stepping left off
+// MIN_ROW_YEAR lands on undefined; stepping right from undefined lands on
+// MIN_ROW_YEAR and climbs from there, clamped at MAX_ROW_YEAR.
+function stepStartYear(dir: 1 | -1, val: number | undefined): number | undefined {
+  if (val === undefined) return dir === 1 ? MIN_ROW_YEAR : undefined;
+  const next = val + dir;
+  if (next < MIN_ROW_YEAR) return undefined;
+  if (next > MAX_ROW_YEAR) return MAX_ROW_YEAR;
+  return next;
 }
 
-// Inverse of dateRangeText, for committing the edit buffer. A bare number with no
-// dash is treated as a start-only (open-ended) bound — the simplest reading of "the
-// user typed one year" — rather than requiring "2020-" to mean the same thing.
-function parseDateRangeInput(buffer: string): { start?: number; end?: number } {
+// A row's end year steps through [MIN_ROW_YEAR, ..., MAX_ROW_YEAR, undefined].
+// undefined means "no end bound" (active into the future/ongoing). Stepping
+// right off MAX_ROW_YEAR lands on undefined; stepping left from undefined
+// lands on MAX_ROW_YEAR and descends from there, clamped at MIN_ROW_YEAR.
+function stepEndYear(dir: 1 | -1, val: number | undefined): number | undefined {
+  if (val === undefined) return dir === 1 ? undefined : MAX_ROW_YEAR;
+  const next = val + dir;
+  if (next > MAX_ROW_YEAR) return undefined;
+  if (next < MIN_ROW_YEAR) return MIN_ROW_YEAR;
+  return next;
+}
+
+// Parses a typed edit-buffer for a start/end year cell, same clamp-on-commit
+// convention as every other numeric dial/list cell in this file. A blank
+// buffer commits to `undefined` (no bound) — the same "unbounded" state ←→
+// stepping can reach — rather than being rejected as invalid input. `null`
+// means the buffer didn't parse and the existing value should be left alone
+// (mirrors the isNaN guard used for amount/dial edits).
+function parseYearCellInput(buffer: string): number | undefined | null {
   const trimmed = buffer.trim();
-  if (!trimmed) return {};
-  if (!trimmed.includes('-')) {
-    const n = parseInt(trimmed, 10);
-    return isNaN(n) ? {} : { start: n };
-  }
-  const dashAt = trimmed.indexOf('-');
-  const lo = trimmed.slice(0, dashAt).trim();
-  const hi = trimmed.slice(dashAt + 1).trim();
-  const start = lo ? parseInt(lo, 10) : undefined;
-  const end = hi ? parseInt(hi, 10) : undefined;
-  return {
-    start: start !== undefined && !isNaN(start) ? start : undefined,
-    end: end !== undefined && !isNaN(end) ? end : undefined,
-  };
+  if (!trimmed) return undefined;
+  const n = parseInt(trimmed, 10);
+  if (isNaN(n)) return null;
+  if (n < MIN_ROW_YEAR) return MIN_ROW_YEAR;
+  if (n > MAX_ROW_YEAR) return MAX_ROW_YEAR;
+  return n;
 }
 
 // ─── CanvasView — testable rendering of a CanvasSpec ─────────────────────────
@@ -318,9 +331,12 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
         } else if (cell === 'amount') {
           const n = parseFloat(buffer);
           if (!isNaN(n)) nextRow = { ...row, amount: parseFloat(n.toFixed(10)) };
+        } else if (cell === 'start') {
+          const parsed = parseYearCellInput(buffer);
+          if (parsed !== null) nextRow = { ...row, startYear: parsed };
         } else {
-          const { start, end } = parseDateRangeInput(buffer);
-          nextRow = { ...row, startYear: start, endYear: end };
+          const parsed = parseYearCellInput(buffer);
+          if (parsed !== null) nextRow = { ...row, endYear: parsed };
         }
         persistListRows(listKey, [...rows.slice(0, idx), nextRow, ...rows.slice(idx + 1)]);
       }
@@ -334,8 +350,8 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
       if (key.escape) { setEditMode(false); setEditBuffer(''); return; }
       if (key.return) { applyEdit(editBuffer); return; }
       if (key.backspace || key.delete) { setEditBuffer((b) => b.slice(0, -1)); return; }
-      // The label cell is free text; amount and dates (and dial values) are
-      // restricted to the numeric-ish charset, matching dial editing today.
+      // The label cell is free text; amount, start/end year (and dial values)
+      // are restricted to the numeric-ish charset, matching dial editing today.
       const freeText = currentStop?.kind === 'listCell' && currentStop.cell === 'label';
       if (_input && !key.ctrl && !key.meta && (freeText || /^[\d.\-]$/.test(_input))) {
         setEditBuffer((b) => b + _input);
@@ -357,7 +373,8 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
         if (row) {
           const initial = currentStop.cell === 'label' ? row.label
             : currentStop.cell === 'amount' ? String(row.amount)
-            : dateRangeText(row);
+            : currentStop.cell === 'start' ? (row.startYear !== undefined ? String(row.startYear) : '')
+            : (row.endYear !== undefined ? String(row.endYear) : '');
           setEditBuffer(initial);
           setEditMode(true);
         }
@@ -376,6 +393,20 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
     if (key.leftArrow && currentStop?.kind === 'dial' && currentDial) {
       const k = currentStop.key;
       setDialValues((v) => ({ ...v, [k]: stepDialValue(currentDial, -1, v[k] ?? currentDial.default) }));
+    }
+    if ((key.rightArrow || key.leftArrow) && currentStop?.kind === 'listCell' &&
+        (currentStop.cell === 'start' || currentStop.cell === 'end')) {
+      const { listKey, rowId, cell } = currentStop;
+      const dir: 1 | -1 = key.rightArrow ? 1 : -1;
+      const rows = listRows[listKey] ?? [];
+      const idx = rows.findIndex((r) => r.id === rowId);
+      if (idx !== -1) {
+        const row = rows[idx];
+        const nextRow: ListRowDef = cell === 'start'
+          ? { ...row, startYear: stepStartYear(dir, row.startYear) }
+          : { ...row, endYear: stepEndYear(dir, row.endYear) };
+        persistListRows(listKey, [...rows.slice(0, idx), nextRow, ...rows.slice(idx + 1)]);
+      }
     }
     if (_input === 'r' && currentStop?.kind === 'dial' && currentDial) {
       const k = currentStop.key;
@@ -450,11 +481,12 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
           const rows = list.rows;
           // Shared per-column widths across every row of THIS list — same
           // discipline as the canvas-wide `valueWidth` above, applied per list
-          // rather than globally (a list's amounts/dates aren't dial/output values
+          // rather than globally (a list's amounts/years aren't dial/output values
           // and don't share their column).
           const labelColWidth = rows.reduce((m, r) => Math.max(m, r.label.length), LIST_LABEL_W);
           const amountColWidth = rows.reduce((m, r) => Math.max(m, fmtDialValue(r.amount, format).length), VALUE_W);
-          const datesColWidth = rows.reduce((m, r) => Math.max(m, (dateRangeText(r) || '—').length), LIST_DATES_W);
+          const startColWidth = rows.reduce((m, r) => Math.max(m, (r.startYear !== undefined ? String(r.startYear) : 'any').length), LIST_START_W);
+          const endColWidth = rows.reduce((m, r) => Math.max(m, (r.endYear !== undefined ? String(r.endYear) : 'ongoing').length), LIST_END_W);
 
           const isCurrentCell = (rowId: string, cell: ListCell) =>
             currentStop?.kind === 'listCell' && currentStop.listKey === list.key &&
@@ -472,13 +504,17 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
               ) : rows.map((row) => {
                 const editingLabel  = isCurrentCell(row.id, 'label')  && editMode;
                 const editingAmount = isCurrentCell(row.id, 'amount') && editMode;
-                const editingDates  = isCurrentCell(row.id, 'dates')  && editMode;
+                const editingStart  = isCurrentCell(row.id, 'start')  && editMode;
+                const editingEnd    = isCurrentCell(row.id, 'end')    && editMode;
                 const labelDisplay  = editingLabel  ? editBuffer : row.label;
                 const amountDisplay = editingAmount ? editBuffer : fmtDialValue(row.amount, format);
-                const datesDisplay  = editingDates  ? editBuffer : (dateRangeText(row) || '—');
-                const rowSelected = isCurrentCell(row.id, 'label') || isCurrentCell(row.id, 'amount') || isCurrentCell(row.id, 'dates');
+                const startDisplay  = editingStart  ? editBuffer : (row.startYear !== undefined ? String(row.startYear) : 'any');
+                const endDisplay    = editingEnd    ? editBuffer : (row.endYear   !== undefined ? String(row.endYear)   : 'ongoing');
+                const rowSelected = isCurrentCell(row.id, 'label') || isCurrentCell(row.id, 'amount') ||
+                  isCurrentCell(row.id, 'start') || isCurrentCell(row.id, 'end');
                 const amountBoxWidth = Math.max(amountColWidth, amountDisplay.length) + 4 + (editingAmount ? 1 : 0);
-                const datesBoxWidth  = Math.max(datesColWidth,  datesDisplay.length)  + 4 + (editingDates  ? 1 : 0);
+                const startBoxWidth  = Math.max(startColWidth,  startDisplay.length)  + 4 + (editingStart  ? 1 : 0);
+                const endBoxWidth    = Math.max(endColWidth,    endDisplay.length)    + 4 + (editingEnd    ? 1 : 0);
                 return (
                   <SelectableRow key={row.id} selected={rowSelected} gap={2}>
                     <TruncatedText width={labelColWidth} color={isCurrentCell(row.id, 'label') ? C_ACCENT : undefined}>
@@ -490,9 +526,14 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
                       {editingAmount && <Text color={C_ACCENT}>{CURSOR}</Text>}
                       {' ]'}
                     </TruncatedText>
-                    <TruncatedText width={datesBoxWidth} color={isCurrentCell(row.id, 'dates') ? C_ACCENT : C_NEUTRAL} wrap="truncate-middle">
-                      {'[ '}{datesDisplay.padStart(datesColWidth)}
-                      {editingDates && <Text color={C_ACCENT}>{CURSOR}</Text>}
+                    <TruncatedText width={startBoxWidth} color={isCurrentCell(row.id, 'start') ? C_ACCENT : C_NEUTRAL} wrap="truncate-middle">
+                      {'[ '}{startDisplay.padStart(startColWidth)}
+                      {editingStart && <Text color={C_ACCENT}>{CURSOR}</Text>}
+                      {' ]'}
+                    </TruncatedText>
+                    <TruncatedText width={endBoxWidth} color={isCurrentCell(row.id, 'end') ? C_ACCENT : C_NEUTRAL} wrap="truncate-middle">
+                      {'[ '}{endDisplay.padStart(endColWidth)}
+                      {editingEnd && <Text color={C_ACCENT}>{CURSOR}</Text>}
                       {' ]'}
                     </TruncatedText>
                   </SelectableRow>

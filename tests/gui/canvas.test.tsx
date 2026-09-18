@@ -282,6 +282,83 @@ describe('GUI CanvasView list element', () => {
     expect(screen.getByDisplayValue('3000')).toBeTruthy();
     expect(screen.getByText('$3,400.00')).toBeTruthy(); // 3000 + 400
   });
+
+  it('start/end year fields carry proper min/max bounds and still accept direct typing', () => {
+    renderScreen(<CanvasView spec={LIST_SPEC} />);
+    const currentYear = new Date().getFullYear();
+    const startInput = screen.getByDisplayValue('2020') as HTMLInputElement;
+    const endInput = screen.getByDisplayValue('2028') as HTMLInputElement;
+    expect(startInput.min).toBe(String(currentYear - 20));
+    expect(startInput.max).toBe(String(currentYear + 50));
+    expect(endInput.min).toBe(String(currentYear - 20));
+    expect(endInput.max).toBe(String(currentYear + 50));
+    // direct typing still works — it isn't a step-only control
+    fireEvent.change(startInput, { target: { value: '2021' } });
+    expect(screen.getByDisplayValue('2021')).toBeTruthy();
+  });
+
+  it('typing an out-of-range year clamps into bounds instead of accepting it', () => {
+    renderScreen(<CanvasView spec={LIST_SPEC} />);
+    const currentYear = new Date().getFullYear();
+    const startInput = screen.getByDisplayValue('2020') as HTMLInputElement;
+    fireEvent.change(startInput, { target: { value: '99999' } });
+    expect(screen.getByDisplayValue(String(currentYear + 50))).toBeTruthy();
+
+    const endInput = screen.getByDisplayValue('2028') as HTMLInputElement;
+    fireEvent.change(endInput, { target: { value: '-5' } });
+    expect(screen.getByDisplayValue(String(currentYear - 20))).toBeTruthy();
+  });
+
+  it('stepping the start year down past the minimum clears it to "no bound", and back up restores the minimum', async () => {
+    renderScreen(<CanvasView spec={LIST_SPEC} />);
+    const currentYear = new Date().getFullYear();
+    const minYear = currentYear - 20;
+    const startInput = screen.getByDisplayValue('2020') as HTMLInputElement;
+    fireEvent.change(startInput, { target: { value: String(minYear) } });
+    expect(screen.getByDisplayValue(String(minYear))).toBeTruthy();
+
+    const decrease = screen.getByRole('button', { name: 'Decrease Car payment start year' });
+    await userEvent.click(decrease);
+    const startField = decrease.closest('div')!.querySelector('input') as HTMLInputElement;
+    expect(startField.value).toBe('');
+
+    const increase = screen.getByRole('button', { name: 'Increase Car payment start year' });
+    await userEvent.click(increase);
+    expect(screen.getByDisplayValue(String(minYear))).toBeTruthy();
+  });
+
+  it('stepping the end year up past the maximum clears it to "no bound", and back down restores the maximum', async () => {
+    renderScreen(<CanvasView spec={LIST_SPEC} />);
+    const currentYear = new Date().getFullYear();
+    const maxYear = currentYear + 50;
+    const endInput = screen.getByDisplayValue('2028') as HTMLInputElement;
+    fireEvent.change(endInput, { target: { value: String(maxYear) } });
+    expect(screen.getByDisplayValue(String(maxYear))).toBeTruthy();
+
+    const increase = screen.getByRole('button', { name: 'Increase Car payment end year' });
+    await userEvent.click(increase);
+    const endField = increase.closest('div')!.querySelector('input') as HTMLInputElement;
+    expect(endField.value).toBe('');
+
+    const decrease = screen.getByRole('button', { name: 'Decrease Car payment end year' });
+    await userEvent.click(decrease);
+    expect(screen.getByDisplayValue(String(maxYear))).toBeTruthy();
+  });
+
+  it('a sum_active output still recomputes correctly for a row with an unbounded start or end', async () => {
+    renderScreen(<CanvasView spec={LIST_SPEC} />);
+    // Car payment (400) currently bounded 2020-2028, active in the dial's 2026.
+    // Clear its end bound entirely (step past the max) — it should stay active,
+    // and the sum_active output should keep counting it.
+    const endInput = screen.getByDisplayValue('2028') as HTMLInputElement;
+    const currentYear = new Date().getFullYear();
+    fireEvent.change(endInput, { target: { value: String(currentYear + 50) } });
+    const increase = screen.getByRole('button', { name: 'Increase Car payment end year' });
+    await userEvent.click(increase);
+    const endField = increase.closest('div')!.querySelector('input') as HTMLInputElement;
+    expect(endField.value).toBe('');
+    expect(screen.getByText('$2,400.00')).toBeTruthy(); // still 2000 + 400, now with an open-ended row
+  });
 });
 
 describe('GUI CanvasView list element persistence', () => {

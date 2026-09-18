@@ -29,6 +29,13 @@ function clampDial(dial: DialDef, v: number): number {
   return parseFloat(val.toFixed(10));
 }
 
+// Bounds for a list row's start/end year fields (canvas issue #145: a bare
+// number input with no min/max let a typo become a wildly out-of-range year).
+// Wide enough to cover any real timeline — 20 years back, 50 forward — while
+// still rejecting fat-fingered values like "20260" or "-3".
+const MIN_ROW_YEAR = new Date().getFullYear() - 20;
+const MAX_ROW_YEAR = new Date().getFullYear() + 50;
+
 export function Canvas() {
   const { txFilter } = useNav();
   const [spec, setSpec] = useState<CanvasSpec | null>(null);
@@ -371,10 +378,46 @@ function ListElement({
 
   // Blank means "no bound" (startYear/endYear are optional) — parseFloat('') is
   // NaN, so treat an empty field as `undefined` rather than coercing to a number.
+  // Anything else is clamped into [MIN_ROW_YEAR, MAX_ROW_YEAR], the same
+  // round-and-clamp convention clampDial uses for dials, so a typo like
+  // "20260" or a negative year can't sneak past the field's own min/max.
   function parseYear(raw: string): number | undefined {
     if (raw.trim() === '') return undefined;
     const n = Math.round(parseFloat(raw));
-    return isNaN(n) ? undefined : n;
+    if (isNaN(n)) return undefined;
+    return Math.min(MAX_ROW_YEAR, Math.max(MIN_ROW_YEAR, n));
+  }
+
+  // +/- stepping for discoverability alongside direct typing. Stepping past
+  // the bound on the "outward" side clears to `undefined` (no bound) rather
+  // than sticking at the edge, so the control that sets a bound is the same
+  // one that removes it. Typing a blank value does the same thing directly.
+  function stepStartYear(current: number | undefined, dir: 1 | -1): number | undefined {
+    if (dir === -1) {
+      if (current === undefined || current <= MIN_ROW_YEAR) return undefined;
+      return current - 1;
+    }
+    return current === undefined ? MIN_ROW_YEAR : Math.min(MAX_ROW_YEAR, current + 1);
+  }
+
+  function stepEndYear(current: number | undefined, dir: 1 | -1): number | undefined {
+    if (dir === 1) {
+      if (current === undefined || current >= MAX_ROW_YEAR) return undefined;
+      return current + 1;
+    }
+    return current === undefined ? MAX_ROW_YEAR : Math.max(MIN_ROW_YEAR, current - 1);
+  }
+
+  function stepStart(row: ListRowDef, dir: 1 | -1) {
+    const next = list.rows.map((r) => (r.id === row.id ? { ...r, startYear: stepStartYear(r.startYear, dir) } : r));
+    onChange(next);
+    onCommit(next);
+  }
+
+  function stepEnd(row: ListRowDef, dir: 1 | -1) {
+    const next = list.rows.map((r) => (r.id === row.id ? { ...r, endYear: stepEndYear(r.endYear, dir) } : r));
+    onChange(next);
+    onCommit(next);
   }
 
   return (
@@ -399,23 +442,65 @@ function ListElement({
             }}
             onBlur={() => onCommit(list.rows)}
           />
-          <input
-            type="number"
-            className={styles.listYearInput}
-            placeholder="start yr"
-            value={row.startYear ?? ''}
-            onChange={(e) => patchRow(row.id, { startYear: parseYear(e.target.value) })}
-            onBlur={() => onCommit(list.rows)}
-          />
+          <div className={styles.yearField}>
+            <button
+              type="button"
+              className={styles.yearStepBtn}
+              onClick={() => stepStart(row, -1)}
+              aria-label={`Decrease ${row.label || 'row'} start year`}
+            >
+              −
+            </button>
+            <input
+              type="number"
+              className={styles.listYearInput}
+              placeholder="start yr"
+              value={row.startYear ?? ''}
+              min={MIN_ROW_YEAR}
+              max={MAX_ROW_YEAR}
+              step={1}
+              onChange={(e) => patchRow(row.id, { startYear: parseYear(e.target.value) })}
+              onBlur={() => onCommit(list.rows)}
+            />
+            <button
+              type="button"
+              className={styles.yearStepBtn}
+              onClick={() => stepStart(row, 1)}
+              aria-label={`Increase ${row.label || 'row'} start year`}
+            >
+              +
+            </button>
+          </div>
           <span className={styles.listYearSep}>–</span>
-          <input
-            type="number"
-            className={styles.listYearInput}
-            placeholder="end yr"
-            value={row.endYear ?? ''}
-            onChange={(e) => patchRow(row.id, { endYear: parseYear(e.target.value) })}
-            onBlur={() => onCommit(list.rows)}
-          />
+          <div className={styles.yearField}>
+            <button
+              type="button"
+              className={styles.yearStepBtn}
+              onClick={() => stepEnd(row, -1)}
+              aria-label={`Decrease ${row.label || 'row'} end year`}
+            >
+              −
+            </button>
+            <input
+              type="number"
+              className={styles.listYearInput}
+              placeholder="end yr"
+              value={row.endYear ?? ''}
+              min={MIN_ROW_YEAR}
+              max={MAX_ROW_YEAR}
+              step={1}
+              onChange={(e) => patchRow(row.id, { endYear: parseYear(e.target.value) })}
+              onBlur={() => onCommit(list.rows)}
+            />
+            <button
+              type="button"
+              className={styles.yearStepBtn}
+              onClick={() => stepEnd(row, 1)}
+              aria-label={`Increase ${row.label || 'row'} end year`}
+            >
+              +
+            </button>
+          </div>
           <button
             className={styles.deleteBtn}
             onClick={() => removeRow(row.id)}

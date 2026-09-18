@@ -854,9 +854,13 @@ describe('CanvasView — value column width is shared across rows, not per-row',
 });
 
 // ─── CanvasView — list element (canvas issue #145, Effort A) ─────────────────
-// List rows flatten into the existing top-level ↑↓ cursor list: each row is 3
-// stops (label, amount, dates), navigated exactly like dials. [a] appends a row,
-// [d] removes the one under the cursor.
+// List rows flatten into the existing top-level ↑↓ cursor list: each row is 4
+// stops (label, amount, start, end), navigated exactly like dials. [a] appends
+// a row, [d] removes the one under the cursor. start/end are independent
+// bounded ±1 year steppers (canvas issue #145 follow-up) — never free-typed
+// as a combined "2020-2040" string, though each still accepts an exact typed
+// value via the same numeric edit-buffer + clamp-on-commit flow every other
+// dial/list cell already uses.
 
 const LIST_SPEC: CanvasSpec = {
   title: 'List Test',
@@ -888,18 +892,29 @@ describe('CanvasView — list rows render with aligned columns', () => {
     expect(frame).toContain('-$2,000');
     expect(frame).toContain('-$400');
     expect(frame).toContain('-$50');
-    // no start/end bounds -> "—"; a bounded row shows "start-end".
-    expect(frame).toContain('2020-2026');
+    // r1/r3 have no start/end bound -> "any"/"ongoing"; r2 is bounded 2020-2026,
+    // rendered as two independent cells rather than one combined string.
+    expect(frame).toContain('any');
+    expect(frame).toContain('2020');
+    expect(frame).toContain('2026');
+    expect(frame).toContain('ongoing');
   });
 
-  it('aligns every row\'s amount/dates brackets in the same columns', () => {
+  it('aligns every row\'s amount/start/end brackets in the same columns', () => {
     const { lastFrame } = render(<CanvasView spec={LIST_SPEC} />);
     const lines = (lastFrame() ?? '').split('\n').filter((l) => l.includes('['));
     expect(lines.length).toBe(3); // one line per list row
-    const firstBracketCols = lines.map((l) => l.indexOf('['));
-    const secondBracketCols = lines.map((l) => l.indexOf('[', l.indexOf('[') + 1));
-    expect(new Set(firstBracketCols).size).toBe(1);
-    expect(new Set(secondBracketCols).size).toBe(1);
+    const bracketCols = lines.map((l) => {
+      const cols: number[] = [];
+      let idx = l.indexOf('[');
+      while (idx !== -1) { cols.push(idx); idx = l.indexOf('[', idx + 1); }
+      return cols;
+    });
+    // amount, start, end -> 3 bracketed cells per row.
+    expect(bracketCols.every((cols) => cols.length === 3)).toBe(true);
+    for (let col = 0; col < 3; col++) {
+      expect(new Set(bracketCols.map((cols) => cols[col])).size).toBe(1);
+    }
   });
 
   it('computes the sum_active output over the list rows for the given year', () => {
@@ -952,8 +967,10 @@ describe('CanvasView — list row add/remove', () => {
     const r = render(<CanvasView spec={LIST_SPEC} />);
     await waitFor(() => expect(r.lastFrame()).toContain('-$2,450'));
 
-    // Move from r1:label down 3 stops (label, amount, dates) to land on r2:label,
-    // then remove the car payment row (-400) — total should become -2,050.
+    // Move from r1:label down 4 stops (label, amount, start, end) to land on
+    // r2:label, then remove the car payment row (-400) — total should become
+    // -2,050.
+    r.stdin.write('\x1B[B'); await tick();
     r.stdin.write('\x1B[B'); await tick();
     r.stdin.write('\x1B[B'); await tick();
     r.stdin.write('\x1B[B'); await tick();
@@ -1018,17 +1035,68 @@ describe('CanvasView — list cell editing', () => {
     });
   });
 
-  it('edits the dates cell via the "start-end" text format', async () => {
+  it('steps a start cell left past the minimum into "any" (unbounded), and back', async () => {
     const r = render(<CanvasView spec={LIST_SPEC} />);
-    r.stdin.write('\x1B[B'); await tick();
-    r.stdin.write('\x1B[B'); await tick(); // r1:label -> r1:amount -> r1:dates
-    r.stdin.write('\r'); await tick(); // seed buffer "" (r1 has no bounds)
-    // One stdin.write() per character — see the comment in the amount-edit test
-    // above for why a single bulk write of the whole string doesn't work here.
-    for (const ch of '2025-2030') r.stdin.write(ch);
+    const minYear = new Date().getFullYear() - 20;
+    r.stdin.write('\x1B[B'); await tick(); // r1:label -> r1:amount
+    r.stdin.write('\x1B[B'); await tick(); // r1:amount -> r1:start ("any")
+    r.stdin.write('\x1B[C'); await tick(); // -> step right lands on MIN_ROW_YEAR
+    await waitFor(() => expect(r.lastFrame()).toContain(String(minYear)));
+    r.stdin.write('\x1B[D'); await tick(); // -> step left off the minimum lands on "any"
+    await waitFor(() => expect(r.lastFrame()).toContain('any'));
+  });
+
+  it('steps an end cell right past the maximum into "ongoing", and back', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    const maxYear = new Date().getFullYear() + 50;
+    for (let i = 0; i < 3; i++) { r.stdin.write('\x1B[B'); await tick(); } // r1:label -> ... -> r1:end ("ongoing")
+    r.stdin.write('\x1B[D'); await tick(); // -> step left lands on MAX_ROW_YEAR
+    await waitFor(() => expect(r.lastFrame()).toContain(String(maxYear)));
+    r.stdin.write('\x1B[C'); await tick(); // -> step right off the maximum lands on "ongoing"
+    await waitFor(() => expect(r.lastFrame()).toContain('ongoing'));
+  });
+
+  it('Enter still opens a numeric edit buffer on a start cell, clamping a typed value on commit', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    const maxYear = new Date().getFullYear() + 50;
+    r.stdin.write('\x1B[B'); await tick(); // r1:amount
+    r.stdin.write('\x1B[B'); await tick(); // r1:start ("any")
+    r.stdin.write('\r'); await tick(); // Enter — edit mode, buffer seeded "" (unbounded)
+    // Type an absurdly large year — this is exactly the "bad year" input the
+    // free-text field used to accept unchecked; commit must clamp it.
+    for (const ch of String(maxYear + 999)) r.stdin.write(ch);
     await tick();
-    r.stdin.write('\r');
-    await waitFor(() => expect(r.lastFrame()).toContain('2025-2030'));
+    r.stdin.write('\r'); // commit — clamps to MAX_ROW_YEAR
+    await waitFor(() => expect(r.lastFrame()).toContain(String(maxYear)));
+  });
+
+  it('Enter on a bounded cell can be cleared back to unbounded by committing a blank buffer', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    // r1:label -> amount -> start -> end -> r2:label -> amount -> start -> r2:end
+    // (r2 is bounded 2020-2026).
+    for (let i = 0; i < 7; i++) { r.stdin.write('\x1B[B'); await tick(); }
+    r.stdin.write('\r'); await tick(); // Enter — buffer seeded "2026"
+    for (let i = 0; i < 4; i++) r.stdin.write('\x7F'); // backspace x4 -> ""
+    await tick();
+    r.stdin.write('\r'); // commit blank -> unbounded
+    await waitFor(() => expect(r.lastFrame()).toContain('ongoing'));
+  });
+
+  it('sum_active still works with rows whose start or end is stepped to unbounded', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    await waitFor(() => expect(r.lastFrame()).toContain('-$2,450'));
+    // Move to r2:end (bounded 2020-2026, currently active for 2024) and step it
+    // all the way past MAX_ROW_YEAR to "ongoing" — it should still be active
+    // for 2024 afterward, so the total is unchanged.
+    for (let i = 0; i < 7; i++) { r.stdin.write('\x1B[B'); await tick(); }
+    const maxYear = new Date().getFullYear() + 50;
+    const steps = maxYear - 2026 + 1;
+    for (let i = 0; i < steps; i++) { r.stdin.write('\x1B[C'); await tick(); }
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('ongoing');
+      expect(frame).toContain('-$2,450');
+    });
   });
 
   it('persists a committed cell edit via updateHistoryEntrySpec + resolveAndWriteCanvasSpec', async () => {
