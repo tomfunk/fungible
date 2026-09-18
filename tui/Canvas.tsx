@@ -112,7 +112,16 @@ function parseDateRangeInput(buffer: string): { start?: number; end?: number } {
 
 // ─── CanvasView — testable rendering of a CanvasSpec ─────────────────────────
 
-export function CanvasView({ spec, isActive }: { spec: LoadedCanvasSpec; isActive?: boolean }) {
+export function CanvasView({ spec, isActive, onEditingChange }: {
+  spec: LoadedCanvasSpec;
+  isActive?: boolean;
+  // Fired whenever this view's internal edit-mode flag changes, so a parent
+  // (Canvas() below) that has its own sibling useInput can suppress its own
+  // digit-nav / Escape-to-dashboard handling while this view is mid-edit.
+  // Ink has no stopPropagation between independent useInput hooks — both fire
+  // on every keypress — so this is the only way for the parent to know.
+  onEditingChange?: (editing: boolean) => void;
+}) {
   // Unconditional — every dial in the spec, visible or not — so a hidden sub-dial's
   // value is seeded once at load and survives being hidden and reshown later
   // (freeze semantics, not reset-on-hide).
@@ -225,6 +234,14 @@ export function CanvasView({ spec, isActive }: { spec: LoadedCanvasSpec; isActiv
 
   const [editMode, setEditMode] = useState(false);
   const [editBuffer, setEditBuffer] = useState('');
+
+  // Let the parent Canvas() know when we enter/leave edit mode. Its own
+  // useInput has no way to see our local `editMode` state otherwise, and
+  // without this it double-fires on every keystroke we're using to fill
+  // editBuffer (digits get typed AND navigate to that digit's screen).
+  useEffect(() => {
+    onEditingChange?.(editMode);
+  }, [editMode, onEditingChange]);
 
   function moveSelection(dir: 1 | -1) {
     if (cursorStops.length === 0) { setSelectedKey(undefined); return; }
@@ -507,6 +524,12 @@ export function Canvas({ onNavigate, onLoadSpec, isActive, showHints, spec, spec
   const [history, setHistory]     = useState<CanvasHistoryEntry[]>([]);
   const [historyIdx, setHistoryIdx] = useState(0);
   const refreshKey = useRefreshKey();
+  // Mirrors CanvasView's internal editMode (see onEditingChange above). While
+  // true, the view-mode branch below must not act on the same keypress
+  // CanvasView is consuming for its edit buffer — otherwise a digit typed into
+  // a dial/list-cell edit also navigates to that digit's screen, and Escape to
+  // cancel an edit also navigates to the dashboard.
+  const [isEditingCanvas, setIsEditingCanvas] = useState(false);
 
   const filtered = search
     ? history.filter((e) =>
@@ -548,6 +571,11 @@ export function Canvas({ onNavigate, onLoadSpec, isActive, showHints, spec, spec
     }
 
     // view mode
+    // CanvasView is mid-edit (typing into a dial/list-cell edit buffer) — let
+    // its own useInput exclusively handle this keypress. In particular, don't
+    // let a digit here also switch screens, and don't let Escape here also
+    // navigate to the dashboard on top of CanvasView cancelling the edit.
+    if (isEditingCanvas) return;
     if (key.escape) { onNavigate('dashboard'); return; }
     if (input === '/') { setMode('history'); setHistory(loadHistory()); return; }
     handleNavKey(input, 'canvas', onNavigate);
@@ -590,7 +618,7 @@ export function Canvas({ onNavigate, onLoadSpec, isActive, showHints, spec, spec
         <>
           <Box marginTop={1}><Divider /></Box>
           {spec
-            ? <Box marginTop={1}><CanvasView key={specKey} spec={spec} isActive={isActive} /></Box>
+            ? <Box marginTop={1}><CanvasView key={specKey} spec={spec} isActive={isActive} onEditingChange={setIsEditingCanvas} /></Box>
             : <Box marginTop={1}><Text dimColor>Ask the agent (`) to generate a canvas — or press [/] to browse history.</Text></Box>
           }
         </>

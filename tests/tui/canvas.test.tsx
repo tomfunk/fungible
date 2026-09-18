@@ -5,7 +5,7 @@ import { render } from 'ink-testing-library';
 import { render as inkRender } from 'ink';
 import { evalExpr, fmtValue, fmtDialValue, type CanvasSpec } from '../../core/canvas-agent.js';
 import type { CanvasHistoryEntry } from '../../core/canvas-history.js';
-import { CanvasView, type LoadedCanvasSpec } from '../../tui/Canvas.js';
+import { Canvas, CanvasView, type LoadedCanvasSpec } from '../../tui/Canvas.js';
 
 // core/canvas-history.ts does real readFileSync/writeFileSync against
 // ~/.fungible paths — mocked here so list-row persistence tests (further below)
@@ -1094,5 +1094,84 @@ describe('CanvasView — list visibility via count()', () => {
       expect(frame).toContain('Item count');
       expect(frame).toContain('1');
     });
+  });
+});
+
+// ─── Canvas — parent must not double-fire nav/Escape while CanvasView edits ──
+// Regression test: Canvas() has its own useInput as a sibling of CanvasView's.
+// Ink has no stopPropagation between independent useInput hooks, so both used
+// to fire on every keypress — a digit typed into a dial/list-cell edit buffer
+// also switched screens, and Escape to cancel an edit also navigated to the
+// dashboard on the same keypress. Canvas() now tracks CanvasView's editMode via
+// an onEditingChange callback and suppresses its own handling while editing.
+
+const DIAL_SPEC: LoadedCanvasSpec = {
+  title: 'Dial Test',
+  elements: [
+    { type: 'dial', dial: { key: 'amount', label: 'Amount', default: 100, step: 100, min: 0, format: 'dollar', hint: 'an amount' } },
+  ],
+};
+
+describe('Canvas — suppresses digit-nav and Escape-to-dashboard while CanvasView is mid-edit', () => {
+  it('typing digits into a dial edit buffer does not navigate to that digit\'s screen', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <Canvas onNavigate={onNavigate} onLoadSpec={() => {}} showHints={false} spec={DIAL_SPEC} specKey={0} />
+    );
+    r.stdin.write('\r'); await tick(); // Enter -> edit mode, buffer seeded "100"
+    expect(r.lastFrame()).toContain('100');
+    for (let i = 0; i < 3; i++) r.stdin.write('\x7F'); // clear "100"
+    for (const ch of '2500') r.stdin.write(ch);
+    await tick();
+    expect(onNavigate).not.toHaveBeenCalled();
+    r.stdin.write('\r'); // commit
+    await waitFor(() => expect(r.lastFrame()).toContain('$2,500'));
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('typing digits into a list-cell edit buffer does not navigate to that digit\'s screen', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <Canvas onNavigate={onNavigate} onLoadSpec={() => {}} showHints={false} spec={LIST_SPEC} specKey={0} />
+    );
+    r.stdin.write('\x1B[B'); await tick(); // r1:label -> r1:amount
+    r.stdin.write('\r');     await tick(); // Enter -> edit mode, buffer seeded "-2000"
+    for (let i = 0; i < 5; i++) r.stdin.write('\x7F');
+    for (const ch of '-3000') r.stdin.write(ch);
+    await tick();
+    expect(onNavigate).not.toHaveBeenCalled();
+    r.stdin.write('\r'); // commit
+    await waitFor(() => expect(r.lastFrame()).toContain('-$3,000'));
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('Escape while editing cancels just the edit, without also navigating to the dashboard', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <Canvas onNavigate={onNavigate} onLoadSpec={() => {}} showHints={false} spec={DIAL_SPEC} specKey={0} />
+    );
+    r.stdin.write('\r'); await tick(); // enter edit mode, buffer "100"
+    r.stdin.write('9');  await tick(); // buffer "1009"
+    r.stdin.write('\x1B'); // Escape — cancel the edit
+    await waitFor(() => expect(r.lastFrame()).toContain('$100')); // unchanged: edit was cancelled, not committed
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('Escape when NOT editing still navigates to the dashboard, unchanged', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <Canvas onNavigate={onNavigate} onLoadSpec={() => {}} showHints={false} spec={DIAL_SPEC} specKey={0} />
+    );
+    r.stdin.write('\x1B'); // Escape, not editing
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+  });
+
+  it('digit-based screen switching still works outside edit mode', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <Canvas onNavigate={onNavigate} onLoadSpec={() => {}} showHints={false} spec={DIAL_SPEC} specKey={0} />
+    );
+    r.stdin.write('2'); // not editing -> digit nav to transactions
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('transactions'));
   });
 });
