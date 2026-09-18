@@ -128,6 +128,70 @@ describe('visible expressions (evalExpr, same grammar as output expr)', () => {
   });
 });
 
+// ─── evalExpr — logical &&/|| (compound `visible` conditions) ─────────────────
+// Before this grammar addition, a compound condition like "a == 1 && b == 1" threw
+// in the lexer/parser (no `&&`/`||` token existed), was caught, and returned NaN —
+// which is `!== 0`, so a `visible` field using `&&`/`||` failed OPEN (stayed
+// visible) instead of hiding the element, the worst possible failure direction for
+// a condition someone wrote specifically to hide something.
+
+describe('evalExpr — && / ||', () => {
+  it('&& is 1 only when both operands are truthy (nonzero)', () => {
+    expect(evalExpr('1 && 1', {})).toBe(1);
+    expect(evalExpr('1 && 0', {})).toBe(0);
+    expect(evalExpr('0 && 1', {})).toBe(0);
+    expect(evalExpr('0 && 0', {})).toBe(0);
+  });
+
+  it('|| is 1 when at least one operand is truthy (nonzero)', () => {
+    expect(evalExpr('1 || 1', {})).toBe(1);
+    expect(evalExpr('1 || 0', {})).toBe(1);
+    expect(evalExpr('0 || 1', {})).toBe(1);
+    expect(evalExpr('0 || 0', {})).toBe(0);
+  });
+
+  it('chains left-to-right across 3+ operands, not just two', () => {
+    expect(evalExpr('1 && 1 && 1', {})).toBe(1);
+    expect(evalExpr('1 && 1 && 0', {})).toBe(0);
+    expect(evalExpr('0 || 0 || 1', {})).toBe(1);
+    expect(evalExpr('0 || 0 || 0', {})).toBe(0);
+  });
+
+  it('combines with comparisons at the expected precedence (comparison binds tighter than && / ||)', () => {
+    expect(evalExpr('1 == 1 && 2 == 2', {})).toBe(1);
+    expect(evalExpr('1 == 1 && 2 == 3', {})).toBe(0);
+    expect(evalExpr('1 == 2 || 2 == 2', {})).toBe(1);
+    expect(evalExpr('1 == 2 || 2 == 3', {})).toBe(0);
+  });
+
+  it('&& binds tighter than || (standard precedence)', () => {
+    // 0 || (1 && 0) === 0 || 0 === 0 — if && bound looser this would misparse
+    expect(evalExpr('0 || 1 && 0', {})).toBe(0);
+    // 1 || (0 && 0) === 1 || 0 === 1
+    expect(evalExpr('1 || 0 && 0', {})).toBe(1);
+  });
+
+  it('composes with the ternary operator (?: still binds loosest)', () => {
+    expect(evalExpr('(1 == 1 && 2 == 2) ? 100 : 200', {})).toBe(100);
+    expect(evalExpr('(1 == 1 && 2 == 3) ? 100 : 200', {})).toBe(200);
+  });
+
+  it('reads dial keys from scope, same as comparison operands do', () => {
+    expect(evalExpr('has_option == 1 && strategy == 1', { has_option: 1, strategy: 1 })).toBe(1);
+    expect(evalExpr('has_option == 1 && strategy == 1', { has_option: 1, strategy: 0 })).toBe(0);
+  });
+
+  it('resolves the bug scenario correctly: a compound `visible` condition now hides rather than failing open', () => {
+    // Before the fix this threw internally and returned NaN (`!== 0` → fails open,
+    // i.e. stays visible). It must now evaluate to the correct 0 so the element
+    // is correctly hidden.
+    const result = evalExpr('a == 1 && b == 1', { a: 0, b: 0 });
+    expect(result).toBe(0);
+    expect(Number.isNaN(result)).toBe(false);
+    expect(result !== 0).toBe(false);
+  });
+});
+
 // ─── evalExpr lists: sum_active / count (canvas issue #145, Phase 2 Effort A) ────
 
 describe('evalExpr — sum_active(list_key.amount, year_expr)', () => {

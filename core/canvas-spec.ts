@@ -117,10 +117,11 @@ export type ListRowScope = { amount: number; startYear?: number; endYear?: numbe
 // ─── Expression evaluator ─────────────────────────────────────────────────────
 // Safe recursive-descent parser — no new Function / eval. Supports the grammar
 // documented in the canvas system prompt: number/Infinity literals, dial keys,
-// parentheses, unary +/-, arithmetic, comparisons, ternary, Math.{pow,log,abs,
-// round,floor,ceil}, and the two list builtins sum_active()/count() (see below).
-// Unknown identifiers resolve to NaN; anything outside the grammar throws and is
-// caught as NaN.
+// parentheses, unary +/-, arithmetic, comparisons, logical &&/|| (standard
+// precedence, left-to-right chaining, no short-circuiting — see logicalOr/
+// logicalAnd below), ternary, Math.{pow,log,abs,round,floor,ceil}, and the two
+// list builtins sum_active()/count() (see below). Unknown identifiers resolve to
+// NaN; anything outside the grammar throws and is caught as NaN.
 //
 // `CanvasElement.visible` reuses this exact evaluator against the dial-value scope
 // plus list data (dial keys → numeric value, and lists → sum_active()/count(); never
@@ -145,7 +146,7 @@ function lex(src: string): string[] {
   // Safe alongside the `\.\d+` leading-dot-decimal alternative (e.g. `.5`) because
   // that alternative is tried first in the alternation — a bare `.` only falls
   // through to the punctuation class when it isn't followed by a digit.
-  const re = /(\d+\.?\d*|\.\d+|Infinity|Math\.[a-z]+|[A-Za-z_]\w*|<=|>=|==|!=|[-+*/()<>?:,.])|(\s+)/y;
+  const re = /(\d+\.?\d*|\.\d+|Infinity|Math\.[a-z]+|[A-Za-z_]\w*|<=|>=|==|!=|&&|\|\||[-+*/()<>?:,.])|(\s+)/y;
   const out: string[] = [];
   let i = 0;
   while (i < src.length) {
@@ -165,7 +166,7 @@ function parseEval(toks: string[], scope: Record<string, number>, lists: Record<
   const expect = (t: string) => { if (next() !== t) throw new Error(`expected ${t}`); };
 
   function ternary(): number {
-    const cond = comparison();
+    const cond = logicalOr();
     if (peek() === '?') {
       next();
       const a = ternary();
@@ -174,6 +175,31 @@ function parseEval(toks: string[], scope: Record<string, number>, lists: Record<
       return cond !== 0 ? a : b;
     }
     return cond;
+  }
+  // `||`/`&&` are additive grammar surface alongside the pre-existing comparison
+  // operators — standard precedence (`||` loosest, `&&` tighter, both looser than
+  // comparison), left-to-right chaining so `a && b && c` works with any number of
+  // operands. No short-circuiting: this grammar is pure arithmetic with no side
+  // effects, so always evaluating both operands is harmless and keeps the parser
+  // simple. Truthiness matches the rest of the grammar: any nonzero number is
+  // truthy (`!== 0`); results are the canonical 1/0, same as the comparison ops.
+  function logicalOr(): number {
+    let v = logicalAnd();
+    while (peek() === '||') {
+      next();
+      const r = logicalAnd();
+      v = (v !== 0 || r !== 0) ? 1 : 0;
+    }
+    return v;
+  }
+  function logicalAnd(): number {
+    let v = comparison();
+    while (peek() === '&&') {
+      next();
+      const r = comparison();
+      v = (v !== 0 && r !== 0) ? 1 : 0;
+    }
+    return v;
   }
   function comparison(): number {
     const l = additive();

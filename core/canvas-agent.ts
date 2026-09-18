@@ -222,11 +222,14 @@ Example:
 
 ## Conditional visibility
 
-Any element — \`section\`, \`text\`, \`dial\`, \`output\`, or \`list\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys and list data via \`sum_active\`/\`count\` — never output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice.
+Any element — \`section\`, \`text\`, \`dial\`, \`output\`, or \`list\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys and list data via \`sum_active\`/\`count\` — never output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice. Comparisons (\`== != < <= > >=\`) and the logical operators \`&&\`/\`||\` are both available — combine them for a compound condition ("show this only when the toggle is on AND the select is set to X") instead of nesting a ternary or approximating AND with multiplication.
 
 Example — a bonus amount dial only shown when the bonus toggle is on:
   { "type": "dial", "dial": { "key": "has_bonus", "label": "Annual bonus?", "default": 0, "step": 1, "format": "toggle", "hint": "expecting a bonus this year" }},
   { "type": "dial", "dial": { "key": "bonus_amount", "label": "Bonus amount", "default": 5000, "step": 500, "min": 0, "format": "dollar", "hint": "expected bonus" }, "visible": "has_bonus == 1" }
+
+Example — a compound condition using \`&&\`, shown only when both a toggle and a select match:
+  { "type": "output", "output": { "label": "Spouse income", "expr": "spouse_income", "format": "dollar" }, "visible": "has_spouse == 1 && spouse_income_type == 2" }
 
 ## Existing screen conventions (for consistency)
 
