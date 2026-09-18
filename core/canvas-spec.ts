@@ -62,12 +62,40 @@ export type ListDef = {
   rows: ListRowDef[];
 };
 
+// One plotted/tabulated series of a `chart`/`table` element — evaluated once per
+// step of the projection's `driver` dial (see ProjectionDef, projectSeries() below).
+export type ProjectionSeriesDef = {
+  label: string;
+  // Same grammar as OutputDef.expr — dial keys plus sum_active()/count() over list
+  // data. Deliberately NOT other outputs' `key`s: a projection varies one dial
+  // across a whole range, so reading a value computed from a single fixed dial
+  // snapshot (an output) raises the same cycle/ordering ambiguity that already
+  // keeps `visible` dial-only — see evalExpr's doc comment above.
+  expr: string;
+  format: DialFormat;
+  color?: 'positive' | 'negative' | 'neutral' | 'accent';
+  signed?: boolean;
+};
+
+// A `chart`/`table` element's shared shape: one or more series evaluated across
+// the full range of a driver dial, one point per step. See projectSeries() below
+// for how the range is walked and the 120-point cap applied.
+export type ProjectionDef = {
+  label: string;
+  // Key of an existing `dial` element in the same spec — its min/max/step are the
+  // single source of truth for the projection's range and never redeclared here.
+  driver: string;
+  series: ProjectionSeriesDef[];
+};
+
 export type CanvasElement =
   | { type: 'section'; label: string; visible?: string }
   | { type: 'text';    content: string; visible?: string }
   | { type: 'dial';    dial: DialDef; visible?: string }
   | { type: 'output';  output: OutputDef; visible?: string }
-  | { type: 'list';    list: ListDef; visible?: string };
+  | { type: 'list';    list: ListDef; visible?: string }
+  | { type: 'chart';   chart: ProjectionDef; visible?: string }
+  | { type: 'table';   table: ProjectionDef; visible?: string };
 
 export type CanvasSpec = {
   title: string;
@@ -301,6 +329,59 @@ export function computeOutputValues(
     results.push(value);
   }
   return results;
+}
+
+// One evaluated step of a projection: `x` is the driver dial's value at that step,
+// `values` is each series' evalExpr result, in series array order.
+export type ProjectionPoint = { x: number; values: number[] };
+
+// Hard cap on returned points — a runtime safety backstop, not the expected case
+// (the canvas-agent system prompt targets far fewer steps for normal driver
+// ranges). When the driver's raw step count would exceed this, the range is
+// resampled to exactly this many evenly-spaced points spanning the full
+// [min, max] — never truncated from `min`, which would silently cut off the tail
+// of the horizon.
+const PROJECTION_POINT_CAP = 120;
+
+// Walks `driverKey`'s dial from min to max by step (min/max/step looked up from
+// the matching `dial` element in `elements` — never redeclared on the projection
+// itself), evaluating every series' `expr` at each step via evalExpr directly
+// (deliberately NOT computeOutputValues — see ProjectionSeriesDef's doc comment).
+// A missing driver dial, missing min/max, a non-positive step, or max < min is a
+// structural "nothing to show" and returns `[]` — distinct from evalExpr's
+// per-value NaN-on-arithmetic-error convention, so renderers should treat an
+// empty result as unavailable rather than rendering a NaN-filled row.
+export function projectSeries(
+  elements: CanvasElement[],
+  dialValues: Record<string, number>,
+  lists: Record<string, ListRowScope[]>,
+  driverKey: string,
+  series: ProjectionSeriesDef[],
+): ProjectionPoint[] {
+  const driverEl = elements.find(
+    (el): el is Extract<CanvasElement, { type: 'dial' }> => el.type === 'dial' && el.dial.key === driverKey,
+  );
+  if (!driverEl) return [];
+  const { min, max, step } = driverEl.dial;
+  if (min === undefined || max === undefined || step === undefined) return [];
+  if (step <= 0 || max < min) return [];
+
+  // Small epsilon guards against float error in (max - min) / step landing just
+  // under a whole number (e.g. 0.30000000000000004) and undercounting by one.
+  const rawCount = Math.floor((max - min) / step + 1e-9) + 1;
+
+  const xs: number[] = [];
+  if (rawCount <= PROJECTION_POINT_CAP) {
+    for (let i = 0; i < rawCount; i++) xs.push(min + i * step);
+  } else {
+    const n = PROJECTION_POINT_CAP;
+    for (let i = 0; i < n; i++) xs.push(min + (i * (max - min)) / (n - 1));
+  }
+
+  return xs.map((x) => {
+    const scope = { ...dialValues, [driverKey]: x };
+    return { x, values: series.map((s) => evalExpr(s.expr, scope, lists)) };
+  });
 }
 
 export function fmtValue(n: number, format: DialFormat, signed = false): string {
