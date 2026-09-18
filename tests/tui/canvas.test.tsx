@@ -4,7 +4,34 @@ import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
 import { render as inkRender } from 'ink';
 import { evalExpr, fmtValue, fmtDialValue, type CanvasSpec } from '../../core/canvas-agent.js';
-import { CanvasView } from '../../tui/Canvas.js';
+import type { CanvasHistoryEntry } from '../../core/canvas-history.js';
+import { CanvasView, type LoadedCanvasSpec } from '../../tui/Canvas.js';
+
+// core/canvas-history.ts does real readFileSync/writeFileSync against
+// ~/.fungible paths — mocked here so list-row persistence tests (further below)
+// never touch real disk. updateHistoryEntrySpec/resolveAndWriteCanvasSpec are
+// spies so tests can assert they were called with the expected args; loadHistory/
+// deleteHistoryEntry are unused by CanvasView but stubbed too in case a future
+// test in this file exercises the outer `Canvas` history browser.
+vi.mock('../../core/canvas-history.js', () => ({
+  loadHistory: vi.fn(() => []),
+  deleteHistoryEntry: vi.fn(() => true),
+  updateHistoryEntrySpec: vi.fn((id: string, spec: CanvasSpec) => ({
+    id, title: spec.title, prompt: '', spec, createdAt: '', updatedAt: new Date().toISOString(),
+  } satisfies CanvasHistoryEntry)),
+  resolveAndWriteCanvasSpec: vi.fn(async (spec: CanvasSpec) => spec),
+}));
+
+// A bare stdin.write() only enqueues a Node 'data' event — it does not itself wait
+// for the resulting React re-render to commit. Chaining several writes back to
+// back with no await between them lets Ink's useInput handlers all run against the
+// SAME stale render (React 18 batches the setState calls), so e.g. a down-arrow
+// immediately followed by Enter can still see the pre-arrow selection. Every
+// multi-step key sequence below awaits `tick()` (or an assertion via `waitFor`)
+// between steps so each keypress is handled against the just-committed render.
+async function tick(ms = 20): Promise<void> {
+  await new Promise((res) => setTimeout(res, ms));
+}
 
 async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
   const deadline = Date.now() + timeout;
@@ -530,6 +557,83 @@ describe('CanvasView — visible filtering', () => {
   });
 });
 
+// ─── CanvasView — inter-output references (canvas issue #145, Effort B) ──────
+// A later output's `expr` may reference an earlier output's `key`, resolved via
+// computeOutputValues() — the same way it already references a dial key.
+
+const OUTPUT_REF_SPEC: CanvasSpec = {
+  title: 'Output Reference Test',
+  elements: [
+    { type: 'dial', dial: { key: 'income', label: 'Income', default: 5_000, step: 100, min: 0, format: 'dollar', hint: 'monthly income' } },
+    { type: 'output', output: { label: 'Monthly', key: 'm', expr: 'income * 0.1', format: 'dollar' } },
+    { type: 'output', output: { label: 'Annual', expr: 'm * 12', format: 'dollar' } },
+  ],
+};
+
+describe('CanvasView — inter-output references', () => {
+  it('resolves a later output referencing an earlier output by key', () => {
+    const { lastFrame } = render(<CanvasView spec={OUTPUT_REF_SPEC} />);
+    const frame = lastFrame() ?? '';
+    // income * 0.1 = 500; 500 * 12 = 6,000
+    expect(frame).toContain('Monthly');
+    expect(frame).toContain('$500');
+    expect(frame).toContain('Annual');
+    expect(frame).toContain('$6,000');
+  });
+
+  it('recomputes a dependent output when the underlying dial changes', async () => {
+    const r = render(<CanvasView spec={OUTPUT_REF_SPEC} />);
+    r.stdin.write('\x1B[C'); // income 5,000 -> 5,100
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      // 5,100 * 0.1 = 510; 510 * 12 = 6,120
+      expect(frame).toContain('$510');
+      expect(frame).toContain('$6,120');
+    });
+  });
+
+  it('renders — (NaN) rather than crashing when an output references a nonexistent/later key', () => {
+    const BAD_REF_SPEC: CanvasSpec = {
+      title: 'Bad Reference Test',
+      elements: [
+        { type: 'dial', dial: { key: 'income', label: 'Income', default: 5_000, step: 100, min: 0, format: 'dollar', hint: 'monthly income' } },
+        // references "later", which is only defined below — a forward reference
+        // never resolves (evalExpr sees an unknown identifier and returns NaN).
+        { type: 'output', output: { label: 'Broken', expr: 'later * 2', format: 'dollar' } },
+        { type: 'output', output: { label: 'Later', key: 'later', expr: 'income * 0.2', format: 'dollar' } },
+      ],
+    };
+    expect(() => render(<CanvasView spec={BAD_REF_SPEC} />)).not.toThrow();
+    const { lastFrame } = render(<CanvasView spec={BAD_REF_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Broken');
+    expect(frame).toContain('—');
+    expect(frame).toContain('Later');
+    expect(frame).toContain('$1,000'); // income * 0.2 = 1,000, unaffected by the broken row above it
+  });
+
+  it('a hidden output still computes and is referenceable by a later visible output', () => {
+    const HIDDEN_OUTPUT_SPEC: CanvasSpec = {
+      title: 'Hidden Output Reference Test',
+      elements: [
+        { type: 'dial', dial: { key: 'income', label: 'Income', default: 5_000, step: 100, min: 0, format: 'dollar', hint: 'monthly income' } },
+        { type: 'dial', dial: { key: 'some_toggle', label: 'Some toggle', default: 0, step: 1, min: 0, max: 1, format: 'toggle', hint: 'toggle it' } },
+        // hidden — visible only when some_toggle is on — but still computes.
+        { type: 'output', output: { label: 'Hidden base', key: 'base', expr: 'income * 0.1', format: 'dollar' }, visible: 'some_toggle == 1' },
+        { type: 'output', output: { label: 'Visible derived', expr: 'base * 3', format: 'dollar' } },
+      ],
+    };
+    const { lastFrame } = render(<CanvasView spec={HIDDEN_OUTPUT_SPEC} />);
+    const frame = lastFrame() ?? '';
+    // "Hidden base" is not rendered (some_toggle defaults to off)...
+    expect(frame).not.toContain('Hidden base');
+    // ...but it still computed, so the visible output referencing it by key is correct:
+    // income * 0.1 = 500; 500 * 3 = 1,500 — not NaN/"—" despite the row being hidden.
+    expect(frame).toContain('Visible derived');
+    expect(frame).toContain('$1,500');
+  });
+});
+
 // ─── CanvasView — row height stays constant regardless of hint length ────────
 // Regression test for issue #145 follow-up: a long unselected hint used to wrap
 // to a second line while the selected row's short control hint didn't, so moving
@@ -746,5 +850,249 @@ describe('CanvasView — value column width is shared across rows, not per-row',
     // previous fix; this is the cross-row alignment that fix broke).
     expect(openCols[0]).toBe(openCols[1]);
     expect(closeCols[0]).toBe(closeCols[1]);
+  });
+});
+
+// ─── CanvasView — list element (canvas issue #145, Effort A) ─────────────────
+// List rows flatten into the existing top-level ↑↓ cursor list: each row is 3
+// stops (label, amount, dates), navigated exactly like dials. [a] appends a row,
+// [d] removes the one under the cursor.
+
+const LIST_SPEC: CanvasSpec = {
+  title: 'List Test',
+  elements: [
+    {
+      type: 'list',
+      list: {
+        key: 'expenses',
+        label: 'Recurring expenses',
+        rows: [
+          { id: 'r1', label: 'Rent', amount: -2000 },
+          { id: 'r2', label: 'Car payment', amount: -400, startYear: 2020, endYear: 2026 },
+          { id: 'r3', label: 'Streaming', amount: -50 },
+        ],
+      },
+    },
+    { type: 'output', output: { label: 'Total (2024)', expr: 'sum_active(expenses.amount, 2024)', format: 'dollar' } },
+  ],
+};
+
+describe('CanvasView — list rows render with aligned columns', () => {
+  it('shows every row label and its formatted amount', () => {
+    const { lastFrame } = render(<CanvasView spec={LIST_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Recurring expenses');
+    expect(frame).toContain('Rent');
+    expect(frame).toContain('Car payment');
+    expect(frame).toContain('Streaming');
+    expect(frame).toContain('-$2,000');
+    expect(frame).toContain('-$400');
+    expect(frame).toContain('-$50');
+    // no start/end bounds -> "—"; a bounded row shows "start-end".
+    expect(frame).toContain('2020-2026');
+  });
+
+  it('aligns every row\'s amount/dates brackets in the same columns', () => {
+    const { lastFrame } = render(<CanvasView spec={LIST_SPEC} />);
+    const lines = (lastFrame() ?? '').split('\n').filter((l) => l.includes('['));
+    expect(lines.length).toBe(3); // one line per list row
+    const firstBracketCols = lines.map((l) => l.indexOf('['));
+    const secondBracketCols = lines.map((l) => l.indexOf('[', l.indexOf('[') + 1));
+    expect(new Set(firstBracketCols).size).toBe(1);
+    expect(new Set(secondBracketCols).size).toBe(1);
+  });
+
+  it('computes the sum_active output over the list rows for the given year', () => {
+    const { lastFrame } = render(<CanvasView spec={LIST_SPEC} />);
+    const frame = lastFrame() ?? '';
+    // 2024 is within [2020,2026] for the car payment, so all 3 rows are active:
+    // -2000 + -400 + -50 = -2450.
+    expect(frame).toContain('Total (2024)');
+    expect(frame).toContain('-$2,450');
+  });
+});
+
+describe('CanvasView — list row add/remove', () => {
+  it('adds a row via [a], and the cursor lands on it so [d] removes the just-added row', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    // Cursor starts on the first stop overall — this spec has no dial, so that's
+    // r1's label cell.
+    r.stdin.write('a');
+    await waitFor(() => expect(r.lastFrame()).toContain('New row'));
+    expect((r.lastFrame() ?? '').split('\n').filter((l) => l.includes('['))).toHaveLength(4);
+
+    // Selection followed the new row (addRow sets selectedKey to its label cell) —
+    // [d] here removes the row we just added, not one of the original three.
+    expect(() => r.stdin.write('d')).not.toThrow();
+    await waitFor(() => expect(r.lastFrame()).not.toContain('New row'));
+    const frame = r.lastFrame() ?? '';
+    expect(frame).toContain('Rent');
+    expect(frame).toContain('Car payment');
+    expect(frame).toContain('Streaming');
+  });
+
+  it('does not crash when the last row in a list is removed, and falls back to the empty-list placeholder', async () => {
+    const ONE_ROW_SPEC: CanvasSpec = {
+      title: 'One row',
+      elements: [
+        { type: 'list', list: { key: 'solo', label: 'Solo list', rows: [{ id: 'only', label: 'Only row', amount: 10 }] } },
+      ],
+    };
+    const r = render(<CanvasView spec={ONE_ROW_SPEC} />);
+    expect(() => r.stdin.write('d')).not.toThrow();
+    await waitFor(() => expect(r.lastFrame()).toContain('No rows yet'));
+
+    // Cursor safety: further keys (nav, add) must not crash once the list is empty.
+    expect(() => r.stdin.write('\x1B[B')).not.toThrow();
+    expect(() => r.stdin.write('a')).not.toThrow();
+    await waitFor(() => expect(r.lastFrame()).toContain('New row'));
+  });
+
+  it('recomputes a sum_active output as rows are added and removed', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    await waitFor(() => expect(r.lastFrame()).toContain('-$2,450'));
+
+    // Move from r1:label down 3 stops (label, amount, dates) to land on r2:label,
+    // then remove the car payment row (-400) — total should become -2,050.
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('d');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('Car payment');
+      expect(frame).toContain('-$2,050');
+    });
+  });
+});
+
+describe('CanvasView — list cell editing', () => {
+  it('edits a cell in place: Enter seeds the buffer, typing changes it, Enter commits', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    r.stdin.write('\x1B[B'); await tick(); // r1:label -> r1:amount
+    r.stdin.write('\r');     await tick(); // Enter — edit mode, buffer seeded "-2000"
+    expect(r.lastFrame()).toContain('-2000'); // bracket now shows the raw edit buffer
+    // Clear "-2000" (5 chars) and retype "-3000" — one stdin.write() per character,
+    // matching how a real terminal delivers keystrokes one at a time (a single
+    // multi-char write here is delivered as one bulk `input` string, which fails
+    // the numeric cell's single-character regex gate and is silently dropped).
+    for (let i = 0; i < 5; i++) r.stdin.write('\x7F');
+    for (const ch of '-3000') r.stdin.write(ch);
+    await tick();
+    r.stdin.write('\r'); // commit
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('-$3,000');
+      // dependent output recomputed: -3000 + -400 + -50 = -3450
+      expect(frame).toContain('-$3,450');
+    });
+  });
+
+  it('Esc cancels an in-progress cell edit without committing', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    r.stdin.write('\x1B[B'); await tick(); // r1:amount
+    r.stdin.write('\r');     await tick();
+    expect(r.lastFrame()).toContain('-2000');
+    r.stdin.write('9');      await tick();
+    r.stdin.write('\x1B');   // Esc
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('-$2,000');
+      expect(frame).not.toContain('-20009');
+    });
+  });
+
+  it('edits the label cell as free text', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    r.stdin.write('\r'); await tick(); // r1:label already selected — Enter to edit "Rent"
+    r.stdin.write('\x7F'); await tick();
+    r.stdin.write('\x7F'); await tick();
+    r.stdin.write('\x7F'); await tick();
+    r.stdin.write('\x7F'); await tick(); // backspace x4 -> ""
+    r.stdin.write('Mortgage'); await tick();
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Mortgage');
+      expect(frame).not.toContain('Rent');
+    });
+  });
+
+  it('edits the dates cell via the "start-end" text format', async () => {
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick(); // r1:label -> r1:amount -> r1:dates
+    r.stdin.write('\r'); await tick(); // seed buffer "" (r1 has no bounds)
+    // One stdin.write() per character — see the comment in the amount-edit test
+    // above for why a single bulk write of the whole string doesn't work here.
+    for (const ch of '2025-2030') r.stdin.write(ch);
+    await tick();
+    r.stdin.write('\r');
+    await waitFor(() => expect(r.lastFrame()).toContain('2025-2030'));
+  });
+
+  it('persists a committed cell edit via updateHistoryEntrySpec + resolveAndWriteCanvasSpec', async () => {
+    const { updateHistoryEntrySpec, resolveAndWriteCanvasSpec } = await import('../../core/canvas-history.js');
+    vi.mocked(updateHistoryEntrySpec).mockClear();
+    vi.mocked(resolveAndWriteCanvasSpec).mockClear();
+
+    const specWithHistory: LoadedCanvasSpec = { ...LIST_SPEC, _historyId: 'hist-1' };
+    const r = render(<CanvasView spec={specWithHistory} />);
+    r.stdin.write('\x1B[B'); await tick(); // r1:amount
+    r.stdin.write('\r');     await tick();
+    expect(r.lastFrame()).toContain('-2000');
+    r.stdin.write('0');      await tick();
+    r.stdin.write('\r');
+    await waitFor(() => expect(r.lastFrame()).toContain('-$20,000'));
+
+    expect(updateHistoryEntrySpec).toHaveBeenCalledTimes(1);
+    const [id, updatedSpec] = vi.mocked(updateHistoryEntrySpec).mock.calls[0];
+    expect(id).toBe('hist-1');
+    const savedList = updatedSpec.elements.find((e) => e.type === 'list');
+    expect(savedList?.type === 'list' && savedList.list.rows.find((row) => row.id === 'r1')?.amount).toBe(-20000);
+
+    expect(resolveAndWriteCanvasSpec).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not persist when the spec has no _historyId (e.g. a hand-built or navigation-only spec)', async () => {
+    const { updateHistoryEntrySpec, resolveAndWriteCanvasSpec } = await import('../../core/canvas-history.js');
+    vi.mocked(updateHistoryEntrySpec).mockClear();
+    vi.mocked(resolveAndWriteCanvasSpec).mockClear();
+
+    const r = render(<CanvasView spec={LIST_SPEC} />);
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\r');     await tick();
+    expect(r.lastFrame()).toContain('-2000');
+    r.stdin.write('0');      await tick();
+    r.stdin.write('\r');
+    await waitFor(() => expect(r.lastFrame()).toContain('-$20,000'));
+
+    expect(updateHistoryEntrySpec).not.toHaveBeenCalled();
+    expect(resolveAndWriteCanvasSpec).not.toHaveBeenCalled();
+  });
+});
+
+describe('CanvasView — list visibility via count()', () => {
+  const EMPTY_STATE_SPEC: CanvasSpec = {
+    title: 'Empty State Test',
+    elements: [
+      { type: 'list', list: { key: 'items', label: 'Items', rows: [] } },
+      { type: 'text', content: 'No items yet — press [a] to add one.', visible: 'count(items) == 0' },
+      { type: 'output', output: { label: 'Item count', expr: 'count(items)', format: 'integer' } },
+    ],
+  };
+
+  it('shows the empty-state text while the list has no rows, and hides it once a row is added', async () => {
+    const r = render(<CanvasView spec={EMPTY_STATE_SPEC} />);
+    expect(r.lastFrame()).toContain('No items yet');
+
+    // Cursor starts on the 'listAdd' placeholder stop since the list has 0 rows.
+    r.stdin.write('a');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('No items yet');
+      expect(frame).toContain('Item count');
+      expect(frame).toContain('1');
+    });
   });
 });

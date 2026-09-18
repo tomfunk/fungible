@@ -7,7 +7,7 @@
  * embedded agent handles those before calling executeTool.
  */
 
-import { writeFileSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
@@ -28,8 +28,7 @@ import { db } from './db.js';
 import { validateRegex } from './rule-utils.js';
 import type { ToolDef } from './llm-provider.js';
 
-import { CANVAS_SPEC_PATH, appendHistory, searchHistory, getHistoryEntry, deleteHistoryEntry } from './canvas-history.js';
-import { resolveCanvasBindings } from './canvas-agent.js';
+import { appendHistory, searchHistory, getHistoryEntry, deleteHistoryEntry, resolveAndWriteCanvasSpec } from './canvas-history.js';
 import type { CanvasSpec } from './canvas-spec.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -948,8 +947,7 @@ async function executeToolImpl(
       // History stores the unresolved spec (binding + its original stale default) —
       // bindings are re-resolved against live data on every load, never baked in.
       const entry = appendHistory({ title: spec.title ?? 'Untitled', prompt: str('prompt'), spec });
-      const resolved = await resolveCanvasBindings(spec);
-      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...resolved, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      await resolveAndWriteCanvasSpec(spec, entry.id);
       return `Canvas "${entry.title}" rendered on screen 9 (id: ${entry.id}).`;
     }
 
@@ -966,8 +964,7 @@ async function executeToolImpl(
       if (!entry) return `No canvas found with id "${str('id')}".`;
       // entry.spec is the unresolved spec from history — resolve fresh on every
       // reopen rather than trusting a previously-resolved snapshot.
-      const resolved = await resolveCanvasBindings(entry.spec);
-      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...resolved, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      await resolveAndWriteCanvasSpec(entry.spec, entry.id);
       return `Canvas "${entry.title}" loaded on screen 9.`;
     }
 

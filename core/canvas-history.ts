@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR } from './paths.js';
 import type { CanvasSpec } from './canvas-agent.js';
+import { resolveCanvasBindings } from './canvas-agent.js';
 
 export const CANVAS_HISTORY_PATH = join(DATA_DIR, 'canvas-history.json');
 export const CANVAS_SPEC_PATH    = join(DATA_DIR, 'canvas-spec.json');
@@ -68,6 +69,43 @@ export function deleteHistoryEntry(id: string): boolean {
   if (next.length === history.length) return false;
   writeFileSync(CANVAS_HISTORY_PATH, JSON.stringify(next, null, 2), 'utf-8');
   return true;
+}
+
+// Replaces an existing entry's `spec` wholesale (callers construct the full updated
+// spec themselves — e.g. with a list's rows mutated — this does not merge partial
+// updates) and bumps `updatedAt`. Used for list row edits (add/remove/edit-in-place),
+// which — unlike dial values, which stay ephemeral/reset-on-reload — must survive
+// navigating away and reopening the canvas. Returns the updated entry, or `null`
+// (never throws) if `id` doesn't match any entry. Every other entry in the file is
+// left byte-for-byte as-is aside from array position (this entry moves to wherever
+// it already was — position is not reshuffled).
+//
+// Callers are also responsible for the CANVAS_SPEC_PATH side effect: after a
+// successful update, call resolveAndWriteCanvasSpec(updated.spec, updated.id) (see
+// below) so the on-screen canvas reflects the new row state — same pattern
+// show_canvas/load_canvas use in core/tools.ts.
+export function updateHistoryEntrySpec(id: string, spec: CanvasSpec): CanvasHistoryEntry | null {
+  const history = loadHistory();
+  const idx = history.findIndex((e) => e.id === id);
+  if (idx === -1) return null;
+  const updated: CanvasHistoryEntry = { ...history[idx], spec, updatedAt: new Date().toISOString() };
+  const next = [...history];
+  next[idx] = updated;
+  writeFileSync(CANVAS_HISTORY_PATH, JSON.stringify(next, null, 2), 'utf-8');
+  return updated;
+}
+
+// Shared "resolve bindings + rewrite CANVAS_SPEC_PATH" step — the pattern
+// show_canvas/load_canvas already used inline in core/tools.ts, extracted here so
+// any future write path (including a caller of updateHistoryEntrySpec) doesn't
+// duplicate it. Re-resolves live-data dial bindings against `spec` fresh (never
+// trusts a previously-resolved snapshot) and writes CANVAS_SPEC_PATH tagged with
+// `historyId`, matching the `_historyId`/`_writtenAt` envelope the TUI/GUI already
+// read. Returns the resolved spec.
+export async function resolveAndWriteCanvasSpec(spec: CanvasSpec, historyId: string): Promise<CanvasSpec> {
+  const resolved = await resolveCanvasBindings(spec);
+  writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...resolved, _historyId: historyId, _writtenAt: Date.now() }), 'utf-8');
+  return resolved;
 }
 
 export function buildPriorCanvasesSection(prompt: string): string {

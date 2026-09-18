@@ -4,7 +4,9 @@ import { fmt, fmtPct, fmtPctSigned, fmtCompact, fmtCompactSigned, fmtMonths } fr
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type DialFormat = 'dollar' | 'percent' | 'integer' | 'months' | 'years' | 'toggle' | 'select';
+// 'year' is a plain calendar year ("2035", no suffix) — distinct from 'years', the
+// plural duration format ("5 yr"). Do not conflate the two.
+export type DialFormat = 'dollar' | 'percent' | 'integer' | 'months' | 'years' | 'toggle' | 'select' | 'year';
 
 export type DialDef = {
   key: string;
@@ -30,33 +32,73 @@ export type OutputDef = {
   format: DialFormat;
   color?: 'positive' | 'negative' | 'neutral' | 'accent';
   signed?: boolean;     // show explicit +/- prefix (use for deltas and values that can be negative)
+  // When present, later outputs (in array order) may reference this output's computed
+  // value in their own `expr`, exactly like a dial key — see computeOutputValues() below.
+  // Must be unique across the whole canvas, sharing one namespace with dial keys.
+  key?: string;
+};
+
+// One row of a `list` element — a variable-length or dated collection (recurring
+// expenses, income streams, one-time events). No `kind`/type tag: the intended
+// pattern is one homogeneous list per category, composed with another list's total
+// afterward via an output `key` reference (see computeOutputValues() above) rather
+// than mixing signs/categories into a single list.
+export type ListRowDef = {
+  // Stable per-row id, synthesized at generation time as `${list.key}_${index}` (no
+  // uuid needed). Never appears in expr — exists purely so TUI/GUI can track a row's
+  // identity across add/remove without relying on array index. Assigned once, at
+  // canvas generation; never recomputed from a row's current position afterward.
+  id: string;
+  label: string;
+  amount: number;       // signed dollar amount, monthly convention (matches dial/binding units)
+  startYear?: number;    // omitted = no start bound
+  endYear?: number;      // omitted = open-ended (e.g. a pension with no end)
+};
+
+export type ListDef = {
+  key: string;                // aggregation namespace, referenced as `key.amount` inside sum_active()/count()
+  label: string;               // section-style label, e.g. "Recurring expenses"
+  amountFormat?: DialFormat;   // display format for row amounts, default 'dollar'
+  rows: ListRowDef[];
 };
 
 export type CanvasElement =
   | { type: 'section'; label: string; visible?: string }
   | { type: 'text';    content: string; visible?: string }
   | { type: 'dial';    dial: DialDef; visible?: string }
-  | { type: 'output';  output: OutputDef; visible?: string };
+  | { type: 'output';  output: OutputDef; visible?: string }
+  | { type: 'list';    list: ListDef; visible?: string };
 
 export type CanvasSpec = {
   title: string;
   elements: CanvasElement[];
 };
 
+// A `list` element's rows, keyed by `ListDef.key`, as sum_active()/count() expect.
+// TUI/GUI build this once per render pass (see buildListScope() below) and pass it
+// as evalExpr's third argument.
+export type ListRowScope = { amount: number; startYear?: number; endYear?: number };
+
 // ─── Expression evaluator ─────────────────────────────────────────────────────
 // Safe recursive-descent parser — no new Function / eval. Supports the grammar
 // documented in the canvas system prompt: number/Infinity literals, dial keys,
 // parentheses, unary +/-, arithmetic, comparisons, ternary, Math.{pow,log,abs,
-// round,floor,ceil}. Unknown identifiers resolve to NaN; anything outside the
-// grammar throws and is caught as NaN.
+// round,floor,ceil}, and the two list builtins sum_active()/count() (see below).
+// Unknown identifiers resolve to NaN; anything outside the grammar throws and is
+// caught as NaN.
 //
-// `CanvasElement.visible` reuses this exact evaluator against the same dial-value
-// scope outputs use (dial keys → numeric value; never output values, preserving the
-// no-cross-output-reference rule). A renderer treats the element as visible when
-// `evalExpr(visible, dialValues) !== 0`. This fails OPEN on a malformed expression:
-// evalExpr returns NaN on error, and `NaN !== 0` is `true` in JS, so a broken
-// `visible` expression shows the element rather than silently hiding it — consistent
-// with how a broken output `expr` renders "—" instead of disappearing.
+// `CanvasElement.visible` reuses this exact evaluator against the dial-value scope
+// plus list data (dial keys → numeric value, and lists → sum_active()/count(); never
+// output values — see computeOutputValues() below for the one place output values
+// ARE readable, which is deliberately *not* `visible`). A renderer treats the
+// element as visible when `evalExpr(visible, dialValues, lists) !== 0`. This fails
+// OPEN on a malformed expression: evalExpr returns NaN on error, and `NaN !== 0` is
+// `true` in JS, so a broken `visible` expression shows the element rather than
+// silently hiding it — consistent with how a broken output `expr` renders "—"
+// instead of disappearing. List data is readable from `visible` because list rows
+// are static input data, structurally like dials, not derived like outputs — the
+// no-output-values restriction is specifically about computation-ordering/cycle
+// risk, which doesn't apply to lists.
 
 const MATH_FNS: Record<string, (...a: number[]) => number> = {
   pow: Math.pow, log: Math.log, abs: Math.abs,
@@ -64,7 +106,11 @@ const MATH_FNS: Record<string, (...a: number[]) => number> = {
 };
 
 function lex(src: string): string[] {
-  const re = /(\d+\.?\d*|\.\d+|Infinity|Math\.[a-z]+|[A-Za-z_]\w*|<=|>=|==|!=|[-+*/()<>?:,])|(\s+)/y;
+  // `.` joins the punctuation class for `list_key.amount` (sum_active's first arg).
+  // Safe alongside the `\.\d+` leading-dot-decimal alternative (e.g. `.5`) because
+  // that alternative is tried first in the alternation — a bare `.` only falls
+  // through to the punctuation class when it isn't followed by a digit.
+  const re = /(\d+\.?\d*|\.\d+|Infinity|Math\.[a-z]+|[A-Za-z_]\w*|<=|>=|==|!=|[-+*/()<>?:,.])|(\s+)/y;
   const out: string[] = [];
   let i = 0;
   while (i < src.length) {
@@ -77,7 +123,7 @@ function lex(src: string): string[] {
   return out;
 }
 
-function parseEval(toks: string[], scope: Record<string, number>): number {
+function parseEval(toks: string[], scope: Record<string, number>, lists: Record<string, ListRowScope[]>): number {
   let p = 0;
   const peek = () => toks[p];
   const next = () => toks[p++];
@@ -148,6 +194,46 @@ function parseEval(toks: string[], scope: Record<string, number>): number {
       expect(')');
       return fn(...args);
     }
+    // sum_active(list_key.amount, year_expr) — sums row.amount over lists[list_key]
+    // for every row whose [startYear, endYear] range (open-ended on either side)
+    // contains yearVal, inclusive on both ends. Fixed-shape grammar, not a generic
+    // function call: the `.amount` field name is the only one supported (anything
+    // else after the dot is a parse error → NaN, same as any other malformed expr).
+    // This is the one builtin that resolves a named journey (mortgage payoff /
+    // college costs) via the year filter — an unconditional sum was explicitly
+    // rejected as insufficient. An unrecognized list_key returns NaN (consistent
+    // with the unknown-identifier convention above), not 0 — that's reserved for a
+    // recognized-but-empty list.
+    if (t === 'sum_active' && peek() === '(') {
+      next();
+      const listKey = next();
+      if (listKey === undefined) throw new Error('sum_active: expected list key');
+      expect('.');
+      const field = next();
+      if (field !== 'amount') throw new Error('sum_active: expected .amount');
+      expect(',');
+      const yearVal = ternary();
+      expect(')');
+      const rows = lists[listKey];
+      if (!rows) return NaN;
+      let sum = 0;
+      for (const row of rows) {
+        const lo = row.startYear ?? -Infinity;
+        const hi = row.endYear ?? Infinity;
+        if (yearVal >= lo && yearVal <= hi) sum += row.amount;
+      }
+      return sum;
+    }
+    // count(list_key) — unconditional row count. Unrecognized list_key → NaN; a
+    // recognized-but-empty list → 0 (same distinction as sum_active above).
+    if (t === 'count' && peek() === '(') {
+      next();
+      const listKey = next();
+      if (listKey === undefined) throw new Error('count: expected list key');
+      expect(')');
+      const rows = lists[listKey];
+      return rows ? rows.length : NaN;
+    }
     return Object.prototype.hasOwnProperty.call(scope, t) ? scope[t] : NaN;
   }
 
@@ -156,14 +242,65 @@ function parseEval(toks: string[], scope: Record<string, number>): number {
   return result;
 }
 
-export function evalExpr(expr: string, values: Record<string, number>): number {
+export function evalExpr(
+  expr: string,
+  values: Record<string, number>,
+  lists: Record<string, ListRowScope[]> = {},
+): number {
   if (expr.length > 500) return NaN;
   try {
-    const result = parseEval(lex(expr), values);
+    const result = parseEval(lex(expr), values, lists);
     return typeof result === 'number' && !isNaN(result) && result !== -Infinity ? result : NaN;
   } catch {
     return NaN;
   }
+}
+
+// Extracts the { listKey: rows[] } shape sum_active()/count() expect from a
+// canvas's full element array. Optional convenience for TUI/GUI so both don't
+// duplicate the same reduce — call once per render pass and pass the result as
+// evalExpr's/computeOutputValues' `lists` argument.
+export function buildListScope(elements: CanvasElement[]): Record<string, ListRowScope[]> {
+  const scope: Record<string, ListRowScope[]> = {};
+  for (const el of elements) {
+    if (el.type === 'list') scope[el.list.key] = el.list.rows;
+  }
+  return scope;
+}
+
+// Computes every output element's value, in original array order, so a later output
+// may reference an earlier output's `key` in its own `expr` — the same way it already
+// references a dial key. Deliberately takes the *full, unfiltered* `elements` array
+// and ignores `visible` entirely: hiding is render-only (matching how a hidden dial
+// already freezes its value instead of resetting), so a hidden output still computes
+// and is still available for a later output to reference. Callers filter what to
+// *render*; this function is only responsible for what to *compute*.
+//
+// IMPORTANT — shared namespace: dial keys and output keys are looked up in one flat
+// scope object when evaluating an output's `expr` (`{ ...dialValues, ...outputValuesSoFar }`).
+// This means every dial key and every output key across the whole canvas must be
+// distinct — a duplicate silently shadows whichever value was merged in first.
+//
+// A forward reference — an output's `expr` naming a *later* output's key, its own
+// key, or a typo — is not special-cased: at evaluation time that key simply isn't in
+// `outputValuesSoFar` yet (or ever), so evalExpr's existing unknown-identifier-→-NaN
+// behavior applies and the result is NaN. Because references can only ever point
+// backward, cycles are structurally impossible — no cycle detection is needed.
+export function computeOutputValues(
+  elements: CanvasElement[],
+  dialValues: Record<string, number>,
+  lists: Record<string, ListRowScope[]> = {},
+): number[] {
+  const outputValuesSoFar: Record<string, number> = {};
+  const results: number[] = [];
+  for (const el of elements) {
+    if (el.type !== 'output') continue;
+    const scope = { ...dialValues, ...outputValuesSoFar };
+    const value = evalExpr(el.output.expr, scope, lists);
+    if (el.output.key) outputValuesSoFar[el.output.key] = value;
+    results.push(value);
+  }
+  return results;
 }
 
 export function fmtValue(n: number, format: DialFormat, signed = false): string {
@@ -175,6 +312,7 @@ export function fmtValue(n: number, format: DialFormat, signed = false): string 
     case 'months':  return fmtMonths(n);
     case 'years':   return `${Math.ceil(n)} yr`;
     case 'integer': return String(Math.round(n));
+    case 'year':    return String(Math.round(n));
     // toggle/select are dial-only formats by convention, but DialFormat is shared
     // with OutputDef — handle them defensively rather than rendering "undefined".
     case 'toggle':  return n !== 0 ? 'On' : 'Off';
@@ -192,6 +330,7 @@ export function fmtDialValue(n: number, format: DialFormat, options?: string[]):
     case 'months':  return fmtMonths(n);
     case 'years':   return `${n} yr`;
     case 'integer': return String(Math.round(n));
+    case 'year':    return String(Math.round(n));
     case 'toggle':  return n !== 0 ? 'On' : 'Off';
     case 'select': {
       const idx = Math.round(n);

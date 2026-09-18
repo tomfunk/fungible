@@ -38,7 +38,7 @@ vi.mock('../core/settings.js', () => ({
   PRETAX_MONTHLY_KEY: 'pretax_monthly',
 }));
 
-import { evalExpr, fmtDialValue, fmtValue, type CanvasSpec, type DialDef } from '../core/canvas-spec.js';
+import { evalExpr, computeOutputValues, fmtDialValue, fmtValue, type CanvasSpec, type CanvasElement, type DialDef, type OutputDef } from '../core/canvas-spec.js';
 import { resolveCanvasBindings, BINDING_KEYS } from '../core/canvas-agent.js';
 
 const dial = (overrides: Partial<DialDef>): DialDef => ({
@@ -91,6 +91,21 @@ describe('fmtValue — toggle / select fallback (shared DialFormat with OutputDe
   });
 });
 
+// ─── 'year' format — a plain calendar year, distinct from the plural 'years' duration ─
+
+describe('fmtValue / fmtDialValue — year', () => {
+  it('renders a whole calendar year with no suffix, rounding a fractional value', () => {
+    expect(fmtValue(2035, 'year')).toBe('2035');
+    expect(fmtValue(2035.6, 'year')).toBe('2036');
+    expect(fmtDialValue(2035, 'year')).toBe('2035');
+    expect(fmtDialValue(2035.4, 'year')).toBe('2035');
+  });
+  it('stays distinct from the plural "years" duration format', () => {
+    expect(fmtValue(5, 'years')).toBe('5 yr');
+    expect(fmtValue(5, 'year')).toBe('5');
+  });
+});
+
 // ─── visible: evalExpr against the dial-value scope, "!== 0" convention ───────
 
 describe('visible expressions (evalExpr, same grammar as output expr)', () => {
@@ -118,6 +133,172 @@ describe('visible expressions (evalExpr, same grammar as output expr)', () => {
     const result = evalExpr('total', { has_bonus: 1 });
     expect(Number.isNaN(result)).toBe(true);
     expect(result !== 0).toBe(true);
+  });
+});
+
+// ─── evalExpr lists: sum_active / count (canvas issue #145, Phase 2 Effort A) ────
+
+describe('evalExpr — sum_active(list_key.amount, year_expr)', () => {
+  const lists = {
+    expenses: [
+      { amount: 2800, startYear: 2020, endYear: 2040 }, // mortgage
+      { amount: 500, startYear: 2020 },                  // property tax, open-ended
+      { amount: 450, endYear: 2028 },                    // no start bound
+      { amount: 1900, startYear: 2023, endYear: 2031 },  // daycare
+    ],
+    empty: [] as { amount: number; startYear?: number; endYear?: number }[],
+  };
+
+  it('sums only rows whose [startYear, endYear] range contains the year', () => {
+    // 2025: mortgage (active), property tax (active, no end), no-start-bound row
+    // (active, ends 2028), daycare (active) → all four
+    expect(evalExpr('sum_active(expenses.amount, 2025)', {}, lists)).toBe(2800 + 500 + 450 + 1900);
+  });
+
+  it('is inclusive on both the start and end year boundary', () => {
+    // daycare: startYear 2023, endYear 2031 — both boundary years count
+    expect(evalExpr('sum_active(expenses.amount, 2023)', {}, lists)).toBe(2800 + 500 + 450 + 1900);
+    expect(evalExpr('sum_active(expenses.amount, 2031)', {}, lists)).toBe(2800 + 500 + 1900);
+    expect(evalExpr('sum_active(expenses.amount, 2032)', {}, lists)).toBe(2800 + 500); // daycare drops off
+  });
+
+  it('excludes a row once the year is outside its range', () => {
+    // 2050: mortgage ended 2040, no-start-bound row ended 2028, daycare ended 2031
+    // → only the open-ended property-tax row remains
+    expect(evalExpr('sum_active(expenses.amount, 2050)', {}, lists)).toBe(500);
+  });
+
+  it('treats a missing startYear as open at the start and a missing endYear as open-ended', () => {
+    // Row with no startYear (endYear 2028): active in 1900, a year far before any
+    // explicit startYear on other rows.
+    expect(evalExpr('sum_active(expenses.amount, 1900)', {}, lists)).toBe(450);
+    // Property tax row has no endYear: still active arbitrarily far in the future.
+    expect(evalExpr('sum_active(expenses.amount, 3000)', {}, lists)).toBe(500);
+  });
+
+  it('evaluates the year argument as a full sub-expression against the normal scope', () => {
+    expect(evalExpr('sum_active(expenses.amount, base_year + 5)', { base_year: 2020 }, lists)).toBe(2800 + 500 + 450 + 1900);
+  });
+
+  it('sums to 0 for a recognized but empty list', () => {
+    expect(evalExpr('sum_active(empty.amount, 2025)', {}, lists)).toBe(0);
+  });
+
+  it('resolves to NaN for an unrecognized list key', () => {
+    expect(Number.isNaN(evalExpr('sum_active(no_such_list.amount, 2025)', {}, lists))).toBe(true);
+  });
+
+  it('resolves to NaN for a field other than the literal "amount"', () => {
+    expect(Number.isNaN(evalExpr('sum_active(expenses.startYear, 2025)', {}, lists))).toBe(true);
+  });
+
+  it('defaults `lists` to {} when omitted, so every pre-Effort-A call site keeps working', () => {
+    expect(evalExpr('1 + 1', {})).toBe(2);
+  });
+});
+
+describe('evalExpr — count(list_key)', () => {
+  const lists = {
+    expenses: [{ amount: 1 }, { amount: 2 }, { amount: 3 }],
+    empty: [] as { amount: number }[],
+  };
+
+  it('counts every row unconditionally, regardless of year', () => {
+    expect(evalExpr('count(expenses)', {}, lists)).toBe(3);
+  });
+  it('returns 0 for a recognized but empty list', () => {
+    expect(evalExpr('count(empty)', {}, lists)).toBe(0);
+  });
+  it('resolves to NaN for an unrecognized list key', () => {
+    expect(Number.isNaN(evalExpr('count(no_such_list)', {}, lists))).toBe(true);
+  });
+});
+
+describe('lex — the "." punctuation token does not break decimal-literal parsing', () => {
+  it('still tokenizes a leading-dot decimal as a single number', () => {
+    expect(evalExpr('.5 + .5', {})).toBe(1);
+  });
+  it('still tokenizes an ordinary decimal correctly', () => {
+    expect(evalExpr('1.5 * 2', {})).toBe(3);
+  });
+  it('tokenizes list_key.amount as three tokens (identifier, dot, identifier), consumed by sum_active', () => {
+    expect(evalExpr('sum_active(expenses.amount, 2025)', {}, { expenses: [{ amount: 10, startYear: 2025, endYear: 2025 }] })).toBe(10);
+  });
+});
+
+// ─── computeOutputValues: inter-output references (canvas issue #145, Phase 2 Effort B) ─
+
+describe('computeOutputValues', () => {
+  const out = (overrides: Partial<OutputDef> & { expr: string }): CanvasElement =>
+    ({ type: 'output', output: { label: 'L', format: 'dollar', ...overrides } } as CanvasElement);
+
+  it('resolves a later output referencing an earlier output\'s key', () => {
+    const elements: CanvasElement[] = [
+      out({ key: 'monthly_surplus', expr: 'income - expenses' }),
+      out({ expr: 'monthly_surplus * 12' }),
+    ];
+    const values = computeOutputValues(elements, { income: 5000, expenses: 3000 });
+    expect(values).toEqual([2000, 24000]);
+  });
+
+  it('resolves a forward reference (later key) to NaN, not a crash', () => {
+    const elements: CanvasElement[] = [
+      out({ expr: 'future_value' }), // references a key defined later
+      out({ key: 'future_value', expr: '42' }),
+    ];
+    const values = computeOutputValues(elements, {});
+    expect(values.length).toBe(2);
+    expect(Number.isNaN(values[0])).toBe(true);
+    expect(values[1]).toBe(42);
+  });
+
+  it('resolves a reference to a nonexistent key to NaN, not a crash', () => {
+    const elements: CanvasElement[] = [out({ expr: 'no_such_key + 1' })];
+    const values = computeOutputValues(elements, {});
+    expect(Number.isNaN(values[0])).toBe(true);
+  });
+
+  it('computes a hidden (visible: false) output\'s value regardless — visible is render-only', () => {
+    // computeOutputValues takes the full, unfiltered elements array and never looks
+    // at `visible` at all; callers are responsible for filtering what to *render*,
+    // not what to *compute*. A later output can still reference a hidden earlier
+    // output's key.
+    const elements: CanvasElement[] = [
+      { type: 'output', output: { key: 'hidden_val', label: 'Hidden', expr: '10', format: 'dollar' }, visible: '0' },
+      out({ expr: 'hidden_val * 2' }),
+    ];
+    const values = computeOutputValues(elements, {});
+    expect(values).toEqual([10, 20]);
+  });
+
+  it('returns every output\'s value in original array order, including non-output elements interspersed', () => {
+    const elements: CanvasElement[] = [
+      { type: 'section', label: 'RESULTS' },
+      out({ expr: '1 + 1' }),
+      { type: 'text', content: 'note' },
+      out({ expr: '2 + 2' }),
+    ];
+    const values = computeOutputValues(elements, {});
+    expect(values).toEqual([2, 4]);
+  });
+
+  it('does not add an output without a key to the lookup scope, but still returns its own value', () => {
+    const elements: CanvasElement[] = [
+      out({ expr: '5' }), // no key — not referenceable
+      out({ expr: 'typeof_missing_ref' }), // would-be reference to the keyless output above; unresolvable
+    ];
+    const values = computeOutputValues(elements, {});
+    expect(values[0]).toBe(5);
+    expect(Number.isNaN(values[1])).toBe(true);
+  });
+
+  it('shares one flat scope between dial values and earlier output values', () => {
+    const elements: CanvasElement[] = [
+      out({ key: 'doubled', expr: 'base * 2' }),
+      out({ expr: 'doubled + base' }),
+    ];
+    const values = computeOutputValues(elements, { base: 10 });
+    expect(values).toEqual([20, 30]);
   });
 });
 

@@ -57,13 +57,91 @@ Dial values update live — outputs re-evaluate instantly as dials change.
 ## Output expressions
 
 Each output has an \`expr\` field: a single-line JavaScript arithmetic expression.
-- Variables are the \`key\` fields of the dials
-- Only use: + - * / Math.pow Math.log Math.abs Math.round Math.floor Math.ceil
-- No variables other than dial keys, no function calls besides the Math methods above
-- Expressions must be self-contained — they cannot reference other output values
+- Variables are the \`key\` fields of the dials, plus (see below) the \`key\` fields of earlier outputs
+- Only use: + - * / Math.pow Math.log Math.abs Math.round Math.floor Math.ceil, plus (when the canvas has \`list\` elements) \`sum_active(list_key.amount, year_expr)\` and \`count(list_key)\` — see "Lists" below
+- No function calls besides the above
 
 Example: monthly mortgage payment with principal P, monthly rate r, n payments:
   expr: "P * r / (1 - Math.pow(1 + r, -n))"
+
+## Referencing an earlier output from a later one
+
+Give an output a \`key\` (same rules as a dial key) and any *later* output's \`expr\` can
+reference it, exactly like a dial key. This only works forward — an output cannot
+reference a later output's key, or its own key (that resolves to NaN, not an error).
+There is no need to give an output a \`key\` unless a later output actually references it.
+
+**Global uniqueness**: dial keys and output keys share one namespace. Every key across
+the whole canvas — every dial's \`key\` and every output's \`key\` — must be distinct, or
+one value silently shadows another.
+
+Example — an annual figure derived from a monthly one:
+  { "type": "output", "output": { "key": "monthly_surplus", "label": "Monthly surplus", "expr": "income - expenses", "format": "dollar", "signed": true }},
+  { "type": "output", "output": { "label": "Annual surplus", "expr": "monthly_surplus * 12", "format": "dollar", "signed": true }}
+
+Note: a \`visible\` expression still only sees dial keys, never output keys — output
+values are not available there.
+
+## Lists — variable-length or dated collections
+
+Use a \`list\` element instead of individual dials when the scenario involves a
+variable-length or dated collection: recurring expenses, income streams, one-time
+events, years of college, a mortgage. Seed 2–4 realistic starting rows, pulling
+from the live data where you can.
+
+  { "type": "list", "list": {
+      "key": "expenses",
+      "label": "Recurring expenses",
+      "amountFormat": "dollar",
+      "rows": [
+        { "label": "Mortgage", "amount": 2800, "startYear": 2020, "endYear": 2040 },
+        { "label": "Daycare", "amount": 1900, "startYear": 2023, "endYear": 2031 },
+        { "label": "Car payment", "amount": 450, "startYear": 2024, "endYear": 2028 }
+      ]
+  }}
+
+Each row is \`{ label, amount, startYear?, endYear? }\` — never include an \`id\`, it's
+assigned automatically. Omit \`startYear\`/\`endYear\` for a row with no start bound or
+no end (e.g. a pension that never stops).
+
+Pair a list with a \`year\`-format dial the user can scrub, and use
+\`sum_active(list_key.amount, year_expr)\` in an output's \`expr\` to compute "total
+active as of year X" — the sum of every row whose [startYear, endYear] range
+(inclusive) contains that year:
+
+  { "type": "dial", "dial": { "key": "year", "label": "Year", "default": 2026, "step": 1, "min": 2020, "max": 2045, "format": "year", "hint": "scrub to see costs at a given year" }},
+  { "type": "output", "output": { "label": "Active expenses", "expr": "sum_active(expenses.amount, year)", "format": "dollar", "color": "negative" }}
+
+\`count(list_key)\` returns the number of rows in a list, unconditionally (no year
+filter) — e.g. \`count(expenses)\`.
+
+Keep one list per homogeneous category — don't mix income and expenses, or
+differently-signed amounts, in a single list's rows. To combine two lists (e.g. net
+cash flow = income minus expenses), give each list's total its own output \`key\` and
+reference both from a later output (see "Referencing an earlier output from a later
+one" above), rather than mixing categories inside one list.
+
+### Worked example — mortgage payoff and college costs, scrubbed by one year dial
+
+{
+  "title": "Mortgage & College Costs Over Time",
+  "elements": [
+    { "type": "section", "label": "INPUTS" },
+    { "type": "dial", "dial": { "key": "year", "label": "Year", "default": 2026, "step": 1, "min": 2020, "max": 2045, "format": "year", "hint": "scrub to any year" }},
+    { "type": "list", "list": { "key": "expenses", "label": "Recurring expenses", "amountFormat": "dollar", "rows": [
+      { "label": "Mortgage", "amount": 2800, "startYear": 2020, "endYear": 2040 },
+      { "label": "Property tax", "amount": 500, "startYear": 2020 }
+    ]}},
+    { "type": "list", "list": { "key": "college", "label": "College", "amountFormat": "dollar", "rows": [
+      { "label": "Older child (age 12)", "amount": 2200, "startYear": 2036, "endYear": 2040 },
+      { "label": "Younger child (age 9)", "amount": 2200, "startYear": 2038, "endYear": 2042 }
+    ]}},
+    { "type": "section", "label": "RESULTS" },
+    { "type": "output", "output": { "key": "monthly_expenses", "label": "Monthly expenses", "expr": "sum_active(expenses.amount, year)", "format": "dollar", "color": "negative" }},
+    { "type": "output", "output": { "key": "monthly_college", "label": "Monthly college costs", "expr": "sum_active(college.amount, year)", "format": "dollar", "color": "negative" }},
+    { "type": "output", "output": { "label": "Total monthly outlay", "expr": "monthly_expenses + monthly_college", "format": "dollar", "color": "negative", "signed": true }}
+  ]
+}
 
 ## Design rules
 
@@ -103,7 +181,7 @@ Example:
 
 ## Conditional visibility
 
-Any element — \`section\`, \`text\`, \`dial\`, or \`output\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys only, no output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice.
+Any element — \`section\`, \`text\`, \`dial\`, \`output\`, or \`list\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys and list data via \`sum_active\`/\`count\` — never output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice.
 
 Example — a bonus amount dial only shown when the bonus toggle is on:
   { "type": "dial", "dial": { "key": "has_bonus", "label": "Annual bonus?", "default": 0, "step": 1, "format": "toggle", "hint": "expecting a bonus this year" }},
@@ -291,10 +369,10 @@ const CANVAS_TOOL = {
           type: 'object',
           required: ['type'],
           properties: {
-            type: { type: 'string', enum: ['section', 'text', 'dial', 'output'] },
+            type: { type: 'string', enum: ['section', 'text', 'dial', 'output', 'list'] },
             label:   { type: 'string' },
             content: { type: 'string' },
-            visible: { type: 'string', description: 'Boolean expression, same grammar as output expr — dial keys only. Element shows when non-zero.' },
+            visible: { type: 'string', description: 'Boolean expression, same grammar as output expr — dial keys and list data (sum_active/count) only, never output values. Element shows when non-zero.' },
             dial: {
               type: 'object',
               required: ['key', 'label', 'default', 'step', 'format', 'hint'],
@@ -305,7 +383,7 @@ const CANVAS_TOOL = {
                 step:    { type: 'number' },
                 min:     { type: 'number' },
                 max:     { type: 'number' },
-                format:  { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select'] },
+                format:  { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select', 'year'] },
                 hint:    { type: 'string' },
                 options: { type: 'array', items: { type: 'string' }, description: 'Required when format is "select" — display strings; the dial value is the 0-based index into this array.' },
                 binding: { type: 'string', enum: [...BINDING_KEYS], description: 'Recognized live-metric key. When set, `default` is refreshed from live data on every load/reopen; always also set `default` as the fallback.' },
@@ -317,9 +395,34 @@ const CANVAS_TOOL = {
               properties: {
                 label:  { type: 'string' },
                 expr:   { type: 'string' },
-                format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select'] },
+                format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select', 'year'] },
                 color:  { type: 'string', enum: ['positive', 'negative', 'neutral', 'accent'] },
                 signed: { type: 'boolean' },
+                key:    { type: 'string', description: 'Optional. When set, later outputs (in element order) may reference this value in their own expr, the same way they reference a dial key. Must be unique across the whole canvas (shared namespace with dial keys).' },
+              },
+            },
+            list: {
+              type: 'object',
+              required: ['key', 'label', 'rows'],
+              description: 'A variable-length or dated collection (recurring expenses, income streams, one-time events). Use with sum_active(list_key.amount, year_expr) / count(list_key) in an output expr — see the "Lists" section above.',
+              properties: {
+                key:          { type: 'string', description: 'Aggregation namespace — referenced as `key.amount` inside sum_active()/count(). Shares the global key namespace with dials and outputs.' },
+                label:        { type: 'string', description: 'Section-style label, e.g. "Recurring expenses".' },
+                amountFormat: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select', 'year'], description: 'Display format for row amounts. Defaults to "dollar".' },
+                rows: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['label', 'amount'],
+                    properties: {
+                      label:     { type: 'string' },
+                      amount:    { type: 'number', description: 'Signed dollar amount, monthly convention.' },
+                      startYear: { type: 'number', description: 'Omit for no start bound.' },
+                      endYear:   { type: 'number', description: 'Omit for open-ended (e.g. a pension with no end).' },
+                    },
+                  },
+                  description: 'Never include an `id` on a row — it is assigned automatically.',
+                },
               },
             },
           },
@@ -328,6 +431,29 @@ const CANVAS_TOOL = {
     },
   },
 };
+
+// The tool schema deliberately doesn't ask the LLM for a row `id` (see the `list`
+// schema's rows description above) — ids are mechanical and easy to get wrong or
+// collide, so they're synthesized here, once, right after generation. This is a
+// one-time assignment: it must never be re-run against an already-generated spec
+// (e.g. when persisting a later row edit), since `${list.key}_${index}` would then
+// reassign ids to their *current* array position — defeating the whole point of a
+// stable id that survives add/remove (see ListRowDef.id's doc comment).
+function synthesizeListRowIds(spec: CanvasSpec): CanvasSpec {
+  return {
+    ...spec,
+    elements: spec.elements.map((el) => {
+      if (el.type !== 'list') return el;
+      return {
+        ...el,
+        list: {
+          ...el.list,
+          rows: el.list.rows.map((row, i) => ({ ...row, id: `${el.list.key}_${i}` })),
+        },
+      };
+    }),
+  };
+}
 
 export async function generateCanvas(
   prompt: string,
@@ -346,5 +472,5 @@ export async function generateCanvas(
   }
 
   if (!spec) throw new Error('Canvas generation failed — no spec returned.');
-  return spec;
+  return synthesizeListRowIds(spec);
 }
