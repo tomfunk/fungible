@@ -572,17 +572,7 @@ const CHAINED_VISIBILITY_SPEC: CanvasSpec = {
     { type: 'dial', dial: { key: 'strategy', label: 'Strategy', default: 0, step: 1, format: 'select', options: ['Conservative', 'Aggressive'], hint: 'pick a strategy' }, visible: 'has_option == 1' },
     // step=2 (vs. "Other" below's step=1) so their selected-row control hints
     // ("← → ±2" vs. "← → ±1") are distinguishable in frame assertions.
-    //
-    // NOTE: the expr/visible grammar (core/canvas-spec.ts) has no `&&`/`||`
-    // operator — only single comparisons, arithmetic, and a ternary. A literal
-    // `has_option == 1 && strategy == 1` throws inside the parser (unlexable
-    // `&`), which evalExpr catches and turns into NaN — and since the visible
-    // check is `evalExpr(...) !== 0`, `NaN !== 0` is `true`, so the element
-    // would render UNCONDITIONALLY instead of staying hidden (verified by hand;
-    // see the "actual bug" note in this task's final report). The documented,
-    // working way to AND two comparisons in this grammar is to multiply them
-    // (each comparison already yields 1/0): `(a == 1) * (b == 1)`.
-    { type: 'dial', dial: { key: 'strategy_detail', label: 'Detail', default: 9, step: 2, min: 0, format: 'integer', hint: 'fine-tune the aggressive strategy' }, visible: '(has_option == 1) * (strategy == 1)' },
+    { type: 'dial', dial: { key: 'strategy_detail', label: 'Detail', default: 9, step: 2, min: 0, format: 'integer', hint: 'fine-tune the aggressive strategy' }, visible: 'has_option == 1 && strategy == 1' },
     { type: 'dial', dial: { key: 'other', label: 'Other', default: 3, step: 1, min: 0, format: 'integer', hint: 'always visible' } },
     { type: 'section', label: 'RESULTS' },
     // hidden dials still compute (unconditional dialValues), so this output can
