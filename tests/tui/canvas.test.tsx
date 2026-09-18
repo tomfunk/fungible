@@ -557,6 +557,141 @@ describe('CanvasView — visible filtering', () => {
   });
 });
 
+// ─── CanvasView — chained `visible` conditions (canvas issue #145, Effort A) ──
+// Flagged during Effort A planning as untested territory: a toggle gating a
+// select, and that select's chosen option in turn gating a further dial
+// (toggle → select → dial, three levels). `visible` has no chaining-specific
+// code path — every element's `visible` is evaluated independently against the
+// current dialValues on every render (see visibleElements above) — so this is
+// a proof test, not new behavior.
+const CHAINED_VISIBILITY_SPEC: CanvasSpec = {
+  title: 'Chained Visibility Test',
+  elements: [
+    { type: 'section', label: 'INPUTS' },
+    { type: 'dial', dial: { key: 'has_option', label: 'Has option', default: 0, step: 1, min: 0, max: 1, format: 'toggle', hint: 'enable extra options' } },
+    { type: 'dial', dial: { key: 'strategy', label: 'Strategy', default: 0, step: 1, format: 'select', options: ['Conservative', 'Aggressive'], hint: 'pick a strategy' }, visible: 'has_option == 1' },
+    // step=2 (vs. "Other" below's step=1) so their selected-row control hints
+    // ("← → ±2" vs. "← → ±1") are distinguishable in frame assertions.
+    //
+    // NOTE: the expr/visible grammar (core/canvas-spec.ts) has no `&&`/`||`
+    // operator — only single comparisons, arithmetic, and a ternary. A literal
+    // `has_option == 1 && strategy == 1` throws inside the parser (unlexable
+    // `&`), which evalExpr catches and turns into NaN — and since the visible
+    // check is `evalExpr(...) !== 0`, `NaN !== 0` is `true`, so the element
+    // would render UNCONDITIONALLY instead of staying hidden (verified by hand;
+    // see the "actual bug" note in this task's final report). The documented,
+    // working way to AND two comparisons in this grammar is to multiply them
+    // (each comparison already yields 1/0): `(a == 1) * (b == 1)`.
+    { type: 'dial', dial: { key: 'strategy_detail', label: 'Detail', default: 9, step: 2, min: 0, format: 'integer', hint: 'fine-tune the aggressive strategy' }, visible: '(has_option == 1) * (strategy == 1)' },
+    { type: 'dial', dial: { key: 'other', label: 'Other', default: 3, step: 1, min: 0, format: 'integer', hint: 'always visible' } },
+    { type: 'section', label: 'RESULTS' },
+    // hidden dials still compute (unconditional dialValues), so this output can
+    // reference strategy_detail even while its row is hidden — used below to
+    // prove the frozen value survives a hide → show round trip.
+    { type: 'output', output: { label: 'Doubled value', expr: 'strategy_detail * 2', format: 'integer' } },
+  ],
+};
+
+describe('CanvasView — chained `visible` conditions', () => {
+  it('toggle off: neither the select nor the further dial render or are reachable', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    const frame = r.lastFrame() ?? '';
+    expect(frame).not.toContain('Strategy');
+    expect(frame).not.toContain('Detail');
+    expect(frame).toContain('Has option');
+    expect(frame).toContain('Other');
+
+    // cursor starts on "Has option"; down arrow should skip straight to "Other",
+    // proving neither hidden dial is a cursor stop.
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+  });
+
+  it('toggle on, select on its first option: select renders, further dial stays hidden', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    r.stdin.write('\x1B[C'); // flip "Has option" on
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Strategy');
+      expect(frame).toContain('Conservative'); // default option (index 0)
+      expect(frame).not.toContain('Detail');
+    });
+
+    // down arrow from the toggle should land on "Strategy" itself...
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    // ...and a further down arrow should skip straight to "Other", since the
+    // detail dial is still gated on strategy == 1.
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+  });
+
+  it('toggle on, select cycled to its second option: further dial appears and becomes reachable', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    r.stdin.write('\x1B[C'); // flip "Has option" on
+    await waitFor(() => expect(r.lastFrame()).toContain('Conservative'));
+
+    r.stdin.write('\x1B[B'); // down to "Strategy"
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    r.stdin.write('\x1B[C'); // cycle Conservative (0) -> Aggressive (1)
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Aggressive');
+      expect(frame).toContain('Detail');
+    });
+
+    // now reachable: down arrow from "Strategy" lands on "Detail" (← → ±2),
+    // not straight through to "Other" (← → ±1).
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±2'));
+  });
+
+  it('toggling back off immediately hides both, and the detail dial\'s value is frozen — not reset — through the round trip', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    r.stdin.write('\x1B[C'); // flip "Has option" on
+    await waitFor(() => expect(r.lastFrame()).toContain('Conservative'));
+    r.stdin.write('\x1B[B'); // down to "Strategy"
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    r.stdin.write('\x1B[C'); // cycle to Aggressive (1) — reveals "Detail"
+    await waitFor(() => expect(r.lastFrame()).toContain('Detail'));
+
+    // move onto "Detail" and change its value away from the default (9 -> 11)
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±2'));
+    r.stdin.write('\x1B[C');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('11');
+      expect(frame).toContain('22'); // Doubled value output: 11 * 2
+    });
+
+    // walk back up to the toggle (Detail -> Strategy -> Has option) and flip it off
+    r.stdin.write('\x1B[A');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    r.stdin.write('\x1B[A');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → toggle'));
+    r.stdin.write('\x1B[C'); // flip off
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('Strategy');
+      expect(frame).not.toContain('Detail');
+      // frozen, not reset: the output still reflects 11 (22), not the default of 9 (18)
+      expect(frame).toContain('22');
+    });
+
+    // flip back on — select is still on Aggressive (1), so "Detail" reappears
+    // with its previously-set value intact rather than reset to its default.
+    r.stdin.write('\x1B[C');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Aggressive');
+      expect(frame).toContain('Detail');
+      expect(frame).toContain('11');
+      expect(frame).toContain('22');
+    });
+  });
+});
+
 // ─── CanvasView — inter-output references (canvas issue #145, Effort B) ──────
 // A later output's `expr` may reference an earlier output's `key`, resolved via
 // computeOutputValues() — the same way it already references a dial key.
