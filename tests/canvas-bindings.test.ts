@@ -83,14 +83,6 @@ describe('fmtDialValue — select', () => {
   });
 });
 
-describe('fmtValue — toggle / select fallback (shared DialFormat with OutputDef)', () => {
-  it('renders toggle as On/Off and select as its numeric index', () => {
-    expect(fmtValue(1, 'toggle')).toBe('On');
-    expect(fmtValue(0, 'toggle')).toBe('Off');
-    expect(fmtValue(2, 'select')).toBe('2');
-  });
-});
-
 // ─── 'year' format — a plain calendar year, distinct from the plural 'years' duration ─
 
 describe('fmtValue / fmtDialValue — year', () => {

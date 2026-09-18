@@ -8,6 +8,13 @@ import { fmt, fmtPct, fmtPctSigned, fmtCompact, fmtCompactSigned, fmtMonths } fr
 // plural duration format ("5 yr"). Do not conflate the two.
 export type DialFormat = 'dollar' | 'percent' | 'integer' | 'months' | 'years' | 'toggle' | 'select' | 'year';
 
+// 'toggle'/'select' only make sense for a dial (a boolean flip / an index into an
+// options array) — an output or projection series is a computed value, with no
+// concept of toggle-state or enum-options to render. Everything else (dollar,
+// percent, integer, months, years, year) is legitimately valid for both a dial and
+// a computed value.
+export type OutputFormat = Exclude<DialFormat, 'toggle' | 'select'>;
+
 export type DialDef = {
   key: string;
   label: string;
@@ -29,7 +36,7 @@ export type DialDef = {
 export type OutputDef = {
   label: string;
   expr: string;         // pure JS arithmetic over dial keys — no side effects
-  format: DialFormat;
+  format: OutputFormat;
   color?: 'positive' | 'negative' | 'neutral' | 'accent';
   signed?: boolean;     // show explicit +/- prefix (use for deltas and values that can be negative)
   // When present, later outputs (in array order) may reference this output's computed
@@ -72,7 +79,7 @@ export type ProjectionSeriesDef = {
   // snapshot (an output) raises the same cycle/ordering ambiguity that already
   // keeps `visible` dial-only — see evalExpr's doc comment above.
   expr: string;
-  format: DialFormat;
+  format: OutputFormat;
   color?: 'positive' | 'negative' | 'neutral' | 'accent';
   signed?: boolean;
 };
@@ -384,7 +391,7 @@ export function projectSeries(
   });
 }
 
-export function fmtValue(n: number, format: DialFormat, signed = false): string {
+export function fmtValue(n: number, format: OutputFormat, signed = false): string {
   if (n === Infinity) return 'never';
   if (!isFinite(n) || isNaN(n)) return '—';
   switch (format) {
@@ -394,10 +401,6 @@ export function fmtValue(n: number, format: DialFormat, signed = false): string 
     case 'years':   return `${Math.ceil(n)} yr`;
     case 'integer': return String(Math.round(n));
     case 'year':    return String(Math.round(n));
-    // toggle/select are dial-only formats by convention, but DialFormat is shared
-    // with OutputDef — handle them defensively rather than rendering "undefined".
-    case 'toggle':  return n !== 0 ? 'On' : 'Off';
-    case 'select':  return String(Math.round(n));
   }
 }
 
