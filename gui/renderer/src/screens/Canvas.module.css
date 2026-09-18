@@ -331,3 +331,56 @@
 .listRow:focus-within .deleteBtn {
   visibility: visible;
 }
+
+/* ── Chart / table (projection) elements ─────── */
+.projectionSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.chartHint {
+  text-align: center;
+  font-size: 12px;
+  margin: 2px 0 0;
+}
+
+.projectionTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.projectionTable th {
+  text-align: right;
+  padding: 6px 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.projectionTable th:first-child {
+  text-align: left;
+}
+
+.projectionTable td {
+  padding: 6px 10px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.projectionTable tr:last-child td {
+  border-bottom: none;
+}
+
+.projectionRow {
+  cursor: pointer;
+}
+
+.projectionRow:hover {
+  background: var(--bg-hover);
+}

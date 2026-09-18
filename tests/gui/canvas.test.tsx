@@ -9,6 +9,49 @@ vi.mock('../../core/db.js', async () => {
   return { db: await makeTestDb() };
 });
 
+// Recharts' ResponsiveContainer renders nothing at jsdom's zero size (see
+// trends.test.tsx), so the chart internals can't be asserted against real SVG
+// output. Mock the handful of recharts exports Canvas.tsx uses with simple
+// stand-ins: ComposedChart exposes `data.length` and one clickable button per
+// point (mirroring recharts' own onClick({ activeLabel }) contract so the
+// component's real click-to-jump wiring is exercised, not reimplemented here),
+// Line/Legend render a marker element so series count and legend presence are
+// countable, and the rest are no-ops.
+vi.mock('recharts', async () => {
+  const React = await import('react');
+  return {
+    ResponsiveContainer: ({ children }: { children: React.ReactNode }) => children,
+    ComposedChart: ({
+      data,
+      onClick,
+      children,
+    }: {
+      data: { x: number }[];
+      onClick?: (state: { activeLabel: number }) => void;
+      children?: React.ReactNode;
+    }) =>
+      React.createElement(
+        'div',
+        { 'data-testid': 'chart', 'data-points': data.length },
+        data.map((d, i) =>
+          React.createElement(
+            'button',
+            { key: i, 'data-testid': `chart-point-${i}`, onClick: () => onClick?.({ activeLabel: d.x }) },
+            `pt-${i}`,
+          ),
+        ),
+        children,
+      ),
+    Line: ({ dataKey, name }: { dataKey: string; name: string }) =>
+      React.createElement('div', { 'data-testid': 'chart-line', 'data-key': dataKey }, name),
+    Legend: () => React.createElement('div', { 'data-testid': 'chart-legend' }),
+    XAxis: () => null,
+    YAxis: () => null,
+    Tooltip: () => null,
+    CartesianGrid: () => null,
+  };
+});
+
 vi.mock('../../core/canvas-history.js', () => ({
   loadHistory: () => [],
   deleteHistoryEntry: () => true,
@@ -319,5 +362,101 @@ describe('GUI CanvasView list element persistence', () => {
     fireEvent.blur(amountInput);
     expect(screen.getByDisplayValue('3000')).toBeTruthy();
     expect(updateHistoryEntrySpec).not.toHaveBeenCalled();
+  });
+});
+
+// years walks 0..3 step 1 -> 4 points; balance = rate * years = 0, 5, 10, 15
+// (double = 0, 10, 20, 30 on the chart's second series only).
+const PROJECTION_SPEC: CanvasSpec = {
+  title: 'Projection Demo',
+  elements: [
+    { type: 'dial', dial: { key: 'years', label: 'Years out', default: 0, step: 1, min: 0, max: 3, format: 'integer', hint: 'years out' } },
+    { type: 'dial', dial: { key: 'rate', label: 'Rate', default: 5, step: 1, min: 0, format: 'dollar', hint: 'per year' } },
+    {
+      type: 'chart',
+      chart: {
+        label: 'Balance chart',
+        driver: 'years',
+        series: [
+          { label: 'Balance', expr: 'rate * years', format: 'dollar', color: 'positive' },
+          { label: 'Double', expr: 'rate * years * 2', format: 'dollar', color: 'accent' },
+        ],
+      },
+    },
+    {
+      type: 'table',
+      table: {
+        label: 'Balance table',
+        driver: 'years',
+        series: [{ label: 'Balance', expr: 'rate * years', format: 'dollar', color: 'positive' }],
+      },
+    },
+  ],
+};
+
+const EMPTY_PROJECTION_SPEC: CanvasSpec = {
+  title: 'Broken Projection',
+  elements: [
+    { type: 'chart', chart: { label: 'Broken chart', driver: 'nonexistent', series: [{ label: 'X', expr: '1', format: 'dollar' }] } },
+    { type: 'table', table: { label: 'Broken table', driver: 'nonexistent', series: [{ label: 'X', expr: '1', format: 'dollar' }] } },
+  ],
+};
+
+// "Years out" also appears inside the chart's "Click a point to move…" caption,
+// so pick the label whose immediate sibling is the dial's own formatted-value
+// span (DialRow renders label+value as siblings inside one header div) rather
+// than assuming there's only one match.
+function yearsDialValue(): string | null {
+  const label = screen.getAllByText('Years out').find((el) => el.parentElement?.querySelector('.num'));
+  return label!.parentElement!.querySelector('.num')!.textContent;
+}
+
+describe('GUI CanvasView chart element', () => {
+  it('renders one point per driver step and one line per series', () => {
+    renderScreen(<CanvasView spec={PROJECTION_SPEC} />);
+    expect(screen.getByText('Balance chart')).toBeTruthy();
+    const chart = screen.getByTestId('chart');
+    expect(chart.getAttribute('data-points')).toBe('4');
+    expect(screen.getAllByTestId('chart-line').length).toBe(2);
+    expect(screen.getByTestId('chart-legend')).toBeTruthy(); // >1 series
+  });
+
+  it('clicking a chart point moves the driver dial to that point\'s value', async () => {
+    renderScreen(<CanvasView spec={PROJECTION_SPEC} />);
+    expect(yearsDialValue()).toBe('0');
+    await userEvent.click(screen.getByTestId('chart-point-2')); // x=2 (0,1,2,3)
+    expect(yearsDialValue()).toBe('2');
+  });
+});
+
+describe('GUI CanvasView table element', () => {
+  it('renders one row per driver step with correctly formatted values', () => {
+    renderScreen(<CanvasView spec={PROJECTION_SPEC} />);
+    expect(screen.getByText('Balance table')).toBeTruthy();
+    expect(screen.getByText('$0.00')).toBeTruthy();
+    expect(screen.getByText('$5.00')).toBeTruthy();
+    expect(screen.getByText('$10.00')).toBeTruthy();
+    expect(screen.getByText('$15.00')).toBeTruthy();
+    expect(screen.getByText('$10.00').className).toContain('pos'); // color: 'positive'
+    // header + 4 data rows
+    expect(screen.getAllByRole('row').length).toBe(5);
+  });
+
+  it('clicking a table row moves the driver dial to that row\'s value', async () => {
+    renderScreen(<CanvasView spec={PROJECTION_SPEC} />);
+    expect(yearsDialValue()).toBe('0');
+    await userEvent.click(screen.getByText('$10.00').closest('tr')!); // years=2
+    expect(yearsDialValue()).toBe('2');
+  });
+});
+
+describe('GUI CanvasView empty projection', () => {
+  it('renders a no-data state instead of an empty chart/table shell', () => {
+    renderScreen(<CanvasView spec={EMPTY_PROJECTION_SPEC} />);
+    expect(screen.getByText('Broken chart')).toBeTruthy();
+    expect(screen.getByText('Broken table')).toBeTruthy();
+    expect(screen.getAllByText(/No data available/).length).toBe(2);
+    expect(screen.queryByTestId('chart')).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 });

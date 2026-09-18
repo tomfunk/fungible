@@ -1,12 +1,30 @@
 import React, { useEffect, useState } from 'react';
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Legend,
+} from 'recharts';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { DialRow } from '../components/DialRow.js';
-import { computeOutputValues, evalExpr, fmtValue, fmtDialValue, buildListScope } from '../../../../core/canvas-spec.js';
-import type { CanvasSpec, DialDef, ListDef, ListRowDef } from '../../../../core/canvas-spec.js';
+import {
+  computeOutputValues,
+  evalExpr,
+  fmtValue,
+  fmtDialValue,
+  buildListScope,
+  projectSeries,
+} from '../../../../core/canvas-spec.js';
+import type { CanvasSpec, DialDef, ListDef, ListRowDef, ProjectionDef, ProjectionPoint } from '../../../../core/canvas-spec.js';
+import { useChartTheme, tooltipStyle, tooltipLabelStyle, type ChartTheme } from '../components/chartTheme.js';
 import styles from './Canvas.module.css';
 
 function outputClass(color: string | undefined): string {
@@ -19,6 +37,23 @@ function outputClass(color: string | undefined): string {
       return 'accent';
     default:
       return '';
+  }
+}
+
+// Maps a projection series' semantic color to a chart line color, reusing the
+// same theme tokens NetWorth/Trends draw from. 'neutral' (and unset) falls back
+// to the axis color — matching how outputClass() above renders neutral as no
+// special class (plain text color) rather than inventing a fifth chart hue.
+function seriesColor(color: string | undefined, chartTheme: ChartTheme): string {
+  switch (color) {
+    case 'positive':
+      return chartTheme.positive;
+    case 'negative':
+      return chartTheme.negative;
+    case 'accent':
+      return chartTheme.accent;
+    default:
+      return chartTheme.axis;
   }
 }
 
@@ -152,6 +187,7 @@ export function CanvasView({ spec, historyId }: { spec: CanvasSpec; historyId?: 
   // than a lazy initializer) matches how `values` below already does it.
   const [localSpec, setLocalSpec] = useState<CanvasSpec>(spec);
   const elements = localSpec.elements;
+  const chartTheme = useChartTheme();
 
   const dials = elements.flatMap((el) => (el.type === 'dial' ? [el.dial] : []));
   const [values, setValues] = useState<Record<string, number>>(() =>
@@ -314,6 +350,34 @@ export function CanvasView({ spec, historyId }: { spec: CanvasSpec; historyId?: 
             />
           );
         }
+        if (el.type === 'chart' || el.type === 'table') {
+          const proj = el.type === 'chart' ? el.chart : el.table;
+          const driverDial = dials.find((d) => d.key === proj.driver);
+          const points = projectSeries(elements, values, lists, proj.driver, proj.series);
+          const jumpToDriver = (x: number) => {
+            if (driverDial) setDial(driverDial, x);
+          };
+          if (!driverDial || points.length === 0) {
+            return (
+              <div key={i} className={styles.projectionSection}>
+                <h3 className={styles.sectionLabel}>{proj.label}</h3>
+                <p className="dim">No data available — check the driver dial's range.</p>
+              </div>
+            );
+          }
+          return el.type === 'chart' ? (
+            <ProjectionChart
+              key={i}
+              proj={proj}
+              driverDial={driverDial}
+              points={points}
+              chartTheme={chartTheme}
+              onJump={jumpToDriver}
+            />
+          ) : (
+            <ProjectionTable key={i} proj={proj} driverDial={driverDial} points={points} onJump={jumpToDriver} />
+          );
+        }
         // output
         const out = el.output;
         const val = outputValueByIndex.get(i) ?? NaN;
@@ -326,6 +390,133 @@ export function CanvasView({ spec, historyId }: { spec: CanvasSpec; historyId?: 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// A `chart` element — one line per series, plotted across the driver dial's full
+// range (one point per projectSeries() step). Clicking a point jumps the driver
+// dial to that x-value, same pattern as Trends.tsx's onChartClick, so the rest of
+// the canvas (outputs, other charts sharing the same driver) recomputes live.
+function ProjectionChart({
+  proj,
+  driverDial,
+  points,
+  chartTheme,
+  onJump,
+}: {
+  proj: ProjectionDef;
+  driverDial: DialDef;
+  points: ProjectionPoint[];
+  chartTheme: ChartTheme;
+  onJump: (x: number) => void;
+}) {
+  const data = points.map((p) => {
+    const row: Record<string, number> = { x: p.x };
+    proj.series.forEach((s, idx) => {
+      row[`s${idx}`] = p.values[idx];
+    });
+    return row;
+  });
+
+  function onChartClick(state: { activeLabel?: unknown } | null) {
+    if (!state || state.activeLabel === undefined) return;
+    const point = points.find((p) => p.x === state.activeLabel);
+    if (point) onJump(point.x);
+  }
+
+  return (
+    <div className={styles.projectionSection}>
+      <h3 className={styles.sectionLabel}>{proj.label}</h3>
+      <ResponsiveContainer width="100%" height={280}>
+        <ComposedChart data={data} onClick={onChartClick} style={{ cursor: 'pointer' }}>
+          <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+          <XAxis
+            dataKey="x"
+            stroke={chartTheme.axis}
+            tick={{ fontSize: 12 }}
+            minTickGap={24}
+            tickFormatter={(v: number) => fmtDialValue(v, driverDial.format, driverDial.options)}
+          />
+          <YAxis
+            stroke={chartTheme.axis}
+            tick={{ fontSize: 12 }}
+            width={70}
+            tickFormatter={(v: number) => fmtValue(v, proj.series[0]?.format ?? 'dollar')}
+          />
+          <Tooltip
+            contentStyle={tooltipStyle}
+            labelStyle={tooltipLabelStyle}
+            labelFormatter={(v) => fmtDialValue(Number(v), driverDial.format, driverDial.options)}
+            formatter={(value, _name, item) => {
+              const idx = Number(String(item?.dataKey ?? '0').slice(1));
+              const s = proj.series[idx];
+              return [s ? fmtValue(Number(value), s.format, s.signed) : String(value), s?.label ?? ''];
+            }}
+          />
+          {proj.series.length > 1 && <Legend />}
+          {proj.series.map((s, idx) => (
+            <Line
+              key={idx}
+              type="monotone"
+              dataKey={`s${idx}`}
+              name={s.label}
+              stroke={seriesColor(s.color, chartTheme)}
+              strokeWidth={2}
+              dot={false}
+            />
+          ))}
+        </ComposedChart>
+      </ResponsiveContainer>
+      <p className={`dim ${styles.chartHint}`}>Click a point to move “{driverDial.label}” there</p>
+    </div>
+  );
+}
+
+// A `table` element — same driver/series data as ProjectionChart, rendered as a
+// clickable-row table (driver value + one column per series). Row click jumps the
+// driver dial to that row's x-value, matching the chart's click-to-jump.
+function ProjectionTable({
+  proj,
+  driverDial,
+  points,
+  onJump,
+}: {
+  proj: ProjectionDef;
+  driverDial: DialDef;
+  points: ProjectionPoint[];
+  onJump: (x: number) => void;
+}) {
+  return (
+    <div className={styles.projectionSection}>
+      <h3 className={styles.sectionLabel}>{proj.label}</h3>
+      <table className={styles.projectionTable}>
+        <thead>
+          <tr>
+            <th>{driverDial.label}</th>
+            {proj.series.map((s, idx) => (
+              <th key={idx} className="num">
+                {s.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {points.map((p, rowIdx) => (
+            <tr key={rowIdx} className={styles.projectionRow} onClick={() => onJump(p.x)}>
+              <td className="num">{fmtDialValue(p.x, driverDial.format, driverDial.options)}</td>
+              {p.values.map((v, colIdx) => {
+                const s = proj.series[colIdx];
+                return (
+                  <td key={colIdx} className={`num ${outputClass(s.color)}`}>
+                    {fmtValue(v, s.format, s.signed)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
