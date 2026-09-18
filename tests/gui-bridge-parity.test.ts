@@ -38,6 +38,7 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   fmtDialValue: 'renderer imports pure core/canvas-spec.ts directly',
   computeOutputValues: 'renderer imports pure core/canvas-spec.ts directly',
   buildListScope: 'renderer imports pure core/canvas-spec.ts directly',
+  projectSeries: 'renderer imports pure core/canvas-spec.ts directly',
 
   // Pure scorecard helpers — renderer imports core/scorecard.ts directly (GUI PR2)
   bucketDrift: 'renderer imports pure core/scorecard.ts directly',

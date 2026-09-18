@@ -143,6 +143,47 @@ one" above), rather than mixing categories inside one list.
   ]
 }
 
+## Charts and tables — plotting a whole range at once
+
+A single \`output\` shows one number at the dial's *current* value. Use a \`chart\` or
+\`table\` instead when the user wants to see a whole horizon at a glance — "show me
+this over time" — rather than scrubbing one year at a time.
+
+Both share the same shape: \`{ label, driver, series: [{ label, expr, format, color?,
+signed? }] }\`. \`driver\` is the \`key\` of an existing \`dial\` element — its min/max/step
+define the range plotted, never redeclared on the chart/table itself. Each series'
+\`expr\` uses the exact same grammar as an output's \`expr\` (dial keys, \`sum_active\`/
+\`count\`) — **never another output's \`key\`**: a chart/table varies the driver across
+its whole range, so reading a value computed from a single fixed dial snapshot (an
+output) raises the same ordering ambiguity that already keeps \`visible\` dial-only.
+
+Use a \`year\`-format dial as the driver — that's the one real use case right now
+(projecting a cost or balance across years). Keep the driver's range to at most
+~40 steps: the existing \`year\` dial convention (a 20-40 year span at step 1) is
+the right order of magnitude, and a chart/table renders one point/row per step. If
+a \`percent\` or \`integer\` dial is ever used as a driver instead, size its \`step\` so
+\`(max - min) / step\` stays in that same ~40-step range.
+
+A \`chart\` renders as a line plot, one line per series. A \`table\` renders one row
+per step with one column per series — reach for \`table\` when the user wants exact
+numbers at each step (e.g. a payoff schedule) rather than a shape.
+
+Example — a chart and a table both driven by the same \`plan_year\` dial, alongside
+an \`expenses\` list:
+
+  { "type": "dial", "dial": { "key": "plan_year", "label": "Year", "default": 2026, "step": 1, "min": 2026, "max": 2045, "format": "year", "hint": "20-year horizon" }},
+  { "type": "list", "list": { "key": "expenses", "label": "Recurring expenses", "amountFormat": "dollar", "rows": [
+    { "label": "Mortgage", "amount": 2800, "startYear": 2026, "endYear": 2046 },
+    { "label": "Daycare", "amount": 1900, "startYear": 2026, "endYear": 2032 }
+  ]}},
+  { "type": "chart", "chart": { "label": "Monthly expenses over time", "driver": "plan_year", "series": [
+    { "label": "Monthly expenses", "expr": "sum_active(expenses.amount, plan_year)", "format": "dollar", "color": "negative" }
+  ]}},
+  { "type": "table", "table": { "label": "Expenses by year", "driver": "plan_year", "series": [
+    { "label": "Monthly expenses", "expr": "sum_active(expenses.amount, plan_year)", "format": "dollar", "color": "negative" },
+    { "label": "Annual expenses", "expr": "sum_active(expenses.amount, plan_year) * 12", "format": "dollar", "color": "negative" }
+  ]}}
+
 ## Design rules
 
 1. Pre-fill dial defaults from the provided live data where relevant — show the user their real numbers
@@ -181,11 +222,14 @@ Example:
 
 ## Conditional visibility
 
-Any element — \`section\`, \`text\`, \`dial\`, \`output\`, or \`list\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys and list data via \`sum_active\`/\`count\` — never output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice.
+Any element — \`section\`, \`text\`, \`dial\`, \`output\`, or \`list\` — may carry a \`visible\` field: a boolean expression using the exact same grammar as \`expr\` (dial keys and list data via \`sum_active\`/\`count\` — never output references). The element is shown when the expression evaluates to non-zero. Use this to gate a follow-up dial or a result behind a toggle or select choice. Comparisons (\`== != < <= > >=\`) and the logical operators \`&&\`/\`||\` are both available — combine them for a compound condition ("show this only when the toggle is on AND the select is set to X") instead of nesting a ternary or approximating AND with multiplication.
 
 Example — a bonus amount dial only shown when the bonus toggle is on:
   { "type": "dial", "dial": { "key": "has_bonus", "label": "Annual bonus?", "default": 0, "step": 1, "format": "toggle", "hint": "expecting a bonus this year" }},
   { "type": "dial", "dial": { "key": "bonus_amount", "label": "Bonus amount", "default": 5000, "step": 500, "min": 0, "format": "dollar", "hint": "expected bonus" }, "visible": "has_bonus == 1" }
+
+Example — a compound condition using \`&&\`, shown only when both a toggle and a select match:
+  { "type": "output", "output": { "label": "Spouse income", "expr": "spouse_income", "format": "dollar" }, "visible": "has_spouse == 1 && spouse_income_type == 2" }
 
 ## Existing screen conventions (for consistency)
 
@@ -369,7 +413,7 @@ const CANVAS_TOOL = {
           type: 'object',
           required: ['type'],
           properties: {
-            type: { type: 'string', enum: ['section', 'text', 'dial', 'output', 'list'] },
+            type: { type: 'string', enum: ['section', 'text', 'dial', 'output', 'list', 'chart', 'table'] },
             label:   { type: 'string' },
             content: { type: 'string' },
             visible: { type: 'string', description: 'Boolean expression, same grammar as output expr — dial keys and list data (sum_active/count) only, never output values. Element shows when non-zero.' },
@@ -422,6 +466,52 @@ const CANVAS_TOOL = {
                     },
                   },
                   description: 'Never include an `id` on a row — it is assigned automatically.',
+                },
+              },
+            },
+            chart: {
+              type: 'object',
+              required: ['label', 'driver', 'series'],
+              description: 'A line chart plotting one or more series across the full range of a `dial` element, one point per step. See "Charts and tables" above.',
+              properties: {
+                label: { type: 'string' },
+                driver: { type: 'string', description: 'Key of an existing `dial` element in this canvas — its min/max/step define the projection range. Use a `year`-format dial.' },
+                series: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['label', 'expr', 'format'],
+                    properties: {
+                      label:  { type: 'string' },
+                      expr:   { type: 'string', description: 'Same grammar as output expr — dial keys and sum_active()/count() over list data only, never another output\'s key.' },
+                      format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select', 'year'] },
+                      color:  { type: 'string', enum: ['positive', 'negative', 'neutral', 'accent'] },
+                      signed: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            table: {
+              type: 'object',
+              required: ['label', 'driver', 'series'],
+              description: 'A table with one row per step of a `dial` element and one column per series. Same shape as `chart` — see "Charts and tables" above.',
+              properties: {
+                label: { type: 'string' },
+                driver: { type: 'string', description: 'Key of an existing `dial` element in this canvas — its min/max/step define the projection range. Use a `year`-format dial.' },
+                series: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['label', 'expr', 'format'],
+                    properties: {
+                      label:  { type: 'string' },
+                      expr:   { type: 'string', description: 'Same grammar as output expr — dial keys and sum_active()/count() over list data only, never another output\'s key.' },
+                      format: { type: 'string', enum: ['dollar', 'percent', 'integer', 'months', 'years', 'toggle', 'select', 'year'] },
+                      color:  { type: 'string', enum: ['positive', 'negative', 'neutral', 'accent'] },
+                      signed: { type: 'boolean' },
+                    },
+                  },
                 },
               },
             },

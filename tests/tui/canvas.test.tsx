@@ -557,6 +557,131 @@ describe('CanvasView — visible filtering', () => {
   });
 });
 
+// ─── CanvasView — chained `visible` conditions (canvas issue #145, Effort A) ──
+// Flagged during Effort A planning as untested territory: a toggle gating a
+// select, and that select's chosen option in turn gating a further dial
+// (toggle → select → dial, three levels). `visible` has no chaining-specific
+// code path — every element's `visible` is evaluated independently against the
+// current dialValues on every render (see visibleElements above) — so this is
+// a proof test, not new behavior.
+const CHAINED_VISIBILITY_SPEC: CanvasSpec = {
+  title: 'Chained Visibility Test',
+  elements: [
+    { type: 'section', label: 'INPUTS' },
+    { type: 'dial', dial: { key: 'has_option', label: 'Has option', default: 0, step: 1, min: 0, max: 1, format: 'toggle', hint: 'enable extra options' } },
+    { type: 'dial', dial: { key: 'strategy', label: 'Strategy', default: 0, step: 1, format: 'select', options: ['Conservative', 'Aggressive'], hint: 'pick a strategy' }, visible: 'has_option == 1' },
+    // step=2 (vs. "Other" below's step=1) so their selected-row control hints
+    // ("← → ±2" vs. "← → ±1") are distinguishable in frame assertions.
+    { type: 'dial', dial: { key: 'strategy_detail', label: 'Detail', default: 9, step: 2, min: 0, format: 'integer', hint: 'fine-tune the aggressive strategy' }, visible: 'has_option == 1 && strategy == 1' },
+    { type: 'dial', dial: { key: 'other', label: 'Other', default: 3, step: 1, min: 0, format: 'integer', hint: 'always visible' } },
+    { type: 'section', label: 'RESULTS' },
+    // hidden dials still compute (unconditional dialValues), so this output can
+    // reference strategy_detail even while its row is hidden — used below to
+    // prove the frozen value survives a hide → show round trip.
+    { type: 'output', output: { label: 'Doubled value', expr: 'strategy_detail * 2', format: 'integer' } },
+  ],
+};
+
+describe('CanvasView — chained `visible` conditions', () => {
+  it('toggle off: neither the select nor the further dial render or are reachable', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    const frame = r.lastFrame() ?? '';
+    expect(frame).not.toContain('Strategy');
+    expect(frame).not.toContain('Detail');
+    expect(frame).toContain('Has option');
+    expect(frame).toContain('Other');
+
+    // cursor starts on "Has option"; down arrow should skip straight to "Other",
+    // proving neither hidden dial is a cursor stop.
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+  });
+
+  it('toggle on, select on its first option: select renders, further dial stays hidden', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    r.stdin.write('\x1B[C'); // flip "Has option" on
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Strategy');
+      expect(frame).toContain('Conservative'); // default option (index 0)
+      expect(frame).not.toContain('Detail');
+    });
+
+    // down arrow from the toggle should land on "Strategy" itself...
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    // ...and a further down arrow should skip straight to "Other", since the
+    // detail dial is still gated on strategy == 1.
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±1'));
+  });
+
+  it('toggle on, select cycled to its second option: further dial appears and becomes reachable', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    r.stdin.write('\x1B[C'); // flip "Has option" on
+    await waitFor(() => expect(r.lastFrame()).toContain('Conservative'));
+
+    r.stdin.write('\x1B[B'); // down to "Strategy"
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    r.stdin.write('\x1B[C'); // cycle Conservative (0) -> Aggressive (1)
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Aggressive');
+      expect(frame).toContain('Detail');
+    });
+
+    // now reachable: down arrow from "Strategy" lands on "Detail" (← → ±2),
+    // not straight through to "Other" (← → ±1).
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±2'));
+  });
+
+  it('toggling back off immediately hides both, and the detail dial\'s value is frozen — not reset — through the round trip', async () => {
+    const r = render(<CanvasView spec={CHAINED_VISIBILITY_SPEC} />);
+    r.stdin.write('\x1B[C'); // flip "Has option" on
+    await waitFor(() => expect(r.lastFrame()).toContain('Conservative'));
+    r.stdin.write('\x1B[B'); // down to "Strategy"
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    r.stdin.write('\x1B[C'); // cycle to Aggressive (1) — reveals "Detail"
+    await waitFor(() => expect(r.lastFrame()).toContain('Detail'));
+
+    // move onto "Detail" and change its value away from the default (9 -> 11)
+    r.stdin.write('\x1B[B');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → ±2'));
+    r.stdin.write('\x1B[C');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('11');
+      expect(frame).toContain('22'); // Doubled value output: 11 * 2
+    });
+
+    // walk back up to the toggle (Detail -> Strategy -> Has option) and flip it off
+    r.stdin.write('\x1B[A');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → cycle'));
+    r.stdin.write('\x1B[A');
+    await waitFor(() => expect(r.lastFrame()).toContain('← → toggle'));
+    r.stdin.write('\x1B[C'); // flip off
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).not.toContain('Strategy');
+      expect(frame).not.toContain('Detail');
+      // frozen, not reset: the output still reflects 11 (22), not the default of 9 (18)
+      expect(frame).toContain('22');
+    });
+
+    // flip back on — select is still on Aggressive (1), so "Detail" reappears
+    // with its previously-set value intact rather than reset to its default.
+    r.stdin.write('\x1B[C');
+    await waitFor(() => {
+      const frame = r.lastFrame() ?? '';
+      expect(frame).toContain('Aggressive');
+      expect(frame).toContain('Detail');
+      expect(frame).toContain('11');
+      expect(frame).toContain('22');
+    });
+  });
+});
+
 // ─── CanvasView — inter-output references (canvas issue #145, Effort B) ──────
 // A later output's `expr` may reference an earlier output's `key`, resolved via
 // computeOutputValues() — the same way it already references a dial key.
@@ -1162,6 +1287,158 @@ describe('CanvasView — list visibility via count()', () => {
       expect(frame).toContain('Item count');
       expect(frame).toContain('1');
     });
+  });
+});
+
+// ─── CanvasView — chart/table elements (canvas issue #145, Effort C) ─────────
+// Projections: one point per driver-dial step (see core/canvas-spec.ts's
+// projectSeries()/ProjectionDef), rendered either as a plain aligned table or as
+// a `bar()`-based row chart — reusing the same horizontal-bar idiom
+// Dashboard/Trends already use, NOT a novel sparkline. Neither element type is a
+// cursor stop: there's nothing to edit, same treatment `output` rows already get.
+
+const CHART_SPEC: CanvasSpec = {
+  title: 'Chart Test',
+  elements: [
+    { type: 'dial', dial: { key: 'years', label: 'Years', default: 0, step: 1, min: 0, max: 10, format: 'year', hint: 'years from now' } },
+    {
+      type: 'chart',
+      chart: {
+        label: 'Balance over time',
+        driver: 'years',
+        series: [{ label: 'Balance', expr: '20000 - years * 2000', format: 'dollar', color: 'negative' }],
+      },
+    },
+  ],
+};
+
+describe('CanvasView — chart element', () => {
+  it('renders one bar row per driver step, scaled relative to the series max', () => {
+    const { lastFrame } = render(<CanvasView spec={CHART_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Balance over time');
+    expect(frame).toContain('YEARS');
+    expect(frame).toContain('BALANCE');
+
+    const barLines = frame.split('\n').filter((l) => l.includes('█') || l.includes('░'));
+    // driver range 0..10 step 1 -> 11 points -> 11 bar rows
+    expect(barLines.length).toBe(11);
+    // years=0 -> balance 20,000, the largest magnitude across every point ->
+    // fully filled bar (20/20 blocks, BAR_WIDTH default since there's 1 series).
+    expect(barLines[0]).toContain('█'.repeat(20));
+    // years=10 -> balance 0 -> fully empty bar.
+    expect(barLines[barLines.length - 1]).toContain('░'.repeat(20));
+  });
+
+  it('is not a cursor stop — navigating past the driver dial finds nowhere else to land', async () => {
+    const r = render(<CanvasView spec={CHART_SPEC} />);
+    // The only dial ("Years") is the sole cursor stop; an 11-point chart must
+    // contribute zero additional stops. Repeated down-arrows should leave the
+    // dial selected (its control hint still visible) rather than walking into
+    // phantom chart-row stops.
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    expect(r.lastFrame()).toContain('← → ±1');
+  });
+});
+
+const BAD_DRIVER_CHART_SPEC: CanvasSpec = {
+  title: 'Bad Driver Test',
+  elements: [
+    { type: 'dial', dial: { key: 'years', label: 'Years', default: 0, step: 1, min: 0, max: 10, format: 'year', hint: 'years from now' } },
+    {
+      type: 'chart',
+      chart: {
+        label: 'Broken chart',
+        driver: 'nonexistent', // no matching dial element -> projectSeries() returns []
+        series: [{ label: 'Balance', expr: '20000', format: 'dollar' }],
+      },
+    },
+  ],
+};
+
+describe('CanvasView — chart/table with an unresolvable driver', () => {
+  it('renders a distinct "no data" state instead of crashing or rendering an empty chart/table', () => {
+    expect(() => render(<CanvasView spec={BAD_DRIVER_CHART_SPEC} />)).not.toThrow();
+    const { lastFrame } = render(<CanvasView spec={BAD_DRIVER_CHART_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Broken chart');
+    expect(frame).toContain('No data');
+    expect(frame).not.toContain('█');
+  });
+});
+
+const TABLE_SPEC: CanvasSpec = {
+  title: 'Table Test',
+  elements: [
+    { type: 'dial', dial: { key: 'year', label: 'Year', default: 2025, step: 1, min: 2025, max: 2027, format: 'year', hint: 'projection year' } },
+    {
+      type: 'table',
+      table: {
+        label: 'Net worth projection',
+        driver: 'year',
+        series: [
+          { label: 'Net worth', expr: '(year - 2025) * 1000', format: 'dollar' },
+          { label: 'Debt', expr: '5000 - (year - 2025) * 2000', format: 'dollar', signed: true },
+        ],
+      },
+    },
+  ],
+};
+
+describe('CanvasView — table element', () => {
+  it('renders one row per driver step with correctly formatted driver/series values', () => {
+    const { lastFrame } = render(<CanvasView spec={TABLE_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Net worth projection');
+    expect(frame).toContain('YEAR');
+    expect(frame).toContain('NET WORTH');
+    expect(frame).toContain('DEBT');
+
+    // year 2025..2027 step 1 -> 3 points
+    expect(frame).toContain(fmtDialValue(2025, 'year'));
+    expect(frame).toContain(fmtDialValue(2026, 'year'));
+    expect(frame).toContain(fmtDialValue(2027, 'year'));
+    expect(frame).toContain(fmtValue(0, 'dollar'));           // net worth @2025
+    expect(frame).toContain(fmtValue(1000, 'dollar'));        // net worth @2026
+    expect(frame).toContain(fmtValue(2000, 'dollar'));        // net worth @2027
+    expect(frame).toContain(fmtValue(5000, 'dollar', true));  // debt @2025 (signed)
+    expect(frame).toContain(fmtValue(3000, 'dollar', true));  // debt @2026
+    expect(frame).toContain(fmtValue(1000, 'dollar', true));  // debt @2027
+    // a table has no bars, unlike a chart
+    expect(frame).not.toContain('█');
+    expect(frame).not.toContain('░');
+  });
+
+  it('right-aligns every row\'s driver column to the same column as the header', () => {
+    const { lastFrame } = render(<CanvasView spec={TABLE_SPEC} />);
+    const frame = lastFrame() ?? '';
+    const lines = frame.split('\n');
+    const headerLine = lines.find((l) => l.includes('YEAR') && l.includes('NET WORTH') && l.includes('DEBT'));
+    expect(headerLine).toBeDefined();
+
+    // Every column is padStart()'d to one shared width (computed once across the
+    // header and every row) and right-aligned, so the column's RIGHT edge lands
+    // at the same character index on every row, header included — the same
+    // invariant that kept list-row brackets aligned in the tests further above.
+    const yearCol = headerLine!.indexOf('YEAR') + 'YEAR'.length;
+    const driverValues = [fmtDialValue(2025, 'year'), fmtDialValue(2026, 'year'), fmtDialValue(2027, 'year')];
+    // Exclude the "Year" dial's own row — it also renders 2025 (its default) but
+    // inside a `[ ... ]` value bracket, unlike a plain table row.
+    const dataLines = lines.filter((l) => l !== headerLine && !l.includes('[') && driverValues.some((v) => l.includes(v)));
+    expect(dataLines.length).toBe(3);
+    for (const line of dataLines) {
+      const yearText = driverValues.find((v) => line.includes(v))!;
+      expect(line.indexOf(yearText) + yearText.length).toBe(yearCol);
+    }
+  });
+
+  it('is not a cursor stop — navigating past the driver dial finds nowhere else to land', async () => {
+    const r = render(<CanvasView spec={TABLE_SPEC} />);
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    expect(r.lastFrame()).toContain('← → ±1');
   });
 });
 
