@@ -73,6 +73,7 @@ vi.mock('../../core/canvas-history.js', () => ({
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Canvas, CanvasView } from '../../gui/renderer/src/screens/Canvas.js';
 import { updateHistoryEntrySpec, resolveAndWriteCanvasSpec } from '../../core/canvas-history.js';
+import { evalExpr } from '../../core/canvas-spec.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 
 const SPEC: CanvasSpec = {
@@ -201,6 +202,123 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
     // reshow — value should have survived (frozen), not reset to the 5000 default
     await userEvent.click(checkbox); // hasRaise -> 1
     expect(screen.getByText('$5,500')).toBeTruthy();
+  });
+});
+
+// KNOWN GAP found while writing this regression test (see the dedicated test
+// below): the canvas expression grammar in core/canvas-spec.ts has no `&&`/`||`
+// logical operators at all — the lexer's punctuation class doesn't even include
+// `&`, so `has_option == 1 && strategy == 1` throws a parse error, evalExpr()
+// catches it and returns NaN, and per the documented "fails OPEN" convention
+// (NaN !== 0 is true) the element renders as ALWAYS VISIBLE regardless of dial
+// values — the opposite of the intended AND gate. This is a real bug/gap in
+// core/canvas-spec.ts, not a GUI issue, and out of this fief's land to fix.
+// Worked around here with the logically-equivalent nested ternary
+// (`cond1 ? (cond2 ? 1 : 0) : 0`), which the existing grammar already supports,
+// so the *actual* thing this file is meant to prove — that chained/nested
+// `visible` conditions across elements fall out for free from each element's
+// `visible` being re-evaluated independently on every render — still gets real
+// coverage below.
+//
+// Three-level chain: has_option (toggle) gates whether `strategy` (select) renders
+// at all, and `strategy`'s own chosen option in turn gates whether `strategy_detail`
+// renders.
+const CHAINED_VISIBLE_SPEC: CanvasSpec = {
+  title: 'Chained visibility',
+  elements: [
+    { type: 'dial', dial: { key: 'has_option', label: 'Enable strategy?', default: 0, step: 1, format: 'toggle', hint: 'toggle' } },
+    {
+      type: 'dial',
+      dial: {
+        key: 'strategy',
+        label: 'Strategy',
+        default: 0,
+        step: 1,
+        format: 'select',
+        hint: 'pick a strategy',
+        options: ['Conservative', 'Aggressive'],
+      },
+      visible: 'has_option == 1',
+    },
+    {
+      type: 'dial',
+      dial: { key: 'strategy_detail', label: 'Strategy detail', default: 42, step: 1, min: 0, format: 'integer', hint: 'detail dial' },
+      visible: 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0',
+    },
+  ],
+};
+
+describe('GUI CanvasView expression grammar has no logical AND/OR (documents a real gap)', () => {
+  it('a `visible` expression combining two conditions with && fails to parse and fails OPEN (always visible), not closed', () => {
+    const expr = 'has_option == 1 && strategy == 1';
+    // Neither "false AND false" nor "true AND true" behaves as a logical AND —
+    // both come back NaN because `&&` isn't tokenized at all, so an element gated
+    // by an expression like this would render unconditionally, regardless of the
+    // intended gate.
+    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBeNaN();
+    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBeNaN();
+    // The nested-ternary equivalent used in CHAINED_VISIBLE_SPEC below, by
+    // contrast, correctly implements AND with the grammar as it exists today.
+    const equivalent = 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0';
+    expect(evalExpr(equivalent, { has_option: 0, strategy: 0 })).toBe(0);
+    expect(evalExpr(equivalent, { has_option: 1, strategy: 0 })).toBe(0);
+    expect(evalExpr(equivalent, { has_option: 1, strategy: 1 })).toBe(1);
+  });
+});
+
+describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)', () => {
+  it('hides both the select and the detail dial while the toggle is off', () => {
+    renderScreen(<CanvasView spec={CHAINED_VISIBLE_SPEC} />);
+    expect(screen.queryByText('Strategy')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByText('Strategy detail')).toBeNull();
+  });
+
+  it('shows the select once the toggle is on, but keeps the detail dial hidden on option 0', async () => {
+    renderScreen(<CanvasView spec={CHAINED_VISIBLE_SPEC} />);
+    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+    await userEvent.click(checkbox); // has_option -> 1
+
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    expect(select.value).toBe('0');
+    expect(screen.queryByText('Strategy detail')).toBeNull();
+  });
+
+  it('reveals the detail dial only once the select is switched to option 1', async () => {
+    renderScreen(<CanvasView spec={CHAINED_VISIBLE_SPEC} />);
+    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+    await userEvent.click(checkbox); // has_option -> 1
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+
+    await userEvent.selectOptions(select, '1'); // strategy -> 1 (Aggressive)
+    expect(screen.getByText('Strategy detail')).toBeTruthy();
+    expect(screen.getByText('42')).toBeTruthy();
+  });
+
+  it('hides both select and detail dial immediately when the toggle is flipped back off, and freezes the detail value', async () => {
+    renderScreen(<CanvasView spec={CHAINED_VISIBLE_SPEC} />);
+    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
+    await userEvent.click(checkbox); // has_option -> 1
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    await userEvent.selectOptions(select, '1'); // strategy -> 1, detail dial appears
+
+    // change the now-visible detail dial away from its default
+    const detailDial = screen.getByText('Strategy detail').closest('div')!.parentElement!;
+    const plus = Array.from(detailDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
+    await userEvent.click(plus);
+    expect(screen.getByText('43')).toBeTruthy();
+
+    // flip the toggle off — both select and detail dial vanish immediately
+    await userEvent.click(checkbox); // has_option -> 0
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByText('Strategy detail')).toBeNull();
+
+    // flip back on with strategy still at option 1 (frozen, not reset) — the detail
+    // dial reappears and its value survived the hide/show round trip
+    await userEvent.click(checkbox); // has_option -> 1
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('1');
+    expect(screen.getByText('Strategy detail')).toBeTruthy();
+    expect(screen.getByText('43')).toBeTruthy();
   });
 });
 
