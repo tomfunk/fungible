@@ -4,10 +4,11 @@ import type { Screen } from './App.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT, CURSOR } from './ui.js';
-import { PageHeader, SectionHeader, DialRow, SearchBar, SelectableRow, TruncatedText } from './components/index.js';
-import { evalExpr, computeOutputValues, buildListScope, fmtValue, fmtDialValue, type CanvasSpec, type DialDef, type ListRowDef } from '../core/canvas-agent.js';
+import { PageHeader, SectionHeader, DialRow, SearchBar, SelectableRow, TruncatedText, ColumnHeader } from './components/index.js';
+import { evalExpr, computeOutputValues, buildListScope, fmtValue, fmtDialValue, projectSeries, type CanvasSpec, type CanvasElement, type DialDef, type ListRowDef, type ProjectionDef, type ProjectionSeriesDef, type ProjectionPoint } from '../core/canvas-agent.js';
 import { loadHistory, deleteHistoryEntry, updateHistoryEntrySpec, resolveAndWriteCanvasSpec, type CanvasHistoryEntry } from '../core/canvas-history.js';
 import { useRefreshKey } from './RefreshContext.js';
+import { bar, BAR_WIDTH } from './charUtils.js';
 
 // A CanvasSpec as read from CANVAS_SPEC_PATH, or attached when loading one from
 // history — carries the originating history entry's id so list-row edits (add/
@@ -47,6 +48,44 @@ function outputColor(color: string | undefined): string | undefined {
     case 'accent':   return C_ACCENT;
     default:         return C_NEUTRAL;
   }
+}
+
+// A `chart`/`table` series' display color. A `signed` series (one that can cross
+// zero — debt payoff, cash flow) is colored by the sign of its OWN value at this
+// point rather than its declared `color`, matching Trends.tsx's search-view
+// convention (searchIncomeOnly ? C_POSITIVE : C_NEGATIVE) for a bar whose meaning
+// flips with sign. An unsigned series just uses outputColor() like an `output`
+// element does.
+function seriesColor(s: ProjectionSeriesDef, value: number): string | undefined {
+  if (s.signed) return value >= 0 ? C_POSITIVE : C_NEGATIVE;
+  return outputColor(s.color);
+}
+
+// Shared column-width computation for both `chart` and `table`: the driver's own
+// column (formatted via fmtDialValue, using the driver dial's own format/options —
+// never assumed to be 'year') plus one column per series (formatted via fmtValue).
+// Each width is the max of its header label and every point's formatted cell,
+// floored at 6 so a short label/value doesn't produce a cramped column — same
+// spirit as LABEL_W/VALUE_W above, just computed per-projection instead of
+// per-canvas since a chart/table's columns don't share the dial/output value
+// column.
+const PROJECTION_COL_FLOOR = 6;
+
+function projectionColumns(driverDial: DialDef | undefined, driverKey: string, series: ProjectionSeriesDef[], points: ProjectionPoint[]) {
+  const driverFormat = driverDial?.format ?? 'integer';
+  const driverOptions = driverDial?.options;
+  const driverHeader = driverDial?.label ?? driverKey;
+  const driverWidth = Math.max(
+    driverHeader.length,
+    PROJECTION_COL_FLOOR,
+    ...points.map((p) => fmtDialValue(p.x, driverFormat, driverOptions).length),
+  );
+  const seriesWidths = series.map((s, i) => Math.max(
+    s.label.length,
+    PROJECTION_COL_FLOOR,
+    ...points.map((p) => fmtValue(p.values[i], s.format, s.signed).length),
+  ));
+  return { driverFormat, driverOptions, driverHeader, driverWidth, seriesWidths };
 }
 
 function dialStep(dial: DialDef, dir: 1 | -1, val: number): number {
@@ -498,6 +537,59 @@ export function CanvasView({ spec, isActive, onEditingChange }: {
                   </SelectableRow>
                 );
               })}
+            </Box>
+          );
+        }
+        if (el.type === 'table' || el.type === 'chart') {
+          const proj: ProjectionDef = el.type === 'table' ? el.table : el.chart;
+          const driverDial = effectiveElements.find(
+            (e): e is Extract<CanvasElement, { type: 'dial' }> => e.type === 'dial' && e.dial.key === proj.driver,
+          )?.dial;
+          const points = projectSeries(effectiveElements, dialValues, lists, proj.driver, proj.series);
+
+          if (points.length === 0) {
+            return (
+              <Box key={originalIndex} flexDirection="column" marginTop={1}>
+                <Text bold dimColor>{proj.label}</Text>
+                <Text dimColor>No data — check the driver dial's range.</Text>
+              </Box>
+            );
+          }
+
+          const { driverFormat, driverOptions, driverHeader, driverWidth, seriesWidths } =
+            projectionColumns(driverDial, proj.driver, proj.series, points);
+
+          // Chart-only: one shared bar-scale max across every series and every
+          // point (not per-series) — same convention as Trends.tsx's flexMax,
+          // which scales fixed/flexible/discretionary bars on one shared axis so
+          // their magnitudes stay visually comparable across series.
+          const barMax = el.type === 'chart'
+            ? Math.max(...points.flatMap((p) => p.values.map((v) => Math.abs(v))), 1)
+            : 0;
+          const barWidth = proj.series.length > 1 ? Math.max(6, Math.floor(BAR_WIDTH / proj.series.length)) : BAR_WIDTH;
+
+          return (
+            <Box key={originalIndex} flexDirection="column" marginTop={1}>
+              <Text bold dimColor>{proj.label}</Text>
+              <ColumnHeader hasCursor marginTop={0} columns={[
+                { label: driverHeader.toUpperCase(), width: driverWidth, align: 'right' },
+                ...proj.series.map((s, i) => ({ label: s.label.toUpperCase(), width: seriesWidths[i], align: 'right' as const })),
+              ]} />
+              {points.map((p, idx) => (
+                <SelectableRow key={idx} selected={false} gap={2}>
+                  <Text dimColor>{fmtDialValue(p.x, driverFormat, driverOptions).padStart(driverWidth)}</Text>
+                  {proj.series.map((s, i) => {
+                    const v = p.values[i];
+                    const color = seriesColor(s, v);
+                    return (
+                      <Box key={i} gap={2}>
+                        <Text color={color}>{fmtValue(v, s.format, s.signed).padStart(seriesWidths[i])}</Text>
+                        {el.type === 'chart' && <Text color={color}>{bar(v, barMax, barWidth)}</Text>}
+                      </Box>
+                    );
+                  })}
+                </SelectableRow>
+              ))}
             </Box>
           );
         }

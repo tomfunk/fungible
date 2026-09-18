@@ -1097,6 +1097,158 @@ describe('CanvasView — list visibility via count()', () => {
   });
 });
 
+// ─── CanvasView — chart/table elements (canvas issue #145, Effort C) ─────────
+// Projections: one point per driver-dial step (see core/canvas-spec.ts's
+// projectSeries()/ProjectionDef), rendered either as a plain aligned table or as
+// a `bar()`-based row chart — reusing the same horizontal-bar idiom
+// Dashboard/Trends already use, NOT a novel sparkline. Neither element type is a
+// cursor stop: there's nothing to edit, same treatment `output` rows already get.
+
+const CHART_SPEC: CanvasSpec = {
+  title: 'Chart Test',
+  elements: [
+    { type: 'dial', dial: { key: 'years', label: 'Years', default: 0, step: 1, min: 0, max: 10, format: 'year', hint: 'years from now' } },
+    {
+      type: 'chart',
+      chart: {
+        label: 'Balance over time',
+        driver: 'years',
+        series: [{ label: 'Balance', expr: '20000 - years * 2000', format: 'dollar', color: 'negative' }],
+      },
+    },
+  ],
+};
+
+describe('CanvasView — chart element', () => {
+  it('renders one bar row per driver step, scaled relative to the series max', () => {
+    const { lastFrame } = render(<CanvasView spec={CHART_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Balance over time');
+    expect(frame).toContain('YEARS');
+    expect(frame).toContain('BALANCE');
+
+    const barLines = frame.split('\n').filter((l) => l.includes('█') || l.includes('░'));
+    // driver range 0..10 step 1 -> 11 points -> 11 bar rows
+    expect(barLines.length).toBe(11);
+    // years=0 -> balance 20,000, the largest magnitude across every point ->
+    // fully filled bar (20/20 blocks, BAR_WIDTH default since there's 1 series).
+    expect(barLines[0]).toContain('█'.repeat(20));
+    // years=10 -> balance 0 -> fully empty bar.
+    expect(barLines[barLines.length - 1]).toContain('░'.repeat(20));
+  });
+
+  it('is not a cursor stop — navigating past the driver dial finds nowhere else to land', async () => {
+    const r = render(<CanvasView spec={CHART_SPEC} />);
+    // The only dial ("Years") is the sole cursor stop; an 11-point chart must
+    // contribute zero additional stops. Repeated down-arrows should leave the
+    // dial selected (its control hint still visible) rather than walking into
+    // phantom chart-row stops.
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    expect(r.lastFrame()).toContain('← → ±1');
+  });
+});
+
+const BAD_DRIVER_CHART_SPEC: CanvasSpec = {
+  title: 'Bad Driver Test',
+  elements: [
+    { type: 'dial', dial: { key: 'years', label: 'Years', default: 0, step: 1, min: 0, max: 10, format: 'year', hint: 'years from now' } },
+    {
+      type: 'chart',
+      chart: {
+        label: 'Broken chart',
+        driver: 'nonexistent', // no matching dial element -> projectSeries() returns []
+        series: [{ label: 'Balance', expr: '20000', format: 'dollar' }],
+      },
+    },
+  ],
+};
+
+describe('CanvasView — chart/table with an unresolvable driver', () => {
+  it('renders a distinct "no data" state instead of crashing or rendering an empty chart/table', () => {
+    expect(() => render(<CanvasView spec={BAD_DRIVER_CHART_SPEC} />)).not.toThrow();
+    const { lastFrame } = render(<CanvasView spec={BAD_DRIVER_CHART_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Broken chart');
+    expect(frame).toContain('No data');
+    expect(frame).not.toContain('█');
+  });
+});
+
+const TABLE_SPEC: CanvasSpec = {
+  title: 'Table Test',
+  elements: [
+    { type: 'dial', dial: { key: 'year', label: 'Year', default: 2025, step: 1, min: 2025, max: 2027, format: 'year', hint: 'projection year' } },
+    {
+      type: 'table',
+      table: {
+        label: 'Net worth projection',
+        driver: 'year',
+        series: [
+          { label: 'Net worth', expr: '(year - 2025) * 1000', format: 'dollar' },
+          { label: 'Debt', expr: '5000 - (year - 2025) * 2000', format: 'dollar', signed: true },
+        ],
+      },
+    },
+  ],
+};
+
+describe('CanvasView — table element', () => {
+  it('renders one row per driver step with correctly formatted driver/series values', () => {
+    const { lastFrame } = render(<CanvasView spec={TABLE_SPEC} />);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Net worth projection');
+    expect(frame).toContain('YEAR');
+    expect(frame).toContain('NET WORTH');
+    expect(frame).toContain('DEBT');
+
+    // year 2025..2027 step 1 -> 3 points
+    expect(frame).toContain(fmtDialValue(2025, 'year'));
+    expect(frame).toContain(fmtDialValue(2026, 'year'));
+    expect(frame).toContain(fmtDialValue(2027, 'year'));
+    expect(frame).toContain(fmtValue(0, 'dollar'));           // net worth @2025
+    expect(frame).toContain(fmtValue(1000, 'dollar'));        // net worth @2026
+    expect(frame).toContain(fmtValue(2000, 'dollar'));        // net worth @2027
+    expect(frame).toContain(fmtValue(5000, 'dollar', true));  // debt @2025 (signed)
+    expect(frame).toContain(fmtValue(3000, 'dollar', true));  // debt @2026
+    expect(frame).toContain(fmtValue(1000, 'dollar', true));  // debt @2027
+    // a table has no bars, unlike a chart
+    expect(frame).not.toContain('█');
+    expect(frame).not.toContain('░');
+  });
+
+  it('right-aligns every row\'s driver column to the same column as the header', () => {
+    const { lastFrame } = render(<CanvasView spec={TABLE_SPEC} />);
+    const frame = lastFrame() ?? '';
+    const lines = frame.split('\n');
+    const headerLine = lines.find((l) => l.includes('YEAR') && l.includes('NET WORTH') && l.includes('DEBT'));
+    expect(headerLine).toBeDefined();
+
+    // Every column is padStart()'d to one shared width (computed once across the
+    // header and every row) and right-aligned, so the column's RIGHT edge lands
+    // at the same character index on every row, header included — the same
+    // invariant that kept list-row brackets aligned in the tests further above.
+    const yearCol = headerLine!.indexOf('YEAR') + 'YEAR'.length;
+    const driverValues = [fmtDialValue(2025, 'year'), fmtDialValue(2026, 'year'), fmtDialValue(2027, 'year')];
+    // Exclude the "Year" dial's own row — it also renders 2025 (its default) but
+    // inside a `[ ... ]` value bracket, unlike a plain table row.
+    const dataLines = lines.filter((l) => l !== headerLine && !l.includes('[') && driverValues.some((v) => l.includes(v)));
+    expect(dataLines.length).toBe(3);
+    for (const line of dataLines) {
+      const yearText = driverValues.find((v) => line.includes(v))!;
+      expect(line.indexOf(yearText) + yearText.length).toBe(yearCol);
+    }
+  });
+
+  it('is not a cursor stop — navigating past the driver dial finds nowhere else to land', async () => {
+    const r = render(<CanvasView spec={TABLE_SPEC} />);
+    r.stdin.write('\x1B[B'); await tick();
+    r.stdin.write('\x1B[B'); await tick();
+    expect(r.lastFrame()).toContain('← → ±1');
+  });
+});
+
 // ─── Canvas — parent must not double-fire nav/Escape while CanvasView edits ──
 // Regression test: Canvas() has its own useInput as a sibling of CanvasView's.
 // Ink has no stopPropagation between independent useInput hooks, so both used
