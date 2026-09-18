@@ -86,18 +86,29 @@ describe('GUI Health', () => {
     expect(restored).toBe(before);
   });
 
-  it('withdrawal slider changes the FIRE target', async () => {
+  it('withdrawal rate stepper changes the FIRE target', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
     // "Net worth" metric in Retirement panel shows "X% of FIRE target" — changes with withdrawal rate
     const netWorthRow = screen.getByText('Net worth').closest('div')!;
     const before = netWorthRow.textContent;
     const wDial = screen.getByText('Withdrawal rate').closest('div')!.parentElement!;
-    const slider = wDial.querySelector('input[type="range"]') as HTMLInputElement;
-    fireEvent.change(slider, { target: { value: '8' } });
+    const input = wDial.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '8' } });
     await waitFor(() => {
       const after = screen.getByText('Net worth').closest('div')!.textContent;
       expect(after).not.toBe(before);
     });
+  });
+
+  it('growth rate steps by 1.0 (matching TUI), not 0.5', async () => {
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Growth rate')).toBeTruthy());
+    const gDial = screen.getByText('Growth rate').closest('div')!.parentElement!;
+    const before = (gDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    const plus = Array.from(gDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
+    await userEvent.click(plus);
+    const after = (gDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    expect(Number(after)).toBe(Number(before) + 1);
   });
 });
