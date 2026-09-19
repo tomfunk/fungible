@@ -204,6 +204,23 @@ export async function initDb() {
   );
   await db.execute('CREATE INDEX IF NOT EXISTS idx_transactions_import ON transactions(import_id)');
 
+  // Backfill (#200): importCsvTransactions never wrote a balance_history row
+  // until this fix, so a CSV-imported account that predates it has none.
+  // Every net-worth/health query inner-joins balance_history on MAX(date),
+  // so such an account doesn't show up as zero or stale -- it's just silently
+  // absent. One-time only: an account is skipped here once it has any
+  // balance_history row of its own, csv-imported or not.
+  const csvAccountsMissingBalance = await db.execute(
+    `SELECT DISTINCT account_id FROM transactions t
+     WHERE t.source = 'csv'
+       AND NOT EXISTS (SELECT 1 FROM balance_history bh WHERE bh.account_id = t.account_id)`,
+  );
+  if (csvAccountsMissingBalance.rows.length > 0) {
+    const { recomputeAccountBalance } = await import('./accounts.js');
+    const rows = csvAccountsMissingBalance.rows as unknown as { account_id: string }[];
+    for (const r of rows) await recomputeAccountBalance(r.account_id);
+  }
+
   // Seed default flexibility tiers (only where not already set)
   const flexDefaults: [string, string][] = [
     ['Rent', 'fixed'], ['Insurance', 'fixed'], ['Childcare', 'fixed'],

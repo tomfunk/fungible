@@ -3,6 +3,7 @@ import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
 import { parseDate, assignOrdinals, dedupKey } from './csv.js';
 import { openImport, closeImport, importTxId } from './imports.js';
+import { isLiabilityAccount } from './account-class.js';
 
 export async function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): Promise<void> {
   await db.execute({ sql: 'UPDATE accounts SET type = ?, subtype = ? WHERE id = ?', args: [type, subtype, id] });
@@ -46,6 +47,37 @@ export async function createManualAccount(name: string, value: number): Promise<
     { sql: 'INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)', args: [id, value, today] },
   ], 'write');
   return id;
+}
+
+// CSV import writes transactions but, unlike Plaid sync or a manual entry,
+// has no independent source for the account's current balance -- so it has
+// to be derived from the transactions themselves. `transactions.amount` is
+// positive for an outflow/expense and negative for an inflow/income (see the
+// spending/income aggregates in queries.ts). For an asset account
+// (depository/investment/other) an expense reduces the balance, so
+// balance = -SUM(amount). A liability account (credit/loan) stores its
+// balance positive as the amount owed, and a charge *increases* that, so
+// balance = SUM(amount) there instead.
+//
+// Recomputed from scratch every time rather than adjusted incrementally: that
+// makes it self-correcting for re-imports, transaction edits, or duplicates
+// removed after the fact (see deleteDuplicate/deleteAllDuplicates below)
+// instead of silently drifting out of sync with them.
+export async function recomputeAccountBalance(accountId: string): Promise<void> {
+  const acctResult = await db.execute({ sql: 'SELECT type FROM accounts WHERE id = ?', args: [accountId] });
+  const acctRow = acctResult.rows[0] as unknown as { type: string } | undefined;
+  if (!acctRow) return;
+  const sumResult = await db.execute({
+    sql: 'SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE account_id = ?',
+    args: [accountId],
+  });
+  const total = Number((sumResult.rows[0] as unknown as { total: number }).total);
+  const balance = isLiabilityAccount(acctRow) ? total : -total;
+  const today = new Date().toISOString().slice(0, 10);
+  await db.execute({
+    sql: 'INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)',
+    args: [accountId, balance, today],
+  });
 }
 
 export async function deleteAccount(id: string): Promise<void> {
@@ -133,6 +165,10 @@ export async function importCsvTransactions(
   await closeImport(importId, { imported, skipped, minDate, maxDate });
   // Tag only genuinely new rows so a tag a user removed never returns.
   await applyTagRules({ txIds: newIds });
+  // Without this, a CSV-imported account has no balance_history row at all --
+  // net worth/health queries inner-join on it, so the account doesn't show up
+  // as zero or stale, it's just silently absent (#200).
+  await recomputeAccountBalance(accountId);
   return { imported, skipped, importId };
 }
 

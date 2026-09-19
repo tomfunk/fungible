@@ -49,6 +49,16 @@ const OLD_ROWS: [string, string, string, string, number][] = [
   ['A1b2C3d4E5f6G7h8',     'chase', '2025-01-02', 'AMAZON',  25.00],
 ];
 
+// A second, CSV-only account for the balance_history backfill (#200): kept
+// separate from 'chase' above so its balance isn't muddied by chase's mix of
+// csv and plaid rows. Depository (asset), so the expected balance is
+// -SUM(amount): the paycheck (amount < 0, an inflow) adds 1200, the grocery
+// charge (amount > 0, an outflow) subtracts 200, net 1000.
+const ALLY_ROWS: [string, string, string, number][] = [
+  ['csv-ally00000000001', '2025-01-10', 'PAYCHECK',  -1200.00],
+  ['csv-ally00000000002', '2025-01-12', 'GROCERIES',   200.00],
+];
+
 let dir: string;
 let db: Client;
 
@@ -72,6 +82,15 @@ beforeAll(async () => {
       sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
             VALUES (?, ?, ?, ?, ?, 'Uncategorized', 0, 0)`,
       args: [id, account, date, name, amount],
+    });
+  }
+
+  await db.execute("INSERT INTO accounts (id, name, type) VALUES ('ally', 'Ally', 'depository')");
+  for (const [id, date, name, amount] of ALLY_ROWS) {
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+            VALUES (?, 'ally', ?, ?, ?, 'Uncategorized', 0, 0)`,
+      args: [id, date, name, amount],
     });
   }
 
@@ -102,7 +121,8 @@ describe('initDb provenance migration', () => {
   });
 
   it('rewrites no ids', async () => {
-    const ids = (await db.execute('SELECT id FROM transactions ORDER BY rowid')).rows as unknown as { id: string }[];
+    const ids = (await db.execute("SELECT id FROM transactions WHERE account_id = 'chase' ORDER BY rowid"))
+      .rows as unknown as { id: string }[];
     expect(ids.map((r) => r.id)).toEqual(OLD_ROWS.map(([id]) => id));
   });
 
@@ -142,5 +162,49 @@ describe('initDb provenance migration', () => {
     await expect(initDb()).resolves.not.toThrow();
     const after = (await db.execute('SELECT id, source, dedup_key, import_id FROM transactions ORDER BY rowid')).rows;
     expect(after).toEqual(before);
+  });
+});
+
+// #200: a CSV-imported account that predates the importCsvTransactions fix has
+// transactions but no balance_history row at all, which silently drops it out
+// of every net-worth/health query (they inner-join on MAX(date)). initDb
+// backfills one computed row per such account, the same way a fresh import
+// would from now on.
+describe('initDb balance_history backfill (#200)', () => {
+  it('gives a pre-existing CSV-only account a computed balance row', async () => {
+    const rows = (await db.execute({
+      sql: 'SELECT balance, date FROM balance_history WHERE account_id = ?', args: ['ally'],
+    })).rows as unknown as { balance: number; date: string }[];
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].balance)).toBeCloseTo(1000, 5);
+  });
+
+  it('is idempotent — a second launch does not add or change the row', async () => {
+    const before = (await db.execute({
+      sql: 'SELECT balance, date FROM balance_history WHERE account_id = ?', args: ['ally'],
+    })).rows;
+    const { initDb } = await import('../core/db.js');
+    await expect(initDb()).resolves.not.toThrow();
+    const after = (await db.execute({
+      sql: 'SELECT balance, date FROM balance_history WHERE account_id = ?', args: ['ally'],
+    })).rows;
+    expect(after).toEqual(before);
+  });
+
+  it('leaves an account that already has a balance_history row alone', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type) VALUES ('seeded', 'Seeded', 'depository')");
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+            VALUES ('csv-seeded00000001', 'seeded', '2025-01-01', 'X', 999, 'Uncategorized', 0, 0)`,
+    });
+    await db.execute({
+      sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('seeded', 42, '2020-01-01')",
+    });
+    const { initDb } = await import('../core/db.js');
+    await initDb();
+    const rows = (await db.execute({
+      sql: 'SELECT balance, date FROM balance_history WHERE account_id = ?', args: ['seeded'],
+    })).rows as unknown as { balance: number; date: string }[];
+    expect(rows).toEqual([{ balance: 42, date: '2020-01-01' }]);
   });
 });
