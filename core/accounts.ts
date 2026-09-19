@@ -3,7 +3,6 @@ import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
 import { parseDate, assignOrdinals, dedupKey } from './csv.js';
 import { openImport, closeImport, importTxId } from './imports.js';
-import type { CsvAccount } from './queries.js';
 
 export async function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): Promise<void> {
   await db.execute({ sql: 'UPDATE accounts SET type = ?, subtype = ? WHERE id = ?', args: [type, subtype, id] });
@@ -75,7 +74,7 @@ export type ImportConfig = {
 
 export async function importCsvTransactions(
   csvRows: string[][],
-  account: CsvAccount,
+  accountId: string,
   cfg: ImportConfig,
   file: { name: string; hash: string },
 ): Promise<{ imported: number; skipped: number; importId: number }> {
@@ -105,13 +104,13 @@ export async function importCsvTransactions(
   });
 
   // Opened before the rows, because its id is part of every transaction id.
-  const importId = await openImport(account.id, file.name, file.hash, csvRows.length, cfg);
+  const importId = await openImport(accountId, file.name, file.hash, csvRows.length, cfg);
 
   let imported = 0;
   let minDate: string | null = null, maxDate: string | null = null;
   const newIds: string[] = [];
   for (const row of assignOrdinals(parsed)) {
-    const category = categorizeWithRules(rules, row.name, null, null, row.amount, account.id);
+    const category = categorizeWithRules(rules, row.name, null, null, row.amount, accountId);
     const id = importTxId(importId, row.rowIndex);
     // OR IGNORE covers the unique index on (account_id, dedup_key): a row this
     // account already holds — from an overlapping statement, or a re-import of
@@ -120,7 +119,7 @@ export async function importCsvTransactions(
       sql: `INSERT OR IGNORE INTO transactions
               (id, account_id, date, name, amount, category, raw_category, pending, source, import_id, dedup_key)
             VALUES (?, ?, ?, ?, ?, ?, NULL, 0, 'csv', ?, ?)`,
-      args: [id, account.id, row.date, row.name, row.amount, category, importId,
+      args: [id, accountId, row.date, row.name, row.amount, category, importId,
              dedupKey(row.date, row.name, row.amount, row.ord)],
     });
     if (result.rowsAffected > 0) {

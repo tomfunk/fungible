@@ -16,14 +16,12 @@ const CFG: ImportConfig = {
   debitCol: null, creditCol: null, positiveIsInflow: false,
 };
 
-const acct = (id: string) => ({ id, name: id, mask: null });
-
 async function account(id: string) {
   await db.execute({ sql: "INSERT INTO accounts (id, name, type) VALUES (?, ?, 'credit')", args: [id, id] });
 }
 
 async function importFile(rows: string[][], accountId = 'chase', file = { name: 'jan.csv', hash: 'h-jan' }) {
-  return importCsvTransactions(rows, acct(accountId), CFG, file);
+  return importCsvTransactions(rows, accountId, CFG, file);
 }
 
 async function txRows(accountId?: string) {

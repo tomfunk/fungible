@@ -788,11 +788,57 @@ export async function getLinkedItems(): Promise<LinkedItem[]> {
   }));
 }
 
-export type CsvAccount = { id: string; name: string; mask: string | null };
+/**
+ * An account a CSV file can be imported into. The name is deliberate: the query
+ * this replaced was called getCsvAccounts but selected every account with no
+ * filter, so the picker has always offered Plaid-linked accounts — silently, and
+ * labelled as though they were CSV ones. Backfilling a linked account is a
+ * legitimate thing to want; doing it without knowing you have is not.
+ */
+export type ImportTarget = {
+  id: string;
+  name: string;
+  nickname: string | null;
+  mask: string | null;
+  kind: 'plaid' | 'csv' | 'manual';
+  institution_name: string | null;
+  /**
+   * Plaid targets: the history window locked in when the item was created. NULL
+   * predates the column, in which case Plaid's 90-day default applied. Together
+   * with earliest_date it says how far back this account's own history reaches,
+   * which is what a backfill is trying to extend.
+   */
+  days_requested: number | null;
+  /** Earliest transaction currently held, or null when the account has none. */
+  earliest_date: string | null;
+};
 
-export async function getCsvAccounts(): Promise<CsvAccount[]> {
-  const result = await db.execute('SELECT id, name, mask FROM accounts');
-  return result.rows as unknown as CsvAccount[];
+export async function getImportTargets(): Promise<ImportTarget[]> {
+  const result = await db.execute(`
+    SELECT a.id, a.name, a.nickname, a.mask, a.item_id,
+           COALESCE(a.institution_name, pi.institution_name) as institution_name,
+           pi.days_requested,
+           (SELECT MIN(t.date) FROM transactions t WHERE t.account_id = a.id) as earliest_date
+    FROM accounts a
+    LEFT JOIN plaid_items pi ON pi.item_id = a.item_id
+    ORDER BY a.name
+  `);
+  return (result.rows as unknown as {
+    id: string; name: string; nickname: string | null; mask: string | null; item_id: string | null;
+    institution_name: string | null; days_requested: number | null; earliest_date: string | null;
+  }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    nickname: r.nickname,
+    mask: r.mask,
+    // item_id is the real signal for a Plaid account. Manual assets have no such
+    // marker, so their creation-time id prefix is all there is to go on — the
+    // same namespace createManualAccount writes.
+    kind: r.item_id !== null ? 'plaid' : r.id.startsWith('manual-') ? 'manual' : 'csv',
+    institution_name: r.institution_name,
+    days_requested: r.days_requested === null ? null : Number(r.days_requested),
+    earliest_date: r.earliest_date,
+  }));
 }
 
 export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };

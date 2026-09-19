@@ -233,6 +233,8 @@ missing is older than that, Plaid almost certainly already has it, which makes
 
 **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 
+**Import history** appears on the Add Data view once a CSV has been imported. `↑↓` selects an import; `[u]` undoes it, removing the transactions it created and the record of it; `[v]` moves it to a different account, for a file imported into the wrong one. Both confirm first — undo names any categories, renames, or tags of yours that would be lost.
+
 **Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
 
 ## Canvas `[9]`
