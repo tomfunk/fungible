@@ -10,14 +10,15 @@ import { importCsvTransactions, deleteAccount, type ImportConfig } from '../core
 import {
   getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
 } from '../core/imports.js';
+import { getAccountsWithBalances, getNetWorthHistory } from '../core/queries.js';
 
 const CFG: ImportConfig = {
   amountMode: 'single', dateCol: 0, nameCol: 1, amountCol: 2,
   debitCol: null, creditCol: null, positiveIsInflow: false,
 };
 
-async function account(id: string) {
-  await db.execute({ sql: "INSERT INTO accounts (id, name, type) VALUES (?, ?, 'credit')", args: [id, id] });
+async function account(id: string, type = 'credit') {
+  await db.execute({ sql: 'INSERT INTO accounts (id, name, type) VALUES (?, ?, ?)', args: [id, id, type] });
 }
 
 async function importFile(rows: string[][], accountId = 'chase', file = { name: 'jan.csv', hash: 'h-jan' }) {
@@ -33,10 +34,15 @@ async function txRows(accountId?: string) {
 }
 
 beforeEach(async () => {
-  for (const t of ['transaction_tags', 'tag_rule_suppressions', 'tags', 'transactions', 'imports', 'accounts']) {
+  for (const t of ['transaction_tags', 'tag_rule_suppressions', 'tags', 'transactions', 'imports', 'accounts', 'balance_history']) {
     await db.execute(`DELETE FROM ${t}`);
   }
 });
+
+async function balanceRows(accountId: string) {
+  const r = await db.execute({ sql: 'SELECT balance, date FROM balance_history WHERE account_id = ?', args: [accountId] });
+  return r.rows as unknown as { balance: number; date: string }[];
+}
 
 describe('importCsvTransactions provenance', () => {
   it('records the file and links every row to it', async () => {
@@ -138,6 +144,72 @@ describe('importCsvTransactions provenance', () => {
     expect(prior).toHaveLength(1);
     expect(prior[0].file_name).toBe('statement.csv');
     expect(await getImportsOfFile('h-other')).toEqual([]);
+  });
+});
+
+describe('importCsvTransactions balance_history (#200)', () => {
+  it('writes a computed balance_history row for a fresh depository account', async () => {
+    await account('chase', 'depository');
+    // amount > 0 is an outflow/expense, amount < 0 an inflow -- for an asset
+    // account the balance is -SUM(amount).
+    await importFile([
+      ['2025-01-02', 'PAYCHECK', '-1000.00'],
+      ['2025-01-05', 'GROCERIES', '150.00'],
+    ]);
+    const rows = await balanceRows('chase');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].balance).toBeCloseTo(850, 5);
+  });
+
+  it('writes a computed balance_history row for a fresh credit (liability) account, balance = SUM(amount)', async () => {
+    await account('amex', 'credit');
+    await importFile([
+      ['2025-01-02', 'AMAZON', '25.00'],
+      ['2025-01-05', 'PAYMENT', '-10.00'],
+    ], 'amex', { name: 'amex.csv', hash: 'h-amex' });
+    const rows = await balanceRows('amex');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].balance).toBeCloseTo(15, 5);
+  });
+
+  it('makes a previously-invisible CSV account show up in net worth / balances queries', async () => {
+    await account('chase', 'depository');
+    await importFile([['2025-01-02', 'PAYCHECK', '-2000.00']]);
+
+    const { accounts } = await getAccountsWithBalances();
+    expect(accounts.map((a) => a.id)).toContain('chase');
+    expect(accounts.find((a) => a.id === 'chase')?.balance).toBeCloseTo(2000, 5);
+
+    const history = await getNetWorthHistory('month', ['chase']);
+    expect(history.length).toBeGreaterThan(0);
+    expect(history[0].assets).toBeCloseTo(2000, 5);
+  });
+
+  it('recomputes rather than accumulates when the same file is re-imported', async () => {
+    await account('chase', 'depository');
+    const rows = [['2025-01-02', 'PAYCHECK', '-1000.00'], ['2025-01-05', 'GROCERIES', '150.00']];
+    await importFile(rows);
+    await importFile(rows); // fully duplicate re-import: 0 newly imported rows
+    const balance = await balanceRows('chase');
+    expect(balance).toHaveLength(1); // same date -> same row, not a second one
+    expect(balance[0].balance).toBeCloseTo(850, 5);
+  });
+
+  it('updates the balance correctly when a second, non-overlapping batch is imported', async () => {
+    await account('chase', 'depository');
+    await importFile([['2025-01-02', 'PAYCHECK', '-1000.00']]);
+    await importFile(
+      [['2025-02-02', 'PAYCHECK', '-1000.00'], ['2025-02-05', 'RENT', '500.00']],
+      'chase', { name: 'feb.csv', hash: 'h-feb' },
+    );
+    const balance = await balanceRows('chase');
+    expect(balance).toHaveLength(1);
+    expect(balance[0].balance).toBeCloseTo(1500, 5);
+  });
+
+  it('does not write a balance_history row when the account no longer exists', async () => {
+    await importFile([['2025-01-02', 'AMAZON', '25.00']], 'ghost');
+    expect(await balanceRows('ghost')).toEqual([]);
   });
 });
 
