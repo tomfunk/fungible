@@ -103,7 +103,11 @@ describe('GUI CanvasView', () => {
     expect(screen.getByText(/Adjust the dials/)).toBeTruthy();
     expect(screen.getByText('Balance')).toBeTruthy();
     const balanceDial = screen.getByText('Balance').closest('div')!.parentElement!;
-    expect((balanceDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('20000');
+    // Dollar dials show comma-formatted, non-editable text while unfocused —
+    // see DialRow's focus/blur formatting.
+    const balanceInput = balanceDial.querySelector('input') as HTMLInputElement;
+    expect(balanceInput.type).toBe('text');
+    expect(balanceInput.value).toBe('20,000');
     expect(balanceDial.textContent).toContain('$'); // dollar unit adornment on the input, no duplicate readout
     expect(screen.getByText('Months to payoff')).toBeTruthy();
     // 20000 @ 22% APR with $500/mo → 72.8 months
@@ -113,13 +117,34 @@ describe('GUI CanvasView', () => {
   it('stepping a dial recomputes outputs and offers reset', async () => {
     renderScreen(<CanvasView spec={SPEC} />);
     const monthlyDial = screen.getByText('Monthly payment').closest('div')!.parentElement!;
+    const monthlyInput = () => monthlyDial.querySelector('input') as HTMLInputElement;
     const plus = Array.from(monthlyDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    expect((monthlyDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('550');
+    expect(monthlyInput().value).toBe('550'); // < 1000, so no comma to show either way
     expect(screen.queryByText('72.8 mo')).toBeNull(); // recomputed
     await userEvent.click(screen.getByText('reset'));
-    expect((monthlyDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('500');
+    expect(monthlyInput().value).toBe('500');
     expect(screen.getByText('72.8 mo')).toBeTruthy();
+  });
+
+  it('a dollar dial shows raw digits while focused and re-formats with commas on blur', () => {
+    renderScreen(<CanvasView spec={SPEC} />);
+    const balanceDial = screen.getByText('Balance').closest('div')!.parentElement!;
+    const input = balanceDial.querySelector('input') as HTMLInputElement;
+    expect(input.type).toBe('text');
+    expect(input.value).toBe('20,000');
+
+    fireEvent.focus(input); // -> switches to raw, editable type="number"
+    expect(input.type).toBe('number');
+    expect(input.value).toBe('20000');
+
+    // Balance's step is 500, so land on a value apply()'s rounding won't touch.
+    fireEvent.change(input, { target: { value: '12500' } });
+    expect(input.value).toBe('12500');
+
+    fireEvent.blur(input); // -> re-formats with commas
+    expect(input.type).toBe('text');
+    expect(input.value).toBe('12,500');
   });
 
   it('bounded dials render as a stepper and respect max', async () => {
@@ -195,7 +220,8 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
     const raiseDial = screen.getByText('Raise amount').closest('div')!.parentElement!;
     const plus = Array.from(raiseDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    expect((raiseDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('5500');
+    // Dollar dial, unfocused -> comma-formatted text, not a raw type="number" value.
+    expect((raiseDial.querySelector('input') as HTMLInputElement).value).toBe('5,500');
 
     // hide it again
     await userEvent.click(checkbox); // hasRaise -> 0
@@ -204,7 +230,7 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
     // reshow — value should have survived (frozen), not reset to the 5000 default
     await userEvent.click(checkbox); // hasRaise -> 1
     const raiseDialAgain = screen.getByText('Raise amount').closest('div')!.parentElement!;
-    expect((raiseDialAgain.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('5500');
+    expect((raiseDialAgain.querySelector('input') as HTMLInputElement).value).toBe('5,500');
   });
 });
 

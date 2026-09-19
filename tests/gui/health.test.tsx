@@ -75,15 +75,39 @@ describe('GUI Health', () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
     const spendDial = screen.getByText('Monthly spending').closest('div')!.parentElement!;
-    const before = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    // Dollar dial, unfocused throughout this test -> comma-formatted text, not
+    // a type="number" input; strip commas before comparing as numbers.
+    const spendInput = () => spendDial.querySelector('input') as HTMLInputElement;
+    const parse = (s: string) => Number(s.replace(/,/g, ''));
+    const before = spendInput().value;
     const plus = Array.from(spendDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    const after = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
-    expect(Number(after)).toBe(Number(before) + 100);
+    const after = spendInput().value;
+    expect(parse(after)).toBe(parse(before) + 100);
     expect(spendDial.textContent).toContain('reset');
     await userEvent.click(Array.from(spendDial.querySelectorAll('button')).find((b) => b.textContent === 'reset')!);
-    const restored = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    const restored = spendInput().value;
     expect(restored).toBe(before);
+  });
+
+  it('the spending dial shows raw digits while focused and comma-formats on blur', async () => {
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
+    const spendDial = screen.getByText('Monthly spending').closest('div')!.parentElement!;
+    const input = spendDial.querySelector('input') as HTMLInputElement;
+    expect(input.type).toBe('text');
+    expect(input.value).toMatch(/^-?[\d,]+$/);
+
+    fireEvent.focus(input);
+    expect(input.type).toBe('number');
+    expect(input.value).not.toContain(',');
+
+    fireEvent.change(input, { target: { value: '4200' } });
+    expect(input.value).toBe('4200');
+
+    fireEvent.blur(input);
+    expect(input.type).toBe('text');
+    expect(input.value).toBe('4,200');
   });
 
   it('withdrawal rate stepper changes the FIRE target', async () => {

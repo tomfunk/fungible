@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { fmtDialValue } from '../../../../core/canvas-spec.js';
 import type { DialFormat } from '../../../../core/canvas-spec.js';
 import styles from './DialRow.module.css';
@@ -34,6 +35,19 @@ export function DialRow({
   onReset?: () => void;
 }) {
   const changed = value !== defaultValue;
+
+  // A native <input type="number"> can't display commas at all — browsers
+  // strip/reject non-digit characters, so value="12,700" just breaks. Showing
+  // thousands-comma grouping for dollar dials means switching that input to
+  // type="text" while formatted — but reformatting on every keystroke sends
+  // the cursor to the wrong spot as commas shift mid-edit. Standard mitigation:
+  // format only while NOT focused; while focused, fall back to the plain
+  // type="number" raw-digit editing experience (arrow keys, apply()/clamp(),
+  // browser-native min/max/step) exactly as before. Only 'dollar' gets this —
+  // percent/integer/months/years/year keep a single always-type="number" input.
+  const [focused, setFocused] = useState(false);
+  const isDollar = format === 'dollar';
+  const showFormatted = isDollar && !focused;
 
   function clamp(v: number): number {
     let n = v;
@@ -77,12 +91,18 @@ export function DialRow({
         <div className={`num ${styles.dialInputWrap}`}>
           {unitPrefix && <span className={styles.dialUnit}>{unitPrefix}</span>}
           <input
-            type="number"
+            type={showFormatted ? 'text' : 'number'}
             className={styles.dialInput}
-            value={value}
+            // fmtDialValue's own "$" is stripped since the unit prefix already
+            // renders it just outside the input; its comma-grouping and
+            // 0-vs-2-decimal convention stay, matching the reset tooltip below
+            // and every other dollar readout in the app.
+            value={showFormatted ? fmtDialValue(value, format).replace('$', '') : value}
             step={step}
             min={min}
             max={max}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             onChange={(e) => {
               const n = parseFloat(e.target.value);
               if (!isNaN(n)) apply(n);
@@ -91,6 +111,8 @@ export function DialRow({
               // Explicit arrow-key stepping: a range input gets this natively,
               // a bare number input doesn't reliably (and not at all in jsdom),
               // so wire it directly rather than lean on browser default behavior.
+              // Still type="number" while focused (formatting only applies to
+              // the blurred, non-editable display), so this keeps working as-is.
               if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 apply(value + step);
