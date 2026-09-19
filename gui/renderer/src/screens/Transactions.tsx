@@ -8,6 +8,7 @@ import { KeyHints } from '../components/KeyHints.js';
 import { Modal } from '../components/Modal.js';
 import { MONTHS } from '../../../../core/dateUtils.js';
 import type { SortMode, TxRow } from '../../../../core/queries.js';
+import type { RuleSuggestion } from '../../../../core/rules.js';
 import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useLoadGuard } from '../hooks/useLoadGuard.js';
@@ -471,6 +472,7 @@ function EditModal({
   const [matchType, setMatchType] = useState<'name' | 'regex'>('name');
   const [matchCount, setMatchCount] = useState(0);
   const [error, setError] = useState('');
+  const [suggestion, setSuggestion] = useState<RuleSuggestion | null>(null);
   const matchGuard = useLoadGuard();
 
   useEffect(() => {
@@ -525,11 +527,92 @@ function EditModal({
           return;
         }
       }
+
+      // Manual recategorize (no typed pattern): offer to turn it into a rule.
+      // Keeps the modal open on a suggestion — closes only once the user
+      // accepts or declines it.
+      if (catChanged) {
+        const s = await api.rules.suggestRuleForTransaction(tx.id, tx.category, cat);
+        if (s) {
+          setSuggestion(s);
+          return;
+        }
+      }
+
       onSaved(nameChanged || catChanged || dateChanged ? 'Transaction updated' : 'No changes');
     }
   }
 
+  async function acceptSuggestion() {
+    if (!suggestion) return;
+    try {
+      if (suggestion.conflictingRule) {
+        // Preserve the existing rule's amount range / account scope — the
+        // suggestion only carries id/pattern/matchType/category, and
+        // saveCategoryRule overwrites every field it's given.
+        const rules = await api.rules.getAllRules();
+        const existing = rules.find((r) => r.id === suggestion.conflictingRule!.id);
+        await api.rules.saveCategoryRule({
+          pattern: suggestion.conflictingRule.pattern,
+          matchType: suggestion.conflictingRule.matchType,
+          category: suggestion.newCategory,
+          minAmount: existing?.min_amount ?? null,
+          maxAmount: existing?.max_amount ?? null,
+          accountId: existing?.account_id ?? null,
+          editingId: suggestion.conflictingRule.id,
+        });
+        onSaved(`Category updated · rule updated (${suggestion.matchCount} transaction${suggestion.matchCount === 1 ? '' : 's'})`);
+      } else {
+        await api.transactions.upsertCategoryRule(suggestion.pattern, suggestion.matchType, suggestion.newCategory);
+        onSaved(`Category updated · rule created (${suggestion.matchCount} transaction${suggestion.matchCount === 1 ? '' : 's'})`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save rule');
+    }
+  }
+
+  function declineSuggestion() {
+    onSaved('Transaction updated');
+  }
+
   const isRule = !!pattern.trim();
+
+  if (suggestion) {
+    const isConflict = !!suggestion.conflictingRule;
+    return (
+      <Modal title={<>Edit <span className="dim">{tx.name}</span></>} onClose={onClose} accent="var(--manual)">
+        <p className={styles.ruleHint}>
+          {isConflict ? (
+            <>
+              <strong>{suggestion.pattern}</strong> already has a rule categorizing it as{' '}
+              <strong>{suggestion.conflictingRule!.category}</strong>. Update that rule to{' '}
+              <strong>{suggestion.newCategory}</strong> instead?
+            </>
+          ) : (
+            <>
+              Always categorize <strong>{suggestion.pattern}</strong> as <strong>{suggestion.newCategory}</strong>?
+            </>
+          )}
+        </p>
+        {!isConflict && suggestion.matchCount > 0 && (
+          <p className={styles.ruleHint}>
+            <span className="dim">
+              {suggestion.matchCount} other transaction{suggestion.matchCount === 1 ? '' : 's'} match
+            </span>
+          </p>
+        )}
+        {error && <p className="neg">{error}</p>}
+        <div className={styles.modalActions}>
+          <button className={styles.btnSecondary} onClick={declineSuggestion}>
+            No, just this once
+          </button>
+          <button className={styles.btnPrimary} onClick={() => void acceptSuggestion()}>
+            {isConflict ? 'Yes, update the rule' : 'Yes, make a rule'}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal title={<>Edit <span className="dim">{tx.name}</span></>} onClose={onClose} accent={isRule ? 'var(--manual)' : undefined}>

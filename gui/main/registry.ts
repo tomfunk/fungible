@@ -68,6 +68,7 @@ import {
   createCategory,
   deleteCategory,
   renameCategory,
+  suggestRuleForTransaction,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
 import { getSetting, setSetting, PRETAX_MONTHLY_KEY, BACKUP_INCLUDE_KEY_KEY } from '../../core/settings.js';
@@ -184,6 +185,7 @@ export const registry = {
     createCategory,
     deleteCategory,
     renameCategory,
+    suggestRuleForTransaction,
   },
   health: {
     loadHealthData,
