@@ -4,6 +4,7 @@ import { DATA_DIR } from './paths.js';
 import { db } from './db.js';
 import { KEY_FILE_PATH } from './crypto.js';
 import { getSetting, BACKUP_INCLUDE_KEY_KEY } from './settings.js';
+import { CANVAS_HISTORY_PATH } from './canvas-history.js';
 
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -37,12 +38,26 @@ export async function backupDb(): Promise<void> {
     }
   }
 
-  // Pruned separately per prefix (not combined-then-sliced): sorting the two
+  // canvas-history.json is a plain JSON file, not a SQLite db, so a straight
+  // copy is enough — no VACUUM INTO needed. Same skip-if-missing and
+  // skip-if-already-backed-up-today guards as the db backup above.
+  if (fs.existsSync(CANVAS_HISTORY_PATH)) {
+    const canvasBackupPath = path.join(BACKUP_DIR, `canvas-history.${today}.bak`);
+    if (!fs.existsSync(canvasBackupPath)) {
+      fs.copyFileSync(CANVAS_HISTORY_PATH, canvasBackupPath);
+    }
+  }
+
+  // Pruned separately per prefix (not combined-then-sliced): sorting the
   // filename families together as plain strings would interleave them out of
   // date order ("fungible." < "key." lexically regardless of date), which
   // would prune the wrong files.
   const allFiles = fs.readdirSync(BACKUP_DIR);
-  for (const pattern of [/^fungible\.\d{4}-\d{2}-\d{2}\.bak$/, /^key\.\d{4}-\d{2}-\d{2}\.bak$/]) {
+  for (const pattern of [
+    /^fungible\.\d{4}-\d{2}-\d{2}\.bak$/,
+    /^key\.\d{4}-\d{2}-\d{2}\.bak$/,
+    /^canvas-history\.\d{4}-\d{2}-\d{2}\.bak$/,
+  ]) {
     const files = allFiles.filter(f => pattern.test(f)).sort();
     for (const file of files.slice(0, -keepDays)) {
       fs.unlinkSync(path.join(BACKUP_DIR, file));
