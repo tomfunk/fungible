@@ -47,6 +47,16 @@ test.beforeEach(async () => {
     env: { ...process.env, FUNGIBLE_DATA_DIR: dataDir },
   });
   win = await app.firstWindow();
+  // Electron 44 (Chromium bump) surfaces the first window to Playwright earlier
+  // in its lifecycle: firstWindow() now resolves on the window's initial
+  // about:blank context, and the subsequent loadFile() navigation to
+  // index.html destroys that context. One-shot calls (win.title(),
+  // win.evaluate()) that run in the gap either see Chromium's transient
+  // "Loading file://…" title or throw "Execution context was destroyed".
+  // waitForFunction re-evaluates across navigations, so waiting for the
+  // preload's contextBridge to land pins us to the real renderer context.
+  // (The locator-based checks in screens.spec.ts retry on their own.)
+  await win.waitForFunction(() => '__bridge' in window);
 });
 
 test.afterEach(async () => {
@@ -60,7 +70,7 @@ test('boots, opens exactly one window, and renders the Dashboard', async () => {
   expect(app.windows()).toHaveLength(1);
 
   // Renderer actually loaded its document.
-  expect(await win.title()).toBe('fungible');
+  await expect.poll(() => win.title()).toBe('fungible');
 
   // A known screen rendered all the way through the bridge/IPC path. If any bridge
   // call had failed, useQuery re-throws and the ErrorBoundary would replace the

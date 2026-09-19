@@ -19,7 +19,7 @@ import {
   getAccountsWithBalances,
   getLinkedAccounts,
   getLinkedItems,
-  getCsvAccounts,
+  getImportTargets,
   getAllTags,
   getTagSummary,
   getAllRules,
@@ -32,6 +32,8 @@ import {
 import {
   setTransactionCategory,
   clearTransactionOverride,
+  setTransactionDate,
+  clearTransactionDate,
   setTransactionIgnored,
   setTransactionDisplayName,
   deleteTransaction,
@@ -68,7 +70,8 @@ import {
   renameCategory,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
-import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../../core/settings.js';
+import { getSetting, setSetting, PRETAX_MONTHLY_KEY, BACKUP_INCLUDE_KEY_KEY } from '../../core/settings.js';
+import { checkKeyHealth } from '../../core/key-health.js';
 import {
   buildTrendViews,
   getPeriodTotals,
@@ -89,12 +92,21 @@ import {
   deleteDuplicate,
   deleteAllDuplicates,
 } from '../../core/accounts.js';
+import {
+  getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
+} from '../../core/imports.js';
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import { syncAll, deleteSyncCursor } from '../../core/sync.js';
 import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
-import { loadHistory, deleteHistoryEntry, CANVAS_SPEC_PATH } from '../../core/canvas-history.js';
+import {
+  loadHistory,
+  deleteHistoryEntry,
+  updateHistoryEntrySpec,
+  resolveAndWriteCanvasSpec,
+  CANVAS_SPEC_PATH,
+} from '../../core/canvas-history.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 import { writeEnvFile, type EnvUpdates } from '../../core/env-file.js';
 import { readFileSync } from 'node:fs';
@@ -124,13 +136,15 @@ export const registry = {
     getAccountsWithBalances,
     getLinkedAccounts,
     getLinkedItems,
-    getCsvAccounts,
+    getImportTargets,
     getAllTags,
     getTagSummary,
   },
   transactions: {
     setTransactionCategory,
     clearTransactionOverride,
+    setTransactionDate,
+    clearTransactionDate,
     setTransactionIgnored,
     setTransactionDisplayName,
     deleteTransaction,
@@ -196,6 +210,14 @@ export const registry = {
     deleteDuplicate,
     deleteAllDuplicates,
     getCsvPlaidDupeCandidates,
+    checkKeyHealth,
+  },
+  imports: {
+    getImports,
+    getImportsOfFile,
+    getImportImpact,
+    deleteImport,
+    moveImport,
   },
   categorize: {
     applyCategoriesToAll,
@@ -208,12 +230,23 @@ export const registry = {
   canvas: {
     loadHistory,
     deleteHistoryEntry,
-    loadCurrentSpec: async (): Promise<(CanvasSpec & { _writtenAt?: number }) | null> => {
+    loadCurrentSpec: async (): Promise<(CanvasSpec & { _historyId?: string; _writtenAt?: number }) | null> => {
       try {
         return JSON.parse(readFileSync(CANVAS_SPEC_PATH, 'utf-8'));
       } catch {
         return null;
       }
+    },
+    // Persists an in-place row edit (add/remove/edit) to a list element — the one
+    // canvas mutation the GUI itself originates, as opposed to the agent regenerating
+    // a whole spec. Mirrors the show_canvas/load_canvas pattern in core/tools.ts:
+    // rewrite the history entry's spec, then re-resolve bindings and rewrite
+    // CANVAS_SPEC_PATH so the on-screen canvas (and a reload) reflect the edit. A
+    // historyId that no longer matches any entry (e.g. deleted mid-edit) is a no-op.
+    updateSpec: async (historyId: string, spec: CanvasSpec): Promise<void> => {
+      const updated = updateHistoryEntrySpec(historyId, spec);
+      if (!updated) return;
+      await resolveAndWriteCanvasSpec(updated.spec, historyId);
     },
   },
   sync: {
@@ -251,5 +284,7 @@ export const registry = {
   settings: {
     getPretaxMonthly: () => getSetting(PRETAX_MONTHLY_KEY),
     setPretaxMonthly: (v: string) => setSetting(PRETAX_MONTHLY_KEY, v),
+    getBackupIncludeKey: () => getSetting(BACKUP_INCLUDE_KEY_KEY),
+    setBackupIncludeKey: (v: string) => setSetting(BACKUP_INCLUDE_KEY_KEY, v),
   },
 } as const;

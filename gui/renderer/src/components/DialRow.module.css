@@ -1,0 +1,87 @@
+.dial {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dialHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.dialLabel {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.dialControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepBtn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.stepBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Wraps the input together with its unit adornment ($ prefix / %,mo,yr
+   suffix) so the pair reads as one bordered field, matching plain inputs
+   elsewhere rather than a bare number floating next to loose text. */
+.dialInputWrap {
+  display: flex;
+  align-items: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+}
+
+.dialInputWrap:focus-within {
+  border-color: var(--accent);
+}
+
+.dialUnit {
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.dialInput {
+  width: 72px;
+  text-align: right;
+  font-family: var(--font-mono);
+  border: none;
+  background: transparent;
+  padding: 6px 2px;
+}
+
+.dialInput::-webkit-inner-spin-button {
+  display: none;
+}
+
+.resetBtn {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-decoration: underline;
+}
+
+.resetBtn:hover {
+  color: var(--text);
+}
+
+.dialHint {
+  font-size: 12px;
+}

@@ -42,6 +42,27 @@ describe('GUI Health', () => {
     expect(screen.getByText('Years to FIRE')).toBeTruthy();
   });
 
+  it('breaks debt into credit cards, loans and a combined total when a loan account exists', async () => {
+    await db.execute("UPDATE balance_history SET balance = 450.00 WHERE account_id = 'test-credit'");
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, institution_name, mask) VALUES ('test-mortgage', 'Home Loan', 'loan', 'mortgage', 'Test Bank', '0003')");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('test-mortgage', 300000.00, '2026-05-20')");
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Credit cards')).toBeTruthy());
+    expect(screen.getByText('Loans')).toBeTruthy();
+    // Combined-total row
+    const totalRow = screen.getByText('Total').closest('div')!;
+    expect(totalRow.textContent).toContain('subtracted from net worth');
+    // The single generic "Debt" row is not rendered once the breakdown shows
+    expect(screen.queryByText('Debt')).toBeNull();
+  });
+
+  it('shows a single Debt row when there is no loan debt', async () => {
+    await db.execute("UPDATE balance_history SET balance = 450.00 WHERE account_id = 'test-credit'");
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Debt')).toBeTruthy());
+    expect(screen.queryByText('Loans')).toBeNull();
+  });
+
   it('renders the four assumption dials', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
@@ -54,29 +75,64 @@ describe('GUI Health', () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
     const spendDial = screen.getByText('Monthly spending').closest('div')!.parentElement!;
-    const before = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    // Dollar dial, unfocused throughout this test -> comma-formatted text, not
+    // a type="number" input; strip commas before comparing as numbers.
+    const spendInput = () => spendDial.querySelector('input') as HTMLInputElement;
+    const parse = (s: string) => Number(s.replace(/,/g, ''));
+    const before = spendInput().value;
     const plus = Array.from(spendDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    const after = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
-    expect(Number(after)).toBe(Number(before) + 100);
+    const after = spendInput().value;
+    expect(parse(after)).toBe(parse(before) + 100);
     expect(spendDial.textContent).toContain('reset');
     await userEvent.click(Array.from(spendDial.querySelectorAll('button')).find((b) => b.textContent === 'reset')!);
-    const restored = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    const restored = spendInput().value;
     expect(restored).toBe(before);
   });
 
-  it('withdrawal slider changes the FIRE target', async () => {
+  it('the spending dial shows raw digits while focused and comma-formats on blur', async () => {
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
+    const spendDial = screen.getByText('Monthly spending').closest('div')!.parentElement!;
+    const input = spendDial.querySelector('input') as HTMLInputElement;
+    expect(input.type).toBe('text');
+    expect(input.value).toMatch(/^-?[\d,]+$/);
+
+    fireEvent.focus(input);
+    expect(input.type).toBe('number');
+    expect(input.value).not.toContain(',');
+
+    fireEvent.change(input, { target: { value: '4200' } });
+    expect(input.value).toBe('4200');
+
+    fireEvent.blur(input);
+    expect(input.type).toBe('text');
+    expect(input.value).toBe('4,200');
+  });
+
+  it('withdrawal rate stepper changes the FIRE target', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
     // "Net worth" metric in Retirement panel shows "X% of FIRE target" — changes with withdrawal rate
     const netWorthRow = screen.getByText('Net worth').closest('div')!;
     const before = netWorthRow.textContent;
     const wDial = screen.getByText('Withdrawal rate').closest('div')!.parentElement!;
-    const slider = wDial.querySelector('input[type="range"]') as HTMLInputElement;
-    fireEvent.change(slider, { target: { value: '8' } });
+    const input = wDial.querySelector('input[type="number"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '8' } });
     await waitFor(() => {
       const after = screen.getByText('Net worth').closest('div')!.textContent;
       expect(after).not.toBe(before);
     });
+  });
+
+  it('growth rate steps by 1.0 (matching TUI), not 0.5', async () => {
+    renderScreen(<Health />);
+    await waitFor(() => expect(screen.getByText('Growth rate')).toBeTruthy());
+    const gDial = screen.getByText('Growth rate').closest('div')!.parentElement!;
+    const before = (gDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    const plus = Array.from(gDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
+    await userEvent.click(plus);
+    const after = (gDial.querySelector('input[type="number"]') as HTMLInputElement).value;
+    expect(Number(after)).toBe(Number(before) + 1);
   });
 });

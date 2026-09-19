@@ -7,20 +7,20 @@
  * embedded agent handles those before calling executeTool.
  */
 
-import { writeFileSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
 import { solveTVM } from './calculator.js';
-import { getDriftWindows, getPeriodStart, formatPeriodLabel } from './dateUtils.js';
+import { getDriftWindows, getPeriodStart, formatPeriodLabel, BASIS_LABEL } from './dateUtils.js';
 import { bucketDrift, ratioLabel } from './scorecard.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { applyCategoriesToAll } from './categorize.js';
 import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
-import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored } from './transactions.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
 import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
@@ -28,7 +28,8 @@ import { db } from './db.js';
 import { validateRegex } from './rule-utils.js';
 import type { ToolDef } from './llm-provider.js';
 
-import { CANVAS_SPEC_PATH, appendHistory, searchHistory, getHistoryEntry, deleteHistoryEntry } from './canvas-history.js';
+import { appendHistory, searchHistory, getHistoryEntry, deleteHistoryEntry, resolveAndWriteCanvasSpec } from './canvas-history.js';
+import type { CanvasSpec } from './canvas-spec.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ import { CANVAS_SPEC_PATH, appendHistory, searchHistory, getHistoryEntry, delete
 // or TUI refresh and afterWrite callbacks will be silently skipped for that tool.
 export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction',
+  'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
   'tag_transaction', 'toggle_hidden_category', 'sync',
   'show_canvas', 'load_canvas', 'delete_canvas',
@@ -114,7 +116,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'get_scorecard',
-    description: 'Spending scorecard: which categories are significantly over or under the typical month (12-month median baseline), with per-category deltas and a net verdict. Use for "how am I doing lately / where did my spending go wrong". Defaults to the trailing 30 days, which is fully populated even early in a calendar month.',
+    description: 'Spending scorecard: which categories are significantly over or under the typical month (12-complete-period median baseline), with per-category deltas and a net verdict. Use for "how am I doing lately / where did my spending go wrong". Defaults to the trailing 30 days, which is fully populated even early in a calendar month.',
     parameters: {
       type: 'object',
       properties: {
@@ -232,6 +234,29 @@ export const TOOL_DEFS: ToolDef[] = [
         category: { type: 'string', description: 'Category to assign' },
       },
       required: ['id', 'category'],
+    },
+  },
+  {
+    name: 'set_transaction_date',
+    description: 'Reattribute a transaction to the period it belongs to (e.g. a paycheck that posted on the 1st but was earned the prior month, or a check cashed months after it was written). The bank\'s posting date is preserved and the change survives re-syncs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id:   { type: 'string', description: 'Transaction ID' },
+        date: { type: 'string', description: 'Date to attribute the transaction to, YYYY-MM-DD' },
+      },
+      required: ['id', 'date'],
+    },
+  },
+  {
+    name: 'clear_transaction_date',
+    description: 'Undo a date reattribution, restoring the bank\'s original posting date.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Transaction ID' },
+      },
+      required: ['id'],
     },
   },
   {
@@ -401,6 +426,8 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
   switch (name) {
     case 'edit_transaction':       return `Set transaction category to "${s('category')}" [id: ${s('id')}]`;
     case 'clear_edit':             return `Remove manual category override [id: ${s('id')}]`;
+    case 'set_transaction_date':   return `Reattribute transaction to ${s('date')} [id: ${s('id')}]`;
+    case 'clear_transaction_date': return `Restore original posting date [id: ${s('id')}]`;
     case 'ignore_transaction':     return `${input['ignore'] ? 'Ignore' : 'Un-ignore'} transaction [id: ${s('id')}]`;
     case 'add_rule':               return `Add category rule: "${s('pattern')}" → ${s('category')}`;
     case 'delete_rule':            return `Delete category rule #${n('id')}`;
@@ -547,7 +574,7 @@ async function executeToolImpl(
         'Liabilities:',
         ...b.accounts.filter((a) => a.isLiability).map((a) => `  ${a.name}: ${fmt(a.balance)}`),
         `  Total liabilities: ${fmt(b.totalLiabilities)}`,
-        `Net worth: ${b.netWorth >= 0 ? '' : '-'}${fmt(b.netWorth)}`,
+        `Net worth: ${fmt(b.netWorth)}`,
         `Cash (checking/savings): ${fmt(b.cash)}`,
         `Liquid (incl. brokerage): ${fmt(b.liquid)}`,
         ...(b.excludedAccounts.length ? [
@@ -565,12 +592,12 @@ async function executeToolImpl(
       const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
       const hasPretax = h.pretaxMonthly > 0;
       return [
-        `Net worth: ${h.netWorth >= 0 ? '' : '-'}${fmt(h.netWorth, 0)}`,
+        `Net worth: ${fmt(h.netWorth, 0)}`,
         `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash, 0)} in checking/savings)`,
         `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid, 0)} incl. brokerage)`,
-        `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses, 0)}`,
-        `Avg monthly income (12 mo): ${fmt(h.avgMonthlyIncome, 0)} take-home${hasPretax ? ` · ${fmt(h.grossMonthlyIncome, 0)} gross (incl. ${fmt(h.pretaxMonthly, 0)}/mo pretax)` : ''}`,
-        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)} take-home${hasPretax ? ` · ${fmt(h.avgMonthlySavings + h.pretaxMonthly, 0)} gross (incl. pretax)` : ''}`,
+        `Avg monthly expenses (${h.basisLabel}): ${fmt(h.avgMonthlyExpenses, 0)}`,
+        `Avg monthly income (${h.basisLabel}): ${fmt(h.avgMonthlyIncome, 0)} take-home${hasPretax ? ` · ${fmt(h.grossMonthlyIncome, 0)} gross (incl. ${fmt(h.pretaxMonthly, 0)}/mo pretax)` : ''}`,
+        `Avg monthly savings (${h.basisLabel}): ${fmt(h.avgMonthlySavings, 0)} take-home${hasPretax ? ` · ${fmt(h.avgMonthlySavings + h.pretaxMonthly, 0)} gross (incl. pretax)` : ''}`,
         h.savingsRate !== null ? `Savings rate: ${h.savingsRate.toFixed(1)}%${hasPretax ? ` incl. pretax (${((h.avgMonthlySavings / h.grossMonthlyIncome) * 100).toFixed(1)}% take-home only)` : ''}` : null,
         `FIRE number: ${fmt(h.fireNumber, 0)}`,
         `FIRE progress: ${(h.fireProgress * 100).toFixed(1)}%`,
@@ -606,7 +633,7 @@ async function executeToolImpl(
       const overMark = (r: CategoryDrift) =>
         r.median12m === 0 || r.current / r.median12m >= 1.3 ? '🔴' : '🟡';
 
-      const out: string[] = [`Scorecard — ${label} · vs typical month (12-month median)`];
+      const out: string[] = [`Scorecard — ${label} · vs typical month (${rows[0]?.basisLabel ?? BASIS_LABEL['calendar-12mo']})`];
       if (over.length) {
         out.push('', 'OVER');
         for (const r of over) out.push(line(r, overMark(r)));
@@ -790,6 +817,31 @@ async function executeToolImpl(
       return `Set "${tx.name}" → ${str('category')} (pinned)`;
     }
 
+    case 'set_transaction_date': {
+      const txResult = await db.execute({ sql: 'SELECT name, date FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string; date: string } | undefined;
+      if (!tx) return `No transaction with id ${str('id')}.`;
+      const date = str('date');
+      // Reject anything SQLite's date functions would silently treat as NULL —
+      // a bad date here would quietly drop the row out of every range query.
+      // setTransactionDate enforces this too; the early return gives the agent
+      // a friendly message instead of a thrown error.
+      if (!isValidIsoDate(date)) {
+        return `"${date}" is not a valid date. Use YYYY-MM-DD.`;
+      }
+      await setTransactionDate(str('id'), date);
+      return `Reattributed "${tx.name}" from ${tx.date} → ${date} (posting date preserved)`;
+    }
+
+    case 'clear_transaction_date': {
+      const txResult = await db.execute({ sql: 'SELECT name, original_date FROM transactions WHERE id = ?', args: [str('id')] });
+      const tx = txResult.rows[0] as unknown as { name: string; original_date: string | null } | undefined;
+      if (!tx) return `No transaction with id ${str('id')}.`;
+      if (!tx.original_date) return `"${tx.name}" has no date override.`;
+      await clearTransactionDate(str('id'));
+      return `Restored "${tx.name}" to its posting date ${tx.original_date}`;
+    }
+
     case 'clear_edit': {
       const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
       const tx = txResult.rows[0] as unknown as { name: string } | undefined;
@@ -891,9 +943,11 @@ async function executeToolImpl(
 
     case 'show_canvas': {
       const specStr = str('spec');
-      const spec = JSON.parse(specStr);
+      const spec = JSON.parse(specStr) as CanvasSpec;
+      // History stores the unresolved spec (binding + its original stale default) —
+      // bindings are re-resolved against live data on every load, never baked in.
       const entry = appendHistory({ title: spec.title ?? 'Untitled', prompt: str('prompt'), spec });
-      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...spec, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      await resolveAndWriteCanvasSpec(spec, entry.id);
       return `Canvas "${entry.title}" rendered on screen 9 (id: ${entry.id}).`;
     }
 
@@ -908,7 +962,9 @@ async function executeToolImpl(
     case 'load_canvas': {
       const entry = getHistoryEntry(str('id'));
       if (!entry) return `No canvas found with id "${str('id')}".`;
-      writeFileSync(CANVAS_SPEC_PATH, JSON.stringify({ ...entry.spec, _historyId: entry.id, _writtenAt: Date.now() }), 'utf-8');
+      // entry.spec is the unresolved spec from history — resolve fresh on every
+      // reopen rather than trusting a previously-resolved snapshot.
+      await resolveAndWriteCanvasSpec(entry.spec, entry.id);
       return `Canvas "${entry.title}" loaded on screen 9.`;
     }
 

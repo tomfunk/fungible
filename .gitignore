@@ -6,8 +6,17 @@ dist/
 memory/
 PLANS.md
 scripts/seed-rules.ts
+scripts/balance-snapshots.csv
+scripts/import-balance-snapshots.ts
 .claude/
 out/
 release/
 test-results/
 playwright-report/
+
+# Fiefdom (local-only, per-machine)
+.fiefdom/fiefs.json
+.fiefdom/fiefs/
+.fiefdom/worktrees/
+.fiefdom/bin/
+.fiefdom/cross-fief-requests.log

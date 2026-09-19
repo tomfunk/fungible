@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { buildFilterClause, buildFilterConditions, type Filter } from './filters.js';
+import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
 
 export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
@@ -15,7 +16,7 @@ export type MerchantSummaryRow = {
 // The catch-all category. Unlike a real category, it legitimately mixes income
 // (e.g. an un-ruled paycheck) with spending, so we never net the two together —
 // see summarizeBuckets.
-const UNCATEGORIZED = 'Uncategorized';
+export const UNCATEGORIZED = 'Uncategorized';
 
 /**
  * Turn per-category {outflow, inflow} buckets into an income/expense/byCategory
@@ -40,6 +41,41 @@ function summarizeBuckets(rows: { category: string; outflow: number; inflow: num
   byCategory.sort((a, b) => b.total - a.total);
   return { income, expenses, net: income - expenses, byCategory };
 }
+
+/**
+ * Trailing-12-month income / expense / savings averages, netted per category by
+ * the same rule as summarizeBuckets: a reimbursement sitting inside an expense
+ * category reduces that category's spend instead of inflating expenses AND
+ * income at once. Summing raw outflows here would overstate avg_expenses, which
+ * feeds runway, the FIRE number, and years-to-FIRE.
+ *
+ * Shared by loadHealthData (TUI/GUI Health tab) and getFinancialHealth (agent),
+ * which must not drift apart.
+ */
+export const TRAILING_12MO_AVERAGES_SQL = `
+  SELECT
+    COALESCE(SUM(spend), 0) / 12.0            AS avg_expenses,
+    COALESCE(SUM(inc), 0) / 12.0              AS avg_income,
+    COALESCE(SUM(inc) - SUM(spend), 0) / 12.0 AS avg_savings
+  FROM (
+    SELECT
+      CASE WHEN category = '${UNCATEGORIZED}' THEN outflow
+           WHEN outflow > inflow THEN outflow - inflow ELSE 0 END AS spend,
+      CASE WHEN category = '${UNCATEGORIZED}' THEN inflow
+           WHEN inflow > outflow THEN inflow - outflow ELSE 0 END AS inc
+    FROM (
+      SELECT category,
+        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)  AS outflow,
+        SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS inflow
+      FROM transactions
+      WHERE date >= date('now', '-12 months')
+        AND pending = 0 AND ignored = 0
+        AND category NOT IN (SELECT category FROM hidden_categories)
+        AND category != 'Transfer'
+      GROUP BY category
+    )
+  )
+`;
 
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
@@ -224,6 +260,9 @@ export type DriftSlice    = {
   // Median of the rolling windows — robust to one-off spikes (a single $7K
   // medical month shouldn't inflate the "typical" baseline the way a mean does).
   median12m: number; medianDelta: number;
+  // The rolling windows are 12 complete calendar periods (not the trailing-365d
+  // window health/runway metrics use — see issue #178 / core/dateUtils.ts).
+  basis: MetricBasis; basisLabel: string;
 };
 export type CategoryDrift = { category: string } & DriftSlice;
 export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
@@ -304,6 +343,7 @@ function sliceFor(current: number, last: number, year: number, rolling: number[]
     current, lastPeriodDelta: current - last, lastYearDelta: current - year,
     avg12mDelta: current - avg12m, avg12m,
     median12m, medianDelta: current - median12m,
+    basis: 'calendar-12mo', basisLabel: BASIS_LABEL['calendar-12mo'],
   };
 }
 
@@ -543,6 +583,14 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
 export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
+  // Gates the delete affordance: a Plaid-owned row comes back on the next sync,
+  // so offering to delete it would be a lie. NULL only for rows written before
+  // the column existed, which initDb backfills on the next launch.
+  source: 'plaid' | 'csv' | null;
+  // The bank's posting date, retained by setTransactionDate when a transaction
+  // is reattributed to another period; NULL unless `date` has been overridden.
+  // UI uses it to show "reattributed from X" and offer restore-to-posting-date.
+  original_date: string | null;
 };
 
 export function buildSearchRe(search: string): RegExp {
@@ -570,7 +618,7 @@ export async function getTransactions(filters: {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({
-    sql: `SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
+    sql: `SELECT t.id, t.date, t.original_date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored, t.source,
             (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
           FROM transactions t ${where}
           ORDER BY ${SORT_ORDER_BY[sort]}
@@ -740,11 +788,57 @@ export async function getLinkedItems(): Promise<LinkedItem[]> {
   }));
 }
 
-export type CsvAccount = { id: string; name: string; mask: string | null };
+/**
+ * An account a CSV file can be imported into. The name is deliberate: the query
+ * this replaced was called getCsvAccounts but selected every account with no
+ * filter, so the picker has always offered Plaid-linked accounts — silently, and
+ * labelled as though they were CSV ones. Backfilling a linked account is a
+ * legitimate thing to want; doing it without knowing you have is not.
+ */
+export type ImportTarget = {
+  id: string;
+  name: string;
+  nickname: string | null;
+  mask: string | null;
+  kind: 'plaid' | 'csv' | 'manual';
+  institution_name: string | null;
+  /**
+   * Plaid targets: the history window locked in when the item was created. NULL
+   * predates the column, in which case Plaid's 90-day default applied. Together
+   * with earliest_date it says how far back this account's own history reaches,
+   * which is what a backfill is trying to extend.
+   */
+  days_requested: number | null;
+  /** Earliest transaction currently held, or null when the account has none. */
+  earliest_date: string | null;
+};
 
-export async function getCsvAccounts(): Promise<CsvAccount[]> {
-  const result = await db.execute('SELECT id, name, mask FROM accounts');
-  return result.rows as unknown as CsvAccount[];
+export async function getImportTargets(): Promise<ImportTarget[]> {
+  const result = await db.execute(`
+    SELECT a.id, a.name, a.nickname, a.mask, a.item_id,
+           COALESCE(a.institution_name, pi.institution_name) as institution_name,
+           pi.days_requested,
+           (SELECT MIN(t.date) FROM transactions t WHERE t.account_id = a.id) as earliest_date
+    FROM accounts a
+    LEFT JOIN plaid_items pi ON pi.item_id = a.item_id
+    ORDER BY a.name
+  `);
+  return (result.rows as unknown as {
+    id: string; name: string; nickname: string | null; mask: string | null; item_id: string | null;
+    institution_name: string | null; days_requested: number | null; earliest_date: string | null;
+  }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    nickname: r.nickname,
+    mask: r.mask,
+    // item_id is the real signal for a Plaid account. Manual assets have no such
+    // marker, so their creation-time id prefix is all there is to go on — the
+    // same namespace createManualAccount writes.
+    kind: r.item_id !== null ? 'plaid' : r.id.startsWith('manual-') ? 'manual' : 'csv',
+    institution_name: r.institution_name,
+    days_requested: r.days_requested === null ? null : Number(r.days_requested),
+    earliest_date: r.earliest_date,
+  }));
 }
 
 export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
@@ -786,11 +880,11 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
         ELSE 0
       END) AS assets,
-      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS liabilities,
+      SUM(CASE WHEN a.type IN ('credit', 'loan') THEN pl.balance ELSE 0 END) AS liabilities,
       SUM(CASE
         WHEN a.type IN ('depository', 'investment') THEN pl.balance
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
-        WHEN a.type = 'credit' THEN -pl.balance
+        WHEN a.type IN ('credit', 'loan') THEN -pl.balance
         ELSE 0
       END) AS net_worth
     FROM period_last pl
@@ -821,7 +915,7 @@ export async function getAccountsWithBalances(): Promise<{ accounts: AccountBala
     db.execute(`
       SELECT bh.date,
         SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END) as assets,
-        SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
+        SUM(CASE WHEN a.type IN ('credit','loan') THEN bh.balance ELSE 0 END) as liabilities
       FROM balance_history bh
       JOIN accounts a ON a.id = bh.account_id
       WHERE a.excluded = 0

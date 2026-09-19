@@ -273,6 +273,27 @@
   font-size: 13px;
 }
 
+.dateHint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.restoreBtn {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+}
+
+.restoreBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .modalActions {
   display: flex;
   justify-content: flex-end;

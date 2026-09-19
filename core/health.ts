@@ -1,36 +1,58 @@
 import { db } from './db.js';
 import { calcN } from './calculator.js';
+import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
+import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
 
 export type HealthData = {
   avgMonthlyExpenses: number;
   monthlyIncome: number;
   monthlySavings: number;
-  savingsRate: number;  // monthlySavings / monthlyIncome as a percentage
   cash: number;
   liquid: number;       // cash + taxable brokerage
   retirement: number;   // 401k / IRA / Roth / HSA — restricted until ~59½
   totalDebt: number;    // credit cards
   loanDebt: number;     // mortgage / auto / student loans
   netWorth: number;
+  basis: MetricBasis;   // which "12-month average" definition avgMonthlyExpenses/monthlyIncome/monthlySavings use
+  basisLabel: string;
 };
 
+export type Trailing12moAverages = {
+  avgExpenses: number;
+  avgIncome: number;
+  avgSavings: number;
+  basis: MetricBasis;
+  basisLabel: string;
+};
+
+/**
+ * Trailing-365-day income/expense/savings averages (rolling `date('now','-12
+ * months')` window, not aligned to calendar months). Shared by loadHealthData
+ * (TUI/GUI Health tab) and getFinancialHealth (agent), which must not drift
+ * apart — see TRAILING_12MO_AVERAGES_SQL for the SQL itself.
+ *
+ * This is one of two "12-month average" definitions in the app (see issue
+ * #178) — the other is the drift/scorecard's calendar-12mo baseline
+ * (queries.ts sliceFor). Every consumer carries basis/basisLabel so surfaces
+ * can say which one they're quoting instead of both being called the same
+ * generic name.
+ */
+export async function getTrailing12moAverages(): Promise<Trailing12moAverages> {
+  const result = await db.execute(TRAILING_12MO_AVERAGES_SQL);
+  const row = result.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
+  const basis: MetricBasis = 'trailing-365d';
+  return {
+    avgExpenses: Number(row.avg_expenses),
+    avgIncome:   Number(row.avg_income),
+    avgSavings:  Number(row.avg_savings),
+    basis,
+    basisLabel: BASIS_LABEL[basis],
+  };
+}
+
 export async function loadHealthData(): Promise<HealthData> {
-  const [expRes, cashRes, liquidRes, retirementRes, debtRes, loanRes, nwRes] = await Promise.all([
-    db.execute(`
-      SELECT
-        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0  AS avg_expenses,
-        COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_income,
-        COALESCE(
-          -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
-           SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
-          0
-        ) / 12.0 AS avg_savings
-      FROM transactions
-      WHERE date >= date('now', '-12 months')
-        AND pending = 0 AND ignored = 0
-        AND category NOT IN (SELECT category FROM hidden_categories)
-        AND category != 'Transfer'
-    `),
+  const [avgs, cashRes, liquidRes, retirementRes, debtRes, loanRes, nwRes] = await Promise.all([
+    getTrailing12moAverages(),
     db.execute(`
       SELECT COALESCE(SUM(bh.balance), 0) AS cash
       FROM accounts a
@@ -82,7 +104,7 @@ export async function loadHealthData(): Promise<HealthData> {
     db.execute(`
       SELECT
         COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END), 0) -
-        COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
+        COALESCE(SUM(CASE WHEN a.type IN ('credit','loan') THEN bh.balance ELSE 0 END), 0) AS net_worth
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.excluded = 0
@@ -90,7 +112,6 @@ export async function loadHealthData(): Promise<HealthData> {
     `),
   ]);
 
-  const expRow  = expRes.rows[0]        as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
   const cashRow = cashRes.rows[0]       as unknown as { cash: number };
   const liqRow  = liquidRes.rows[0]     as unknown as { liquid: number };
   const retRow  = retirementRes.rows[0] as unknown as { retirement: number };
@@ -98,20 +119,18 @@ export async function loadHealthData(): Promise<HealthData> {
   const loanRow = loanRes.rows[0]       as unknown as { loan_debt: number };
   const nwRow   = nwRes.rows[0]         as unknown as { net_worth: number };
 
-  const monthlyIncome   = Number(expRow.avg_income);
-  const monthlySavings  = Number(expRow.avg_savings);
-
   return {
-    avgMonthlyExpenses: Number(expRow.avg_expenses),
-    monthlyIncome,
-    monthlySavings,
-    savingsRate:        monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0,
+    avgMonthlyExpenses: avgs.avgExpenses,
+    monthlyIncome:      avgs.avgIncome,
+    monthlySavings:     avgs.avgSavings,
     cash:               Number(cashRow.cash),
     liquid:             Number(liqRow.liquid),
     retirement:         Number(retRow.retirement),
     totalDebt:          Number(debtRow.total_debt),
     loanDebt:           Number(loanRow.loan_debt),
     netWorth:           Number(nwRow.net_worth),
+    basis:              avgs.basis,
+    basisLabel:         avgs.basisLabel,
   };
 }
 
@@ -146,3 +165,5 @@ export function coastYears(
     return null;
   }
 }
+
+export { computeSavingsRate } from './savings-rate.js';

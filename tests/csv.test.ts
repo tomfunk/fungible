@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDate, parseCurrencyAmount, generateTxId } from '../core/csv.js';
+import { parseDate, parseCurrencyAmount, dedupKey, assignOrdinals } from '../core/csv.js';
 
 describe('parseDate', () => {
   it('passes through YYYY-MM-DD format unchanged', () => {
@@ -53,33 +53,61 @@ describe('parseCurrencyAmount', () => {
   });
 });
 
-describe('generateTxId', () => {
-  it('returns a string starting with csv-', () => {
-    const id = generateTxId('1234', '2024-01-15', 'AMAZON', 99.99);
-    expect(id).toMatch(/^csv-[0-9a-f]{16}$/);
+describe('dedupKey', () => {
+  it('is deterministic — same inputs produce the same key', () => {
+    expect(dedupKey('2024-01-15', 'AMAZON', 99.99, 0)).toBe(dedupKey('2024-01-15', 'AMAZON', 99.99, 0));
   });
 
-  it('is deterministic — same inputs produce same output', () => {
-    const a = generateTxId('1234', '2024-01-15', 'AMAZON', 99.99);
-    const b = generateTxId('1234', '2024-01-15', 'AMAZON', 99.99);
-    expect(a).toBe(b);
+  it('is case-insensitive and trims the name', () => {
+    expect(dedupKey('2024-01-15', '  amazon  ', 99.99, 0)).toBe(dedupKey('2024-01-15', 'AMAZON', 99.99, 0));
   });
 
-  it('different inputs produce different output', () => {
-    const a = generateTxId('1234', '2024-01-15', 'AMAZON', 99.99);
-    const b = generateTxId('1234', '2024-01-15', 'AMAZON', 50.00);
-    expect(a).not.toBe(b);
+  it('separates different amounts', () => {
+    expect(dedupKey('2024-01-15', 'AMAZON', 99.99, 0)).not.toBe(dedupKey('2024-01-15', 'AMAZON', 50, 0));
   });
 
-  it('is case-insensitive for name', () => {
-    const a = generateTxId('1234', '2024-01-15', 'amazon', 99.99);
-    const b = generateTxId('1234', '2024-01-15', 'AMAZON', 99.99);
-    expect(a).toBe(b);
+  it('separates repeat occurrences by ordinal', () => {
+    expect(dedupKey('2024-01-15', 'AMAZON', 99.99, 0)).not.toBe(dedupKey('2024-01-15', 'AMAZON', 99.99, 1));
   });
 
-  it('trims whitespace from name', () => {
-    const a = generateTxId('1234', '2024-01-15', '  amazon  ', 99.99);
-    const b = generateTxId('1234', '2024-01-15', 'amazon', 99.99);
-    expect(a).toBe(b);
+  // Interpolating the float directly would make the key depend on how a
+  // language renders 5 versus 5.0, which the SQL and JS sides disagree about.
+  it('normalizes amounts to integer cents', () => {
+    expect(dedupKey('2024-01-15', 'AMAZON', 5, 0)).toBe(dedupKey('2024-01-15', 'AMAZON', 5.0, 0));
+    expect(dedupKey('2024-01-15', 'AMAZON', 5, 0)).toContain('|500|');
+  });
+});
+
+describe('assignOrdinals', () => {
+  it('numbers identical rows in file order', () => {
+    const rows = [
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+    ];
+    expect(assignOrdinals(rows).map((r) => r.ord)).toEqual([0, 1, 2]);
+  });
+
+  it('counts each distinct row separately', () => {
+    const rows = [
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+      { date: '2024-01-15', name: 'BAGEL',  amount: 4.5 },
+      { date: '2024-01-16', name: 'COFFEE', amount: 4.5 },
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+    ];
+    expect(assignOrdinals(rows).map((r) => r.ord)).toEqual([0, 0, 0, 1]);
+  });
+
+  it('is stable — the same file always produces the same ordinals', () => {
+    const rows = [
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+      { date: '2024-01-15', name: 'COFFEE', amount: 4.5 },
+    ];
+    expect(assignOrdinals(rows)).toEqual(assignOrdinals(rows));
+  });
+
+  it('preserves the other fields on each row', () => {
+    const rows = [{ date: '2024-01-15', name: 'COFFEE', amount: 4.5, rowIndex: 7 }];
+    expect(assignOrdinals(rows)[0].rowIndex).toBe(7);
   });
 });

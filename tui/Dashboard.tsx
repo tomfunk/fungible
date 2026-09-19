@@ -9,7 +9,7 @@ import {
 import { bucketDrift, isSignificantDelta, ratioLabel } from '../core/scorecard.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
-  getDriftWindows,
+  getDriftWindows, BASIS_LABEL,
   RANGES, RANGE_LABELS, type Range,
 } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
@@ -597,7 +597,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                 {merchantDrill
                   ? `TOP MERCHANTS · ${merchantDrill.category}`
                   : scorecardMode && !detailMode
-                    ? 'SPENDING BY CATEGORY · VS TYPICAL (12M MEDIAN)'
+                    ? `SPENDING BY CATEGORY · VS TYPICAL (${(catDrift?.[0]?.basisLabel ?? BASIS_LABEL['calendar-12mo']).toUpperCase()})`
                     : 'SPENDING BY CATEGORY'}
               </SectionHeader>
               {merchantDrill ? (

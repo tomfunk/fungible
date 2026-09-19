@@ -3,8 +3,10 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
+import { useKeyStatus } from '../hooks/useKeyStatus.js';
 import { Modal } from '../components/Modal.js';
-import type { LinkedAccount, CsvAccount, LinkedItem } from '../../../../core/queries.js';
+import type { LinkedAccount, ImportTarget, LinkedItem } from '../../../../core/queries.js';
+import type { ImportRow } from '../../../../core/imports.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
@@ -19,6 +21,10 @@ type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
 
 const TAB_LABELS: Record<Tab, string> = {
   accounts: 'Accounts', links: 'Links', 'add-data': 'Add Data', dupes: 'Dupes',
+};
+
+const TARGET_GROUP: Record<ImportTarget['kind'], string> = {
+  plaid: 'Linked accounts', csv: 'CSV accounts', manual: 'Manual assets',
 };
 
 function fmtDate(d: string | null): string {
@@ -39,6 +45,7 @@ export function Accounts() {
   const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
   // One row per Plaid connection — the Links tab manages items, not accounts.
   const items = useQuery(() => api.queries.getLinkedItems(), [reloadKey]) ?? [];
+  const imports = useQuery(() => api.imports.getImports(), [reloadKey]) ?? [];
 
   const [editAcct, setEditAcct] = useState<LinkedAccount | null>(null);
   const [valueAcct, setValueAcct] = useState<LinkedAccount | null>(null);
@@ -51,6 +58,9 @@ export function Accounts() {
   const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   // The connection whose sync cursor is about to be deleted, if any.
   const [cursorItem, setCursorItem] = useState<LinkedItem | null>(null);
+  // The import being undone / re-pointed, if any.
+  const [undoImp, setUndoImp] = useState<ImportRow | null>(null);
+  const [moveImp, setMoveImp] = useState<ImportRow | null>(null);
   // The connection whose refresh modal is open. Stays set through the poll so its
   // live progress and Stop button remain on screen — mirroring the TUI, where
   // refresh reports through the status line and Esc aborts it.
@@ -69,6 +79,10 @@ export function Accounts() {
   // Item ids that failed the most recent sync (from either the startup or the
   // user-triggered path), pushed from main — used to badge account rows.
   const { failingItems } = useSyncStatus();
+  // Whether the on-disk encryption key can still decrypt this database's Plaid
+  // tokens — a lost or swapped key silently breaks every connection (#179).
+  // Checked once on mount; persistent state, so it's a banner, not a toast.
+  const keyHealth = useKeyStatus();
 
   async function forceSync() {
     if (syncing) return;
@@ -203,6 +217,14 @@ export function Accounts() {
   return (
     <div className={styles.screen}>
       <KeyHints hints="[1-9·0] screens   [tab] view   [s] sync" />
+      {!keyHealth.ok && (
+        <div className={styles.keyBanner}>
+          ⚠{' '}
+          {keyHealth.reason === 'missing_key'
+            ? `Encryption key missing — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} can't sync until it's restored.`
+            : `Encryption key doesn't match this database — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} may need re-linking.`}
+        </div>
+      )}
       <div className={styles.topBar}>
         <h1 className={styles.title}>Accounts</h1>
         <div className={styles.tabs}>
@@ -421,6 +443,54 @@ export function Accounts() {
         </div>
       )}
 
+      {tab === 'add-data' && (
+        <section className={styles.panel}>
+          <h3 className={styles.panelTitle}>Import history</h3>
+          {imports.length === 0 ? (
+            <p className="dim">No CSV files imported yet.</p>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>File</th><th>Account</th><th>Imported</th>
+                  <th className={styles.num}>Rows</th><th>Covering</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {imports.map((imp) => (
+                  <tr key={imp.id} className={styles.importRow}>
+                    <td>{imp.file_name}</td>
+                    <td>{imp.account_name || <span className="dim">(account deleted)</span>}</td>
+                    <td>{fmtTimeAgo(imp.imported_at)}</td>
+                    <td className={styles.num}>
+                      {imp.present}
+                      {/* Sync folds CSV rows into their Plaid counterparts, so
+                          "present" drifts below "imported" over time. Showing
+                          both is more honest than showing either alone. */}
+                      {imp.present !== imp.imported && (
+                        <span className="dim"> of {imp.imported}</span>
+                      )}
+                    </td>
+                    <td className="dim">
+                      {imp.min_date && imp.max_date ? `${imp.min_date} → ${imp.max_date}` : '—'}
+                    </td>
+                    <td className={styles.rowActions}>
+                      <button className={styles.rowBtn} onClick={() => setMoveImp(imp)}>move…</button>
+                      <button
+                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                        onClick={() => setUndoImp(imp)}
+                      >
+                        undo
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
       {tab === 'dupes' && (
         <section className={styles.panel}>
           {dupes.length === 0 ? (
@@ -618,6 +688,33 @@ export function Accounts() {
             </button>
           </div>
         </Modal>
+      )}
+
+      {undoImp && (
+        <UndoImportModal
+          imp={undoImp}
+          onClose={() => setUndoImp(null)}
+          onDone={(removed) => {
+            setUndoImp(null);
+            showStatus(`Undid ${undoImp.file_name} — ${removed} transaction${removed === 1 ? '' : 's'} removed`, 4000);
+            reload();
+          }}
+        />
+      )}
+
+      {moveImp && (
+        <MoveImportModal
+          imp={moveImp}
+          onClose={() => setMoveImp(null)}
+          onDone={(result, toName) => {
+            setMoveImp(null);
+            const tail = result.displaced > 0
+              ? `, ${result.displaced} already there`
+              : '';
+            showStatus(`Moved ${result.moved} transaction${result.moved === 1 ? '' : 's'} to ${toName}${tail}`, 5000);
+            reload();
+          }}
+        />
       )}
 
       {updateItem && (
@@ -1007,9 +1104,133 @@ function ManualAssetModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
   );
 }
 
+// ── Import history actions ──────────────────────────────────────────────────
+
+/**
+ * Undo is destructive in a way the row counts don't show: a category the user
+ * set by hand, a rename, or a tag is theirs, not the file's, and deleting the
+ * row takes it. The impact query exists so this dialog can say so specifically
+ * rather than warning in the abstract.
+ */
+function UndoImportModal({ imp, onClose, onDone }: {
+  imp: ImportRow; onClose: () => void; onDone: (removed: number) => void;
+}) {
+  const impact = useQuery(() => api.imports.getImportImpact(imp.id), [imp.id]);
+  const [busy, setBusy] = useState(false);
+
+  const authored = impact
+    ? [
+        impact.manualCategories > 0 && `${impact.manualCategories} with a category you set`,
+        impact.renamed > 0 && `${impact.renamed} renamed`,
+        impact.tagged > 0 && `${impact.tagged} tagged`,
+      ].filter(Boolean) as string[]
+    : [];
+
+  return (
+    <Modal title="Undo import" onClose={onClose} accent="var(--warning)">
+      <p>
+        <span className="accent">{imp.file_name}</span>{' '}
+        <span className="dim">→ {imp.account_name || '(account deleted)'}</span>
+      </p>
+      <p className="dim">
+        Removes the {impact?.present ?? imp.present} transaction
+        {(impact?.present ?? imp.present) === 1 ? '' : 's'} still in the database from this import, and the
+        record of it. Rows already matched to Plaid transactions are gone already and are not affected.
+      </p>
+      {authored.length > 0 && (
+        <p className="neg">
+          <strong>This throws away your own edits:</strong> {authored.join(', ')}.
+        </p>
+      )}
+      <div className={styles.modalActions}>
+        <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
+        <button
+          className={styles.btnPrimary}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try { onDone(await api.imports.deleteImport(imp.id)); }
+            finally { setBusy(false); }
+          }}
+        >
+          Undo import
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Re-points an import at a different account — the fix for importing a
+ *  statement into the wrong one. */
+function MoveImportModal({ imp, onClose, onDone }: {
+  imp: ImportRow;
+  onClose: () => void;
+  onDone: (result: { moved: number; displaced: number }, toName: string) => void;
+}) {
+  const targets = useQuery(() => api.queries.getImportTargets(), []) ?? [];
+  const options = targets.filter((t) => t.id !== imp.account_id);
+  const [to, setTo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const target = options.find((t) => t.id === to);
+
+  return (
+    <Modal title="Move import" onClose={onClose}>
+      <p>
+        <span className="accent">{imp.file_name}</span>{' '}
+        <span className="dim">
+          — {imp.present} transaction{imp.present === 1 ? '' : 's'}, currently in{' '}
+          {imp.account_name || '(account deleted)'}
+        </span>
+      </p>
+      <div className={styles.formGrid}>
+        <label>Move to</label>
+        <select value={to} onChange={(e) => setTo(e.target.value)}>
+          <option value="">— pick an account —</option>
+          {(['plaid', 'csv', 'manual'] as const).map((kind) => {
+            const group = options.filter((t) => t.kind === kind);
+            if (group.length === 0) return null;
+            return (
+              <optgroup key={kind} label={TARGET_GROUP[kind]}>
+                {group.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.nickname ?? t.name}{t.mask ? ` ···${t.mask}` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            );
+          })}
+        </select>
+      </div>
+      <p className="dim">
+        Categories are left as they are. Account-scoped rules may match differently in the new account —
+        re-apply rules afterwards if you want them re-evaluated.
+      </p>
+      <p className="dim">
+        Any row the destination already holds is dropped rather than moved, keeping the copy that is
+        already there along with its categories and tags.
+      </p>
+      <div className={styles.modalActions}>
+        <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
+        <button
+          className={styles.btnPrimary}
+          disabled={!target || busy}
+          onClick={async () => {
+            if (!target) return;
+            setBusy(true);
+            try { onDone(await api.imports.moveImport(imp.id, target.id), target.nickname ?? target.name); }
+            finally { setBusy(false); }
+          }}
+        >
+          Move
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 // ── CSV import wizard (single-form, unlike the TUI's step flow) ─────────────
 
-type CsvData = { path: string; headers: string[]; rows: string[][] };
+type CsvData = { path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string };
 
 function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imported: number, skipped: number) => void }) {
   const [csv, setCsv] = useState<CsvData | null>(null);
@@ -1020,8 +1241,11 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
   const [debitCol, setDebitCol] = useState<number>(-1);
   const [creditCol, setCreditCol] = useState<number>(-1);
   const [positiveIsInflow, setPositiveIsInflow] = useState(false);
-  const [csvAccounts, setCsvAccounts] = useState<CsvAccount[]>([]);
+  const [targets, setTargets] = useState<ImportTarget[]>([]);
   const [accountId, setAccountId] = useState('');
+  // Prior imports of the exact same bytes, looked up by hash the moment a file
+  // is chosen — the cheapest guard against importing a statement twice.
+  const [priorImports, setPriorImports] = useState<ImportRow[]>([]);
   const [creatingAcct, setCreatingAcct] = useState(false);
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState('credit');
@@ -1041,9 +1265,10 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
     const h = result.headers.map((x) => x.toLowerCase());
     setDateCol(h.findIndex((x) => x.includes('date') || x.includes('posted')));
     setNameCol(h.findIndex((x) => x.includes('desc') || x.includes('name') || x.includes('merchant')));
-    const accts = await api.queries.getCsvAccounts();
-    setCsvAccounts(accts);
+    const accts = await api.queries.getImportTargets();
+    setTargets(accts);
     if (accts.length > 0) setAccountId(accts[0].id);
+    setPriorImports(await api.imports.getImportsOfFile(result.fileHash));
   }
 
   useEffect(() => {
@@ -1054,13 +1279,15 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
   async function createAccount() {
     if (!newName.trim()) return;
     await api.accounts.createCsvAccount(newName.trim(), newType, newSubtype.trim() || null);
-    const accts = await api.queries.getCsvAccounts();
-    setCsvAccounts(accts);
+    const accts = await api.queries.getImportTargets();
+    setTargets(accts);
     const created = accts.find((a) => a.name === newName.trim());
     if (created) setAccountId(created.id);
     setCreatingAcct(false);
     setNewName('');
   }
+
+  const selectedTarget = targets.find((t) => t.id === accountId);
 
   const valid =
     !!csv &&
@@ -1085,11 +1312,9 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
 
   async function doImport() {
     if (!csv || !valid || importing) return;
-    const acct = csvAccounts.find((a) => a.id === accountId);
-    if (!acct) return;
     setImporting(true);
     try {
-      const result = await api.accounts.importCsvTransactions(csv.rows, acct, {
+      const result = await api.accounts.importCsvTransactions(csv.rows, accountId, {
         amountMode,
         dateCol,
         nameCol,
@@ -1097,7 +1322,7 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
         debitCol: amountMode === 'split' ? debitCol : null,
         creditCol: amountMode === 'split' ? creditCol : null,
         positiveIsInflow,
-      });
+      }, { name: csv.fileName, hash: csv.fileHash });
       onDone(result.imported, result.skipped);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed');
@@ -1206,13 +1431,21 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
             ) : (
               <div className={styles.inlineRow}>
                 <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-                  {csvAccounts.length === 0 && <option value="">— none yet —</option>}
-                  {csvAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                      {a.mask ? ` ···${a.mask}` : ''}
-                    </option>
-                  ))}
+                  {targets.length === 0 && <option value="">— none yet —</option>}
+                  {(['plaid', 'csv', 'manual'] as const).map((kind) => {
+                    const group = targets.filter((t) => t.kind === kind);
+                    if (group.length === 0) return null;
+                    return (
+                      <optgroup key={kind} label={TARGET_GROUP[kind]}>
+                        {group.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.nickname ?? a.name}
+                            {a.mask ? ` ···${a.mask}` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
                 <button className={styles.btnSecondary} onClick={() => setCreatingAcct(true)}>
                   + New
@@ -1220,6 +1453,30 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
               </div>
             )}
           </div>
+
+          {/* Backfilling a linked account is legitimate, but it should be a
+              choice rather than something you discover afterwards. */}
+          {selectedTarget?.kind === 'plaid' && (
+            <p className={styles.targetNote}>
+              Backfilling a linked account. {selectedTarget.institution_name ?? 'This connection'} holds{' '}
+              {selectedTarget.days_requested ?? 90} days of history
+              {selectedTarget.earliest_date ? `, back to ${selectedTarget.earliest_date}` : ''}. Rows on or
+              after that date will be matched against what Plaid already returned, and duplicates removed.
+            </p>
+          )}
+          {selectedTarget?.kind === 'manual' && (
+            <p className={styles.targetNote}>
+              This is a manual asset, tracked by value rather than by transactions.
+            </p>
+          )}
+          {priorImports.length > 0 && (
+            <p className={styles.targetWarn}>
+              You already imported this exact file
+              {priorImports[0].account_name ? ` into ${priorImports[0].account_name}` : ''} on{' '}
+              {new Date(priorImports[0].imported_at).toLocaleDateString()} — {priorImports[0].imported} row
+              {priorImports[0].imported === 1 ? '' : 's'}. Importing it again will add nothing.
+            </p>
+          )}
 
           {valid && (
             <div className={styles.preview}>

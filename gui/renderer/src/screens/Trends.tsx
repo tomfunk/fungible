@@ -19,21 +19,22 @@ import { KeyHints } from '../components/KeyHints.js';
 import { fmt, fmtSigned, fmtCompact } from '../../../../core/fmt.js';
 import type { TrendsRange } from '../../../../core/dateUtils.js';
 import type { View, PeriodRow } from '../../../../core/trends.js';
-import { CHART, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
+import { useChartTheme, tooltipStyle, tooltipLabelStyle, type ChartTheme } from '../components/chartTheme.js';
 import styles from './Trends.module.css';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
-function viewColor(view: View): string {
-  if (view.mode === 'net') return CHART.accent;
-  if (view.mode === 'income') return CHART.positive;
-  if (view.mode === 'flex' && view.flex) return CHART[view.flex];
-  return CHART.negative;
+function viewColor(view: View, chartTheme: ChartTheme): string {
+  if (view.mode === 'net') return chartTheme.accent;
+  if (view.mode === 'income') return chartTheme.positive;
+  if (view.mode === 'flex' && view.flex) return chartTheme[view.flex];
+  return chartTheme.negative;
 }
 
 export function Trends() {
   const { txFilter, navigate } = useNav();
+  const chartTheme = useChartTheme();
 
   const [views, setViews] = useState<View[]>([]);
   const [viewIdx, setViewIdx] = useState(0);
@@ -125,8 +126,8 @@ export function Trends() {
     },
   });
 
-  const lineColor = view ? viewColor(view) : CHART.negative;
-  const searchOnlyColor = searchIncome > 0 && searchExpenses === 0 ? CHART.positive : CHART.negative;
+  const lineColor = view ? viewColor(view, chartTheme) : chartTheme.negative;
+  const searchOnlyColor = searchIncome > 0 && searchExpenses === 0 ? chartTheme.positive : chartTheme.negative;
 
   return (
     <div className={styles.screen}>
@@ -195,9 +196,9 @@ export function Trends() {
         ) : (
           <ResponsiveContainer width="100%" height={420}>
             <ComposedChart data={activeRows} onClick={onChartClick} style={{ cursor: 'pointer' }}>
-              <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" stroke={CHART.axis} tick={{ fontSize: 12 }} minTickGap={24} />
-              <YAxis stroke={CHART.axis} tick={{ fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} width={70} />
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" stroke={chartTheme.axis} tick={{ fontSize: 12 }} minTickGap={24} />
+              <YAxis stroke={chartTheme.axis} tick={{ fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} width={70} />
               <Tooltip
                 contentStyle={tooltipStyle}
                 labelStyle={tooltipLabelStyle}
@@ -206,17 +207,17 @@ export function Trends() {
               {netStyle ? (
                 <>
                   <Legend />
-                  <ReferenceLine y={0} stroke={CHART.axis} />
-                  <Bar dataKey="income" name="Income" fill={CHART.positive} />
-                  <Bar dataKey="expenses" name="Expenses" fill={CHART.negative} />
-                  <Bar dataKey="total" name="Net" fill={CHART.accent} />
+                  <ReferenceLine y={0} stroke={chartTheme.axis} />
+                  <Bar dataKey="income" name="Income" fill={chartTheme.positive} />
+                  <Bar dataKey="expenses" name="Expenses" fill={chartTheme.negative} />
+                  <Bar dataKey="total" name="Net" fill={chartTheme.accent} />
                 </>
               ) : isFlexBreakdown ? (
                 <>
                   <Legend />
-                  <Bar dataKey="fixed" name="Fixed" stackId="flex" fill={CHART.fixed} />
-                  <Bar dataKey="flexible" name="Flexible" stackId="flex" fill={CHART.flexible} />
-                  <Bar dataKey="discretionary" name="Discretionary" stackId="flex" fill={CHART.discretionary} />
+                  <Bar dataKey="fixed" name="Fixed" stackId="flex" fill={chartTheme.fixed} />
+                  <Bar dataKey="flexible" name="Flexible" stackId="flex" fill={chartTheme.flexible} />
+                  <Bar dataKey="discretionary" name="Discretionary" stackId="flex" fill={chartTheme.discretionary} />
                 </>
               ) : (
                 <Bar

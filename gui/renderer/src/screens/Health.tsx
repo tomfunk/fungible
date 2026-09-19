@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
+import { computeSavingsRate } from '../../../../core/savings-rate.js';
 import { KeyHints } from '../components/KeyHints.js';
+import { DialRow } from '../components/DialRow.js';
 import styles from './Health.module.css';
 
 const DEFAULT_WITHDRAWAL = 4.0;
 const DEFAULT_GROWTH = 7.0;
 const SPEND_STEP = 100;
+const WITHDRAWAL_STEP = 0.5;
+const GROWTH_STEP = 1.0;
 
 function savingsRateClass(rate: number): string {
   if (rate < 0) return 'neg';
@@ -63,11 +67,13 @@ export function Health() {
   const liquidMonths = spend > 0 ? data.liquid / spend : 0;
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
   const grossIncome = data.monthlyIncome + pretax;
-  const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
-  const rawSavingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
+  const savingsRate = computeSavingsRate(data.monthlyIncome, savings, pretax);
+  const rawSavingsRate = computeSavingsRate(data.monthlyIncome, savings, 0);
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
+  const combinedDebt = data.totalDebt + data.loanDebt;
+  const hasLoanDebt = data.loanDebt > 0;
 
   return (
     <div className={styles.screen}>
@@ -141,7 +147,7 @@ export function Health() {
             <span className={`num ${runwayClass(liquidMonths, 12, 6)} ${styles.metricValue}`}>{fmtMonths(liquidMonths)}</span>
             <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.liquid)} incl. brokerage</span>
           </div>
-          {data.totalDebt > 0 && (
+          {combinedDebt > 0 && !hasLoanDebt && (
             <div className={styles.metric}>
               <span className={styles.metricLabel}>Debt</span>
               <span className={`num neg ${styles.metricValue}`}>
@@ -153,6 +159,37 @@ export function Health() {
                   : `${fmtCompact(Math.abs(netCash))} more than cash`}
               </span>
             </div>
+          )}
+          {hasLoanDebt && (
+            <>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Credit cards</span>
+                <span className={`num ${data.totalDebt > 0 ? 'neg' : 'dim'} ${styles.metricValue}`}>
+                  {fmtCompact(data.totalDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>
+                  {data.totalDebt === 0
+                    ? 'no card balance'
+                    : netCash >= 0
+                      ? `covered · ${fmtCompact(netCash)} net cash`
+                      : `${fmtCompact(Math.abs(netCash))} more than cash`}
+                </span>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Loans</span>
+                <span className={`num neg ${styles.metricValue}`}>
+                  {fmtCompact(data.loanDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>mortgage / auto / student</span>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Total</span>
+                <span className={`num neg ${styles.metricValue}`}>
+                  {fmtCompact(combinedDebt)}
+                </span>
+                <span className={`dim ${styles.metricHint}`}>subtracted from net worth</span>
+              </div>
+            </>
           )}
           {data.totalDebt > 0 && netCash < 0 && (
             <div className={styles.metric}>
@@ -217,169 +254,69 @@ export function Health() {
 
       <section className={styles.panel}>
         <h2>Assumptions</h2>
-        <div className={styles.dialsDollar}>
-          <DollarDial
+        <div className={styles.dials}>
+          <DialRow
             label="Monthly spending"
             value={spend}
             defaultValue={defaultSpend}
+            step={SPEND_STEP}
             min={SPEND_STEP}
+            format="dollar"
             hint="avg past 12 months"
-            onChange={(v) => setMonthlySpend(Math.max(SPEND_STEP, v))}
+            onChange={setMonthlySpend}
             onReset={() => setMonthlySpend(null)}
           />
-          <DollarDial
+          <DialRow
             label="Monthly savings"
             value={savings}
             defaultValue={defaultSavings}
+            step={SPEND_STEP}
+            format="dollar"
             hint="avg surplus past 12 mo"
-            signed
             onChange={setMonthlySavings}
             onReset={() => setMonthlySavings(null)}
           />
-          <DollarDial
+          <DialRow
             label="Pretax savings"
             value={pretax}
             defaultValue={0}
+            step={SPEND_STEP}
             min={0}
+            format="dollar"
             hint="401k/HSA — not in transactions"
             onChange={(v) => {
-              setPretaxSavings(Math.max(0, v));
-              void api.settings.setPretaxMonthly(String(Math.max(0, v)));
+              setPretaxSavings(v);
+              void api.settings.setPretaxMonthly(String(v));
             }}
             onReset={() => {
               setPretaxSavings(0);
               void api.settings.setPretaxMonthly('0');
             }}
           />
-        </div>
-        <div className={styles.dialsRate}>
-          <SliderDial
+          <DialRow
             label="Withdrawal rate"
             value={withdrawal}
             defaultValue={DEFAULT_WITHDRAWAL}
+            step={WITHDRAWAL_STEP}
             min={0.5}
             max={10}
-            step={0.5}
+            format="percent"
             hint="safe withdrawal rate"
             onChange={setWithdrawal}
           />
-          <SliderDial
+          <DialRow
             label="Growth rate"
             value={growth}
             defaultValue={DEFAULT_GROWTH}
+            step={GROWTH_STEP}
             min={0}
             max={20}
-            step={0.5}
+            format="percent"
             hint="real annual return"
             onChange={setGrowth}
           />
         </div>
       </section>
-    </div>
-  );
-}
-
-function DollarDial({
-  label,
-  value,
-  defaultValue,
-  min,
-  hint,
-  signed,
-  onChange,
-  onReset,
-}: {
-  label: string;
-  value: number;
-  defaultValue: number;
-  min?: number;
-  hint: string;
-  signed?: boolean;
-  onChange: (v: number) => void;
-  onReset: () => void;
-}) {
-  const changed = value !== defaultValue;
-  return (
-    <div className={styles.dial}>
-      <span className={styles.dialLabel}>{label}</span>
-      <div className={styles.dialControls}>
-        <button className={styles.stepBtn} onClick={() => onChange(value - SPEND_STEP)}>
-          −
-        </button>
-        <input
-          type="number"
-          className={styles.dialInput}
-          value={value}
-          step={SPEND_STEP}
-          min={min}
-          onChange={(e) => {
-            const n = parseFloat(e.target.value);
-            if (!isNaN(n)) onChange(roundToStep(n));
-          }}
-        />
-        <button className={styles.stepBtn} onClick={() => onChange(value + SPEND_STEP)}>
-          +
-        </button>
-        {changed && (
-          <button className={styles.resetBtn} onClick={onReset} title={`Reset to ${fmt(defaultValue, 0)}`}>
-            reset
-          </button>
-        )}
-      </div>
-      <span className={`dim ${styles.dialHint}`}>
-        {hint}
-        {changed ? ' (modified)' : ''}
-      </span>
-    </div>
-  );
-}
-
-function SliderDial({
-  label,
-  value,
-  defaultValue,
-  min,
-  max,
-  step,
-  hint,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  defaultValue: number;
-  min: number;
-  max: number;
-  step: number;
-  hint: string;
-  onChange: (v: number) => void;
-}) {
-  const changed = value !== defaultValue;
-  return (
-    <div className={styles.dial}>
-      <div className={styles.dialHeader}>
-        <span className={styles.dialLabel}>{label}</span>
-        <span className={`num ${styles.dialValue}`}>{fmtPct(value)}</span>
-      </div>
-      <div className={styles.dialControls}>
-        <input
-          type="range"
-          className={styles.slider}
-          value={value}
-          min={min}
-          max={max}
-          step={step}
-          onChange={(e) => onChange(parseFloat(e.target.value))}
-        />
-        {changed && (
-          <button className={styles.resetBtn} onClick={() => onChange(defaultValue)} title={`Reset to ${fmtPct(defaultValue)}`}>
-            reset
-          </button>
-        )}
-      </div>
-      <span className={`dim ${styles.dialHint}`}>
-        {hint}
-        {changed ? ' (modified)' : ''}
-      </span>
     </div>
   );
 }

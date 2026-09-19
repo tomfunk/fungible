@@ -10,7 +10,7 @@ import { Tags } from './Tags.js';
 import { Rules } from './Rules.js';
 import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
-import { Canvas } from './Canvas.js';
+import { Canvas, type LoadedCanvasSpec } from './Canvas.js';
 import { Settings } from './Settings.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider, useRefreshKey } from './RefreshContext.js';
@@ -19,7 +19,6 @@ import { FilterProvider } from './FilterContext.js';
 import { FilterPanel } from './FilterPanel.js';
 import { getLinkedAccounts } from '../core/queries.js';
 import { C_NEGATIVE } from './ui.js';
-import type { CanvasSpec } from '../core/canvas-agent.js';
 import { CANVAS_SPEC_PATH } from '../core/canvas-history.js';
 
 export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas' | 'settings';
@@ -45,7 +44,7 @@ export type TxFilter = {
 function AppInner() {
   const [screen, setScreen]         = useState<Screen>('dashboard');
   const [txFilter, setTxFilter]     = useState<TxFilter>({});
-  const [canvasSpec, setCanvasSpec] = useState<CanvasSpec | null>(null);
+  const [canvasSpec, setCanvasSpec] = useState<LoadedCanvasSpec | null>(null);
   const [specKey,    setSpecKey]    = useState(0);
   const [chatFocused, setChatFocused] = useState(false);
   const [screenTyping, setScreenTyping] = useState(false);
@@ -87,7 +86,7 @@ function AppInner() {
     } catch { /* file doesn't exist yet */ }
   }, [refreshKey]);
 
-  function loadSpec(s: CanvasSpec) {
+  function loadSpec(s: LoadedCanvasSpec) {
     setCanvasSpec(s);
     setSpecKey((k) => k + 1);
   }

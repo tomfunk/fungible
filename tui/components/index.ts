@@ -9,4 +9,5 @@ export { ColumnHeader } from './ColumnHeader.js';
 export { PageHeader } from './PageHeader.js';
 export { SearchBar } from './SearchBar.js';
 export { DialRow } from './DialRow.js';
+export { TruncatedText } from './TruncatedText.js';
 export { EditTextField, EditToggleField } from './EditField.js';

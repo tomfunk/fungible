@@ -119,3 +119,13 @@
   margin-top: 2px;
 }
 
+.checkboxRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.checkboxRow input {
+  width: auto;
+}
+

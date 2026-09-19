@@ -3,7 +3,8 @@ import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { handleNavKey } from './nav.js';
 import { loadProfile, saveProfile, type Profile } from '../core/profile.js';
-import { C_ACCENT, C_NEUTRAL, CURSOR } from './ui.js';
+import { getSetting, setSetting, BACKUP_INCLUDE_KEY_KEY } from '../core/settings.js';
+import { C_ACCENT, C_NEUTRAL, CURSOR, THEME_KEY, THEME_NAMES, type ThemeName } from './ui.js';
 import { PageHeader, SectionHeader, SelectableRow } from './components/index.js';
 import { Divider } from './fmt.js';
 import { useSetTyping } from './TypingContext.js';
@@ -11,11 +12,19 @@ import { useSetTyping } from './TypingContext.js';
 const LABEL_W = 16;
 const VALUE_W = 18;
 
+const DEFAULT_THEME: ThemeName = 'default';
+
+function themeLabel(name: ThemeName): string {
+  return name.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
 type FieldRow = { kind: 'field'; id: string; label: string; value: string; numeric?: boolean };
 type ActionRow = { kind: 'action'; id: string; label: string };
-type SettingsRow = FieldRow | ActionRow;
+type ThemeRow = { kind: 'theme'; id: 'theme'; label: string; value: ThemeName };
+type ToggleRow = { kind: 'toggle'; id: 'backup-include-key'; label: string; value: boolean };
+type SettingsRow = FieldRow | ActionRow | ThemeRow | ToggleRow;
 
-function buildRows(profile: Profile): SettingsRow[] {
+function buildRows(profile: Profile, theme: ThemeName, backupIncludeKey: boolean): SettingsRow[] {
   const r: SettingsRow[] = [
     { kind: 'field', id: 'self-name', label: 'Your name', value: profile.self.name },
     { kind: 'field', id: 'self-year', label: 'Birth year', value: profile.self.birthYear > 0 ? String(profile.self.birthYear) : '', numeric: true },
@@ -36,6 +45,8 @@ function buildRows(profile: Profile): SettingsRow[] {
     );
   }
   r.push({ kind: 'action', id: 'add-child', label: '[a] Add child' });
+  r.push({ kind: 'theme', id: 'theme', label: 'Theme', value: theme });
+  r.push({ kind: 'toggle', id: 'backup-include-key', label: 'Include key', value: backupIncludeKey });
   return r;
 }
 
@@ -46,17 +57,23 @@ export function Settings({ onNavigate, isActive, showHints }: {
 }) {
   const setTyping = useSetTyping();
   const [profile, setProfile] = useState<Profile>({ self: { name: '', birthYear: 0 }, children: [] });
+  const [theme, setTheme] = useState<ThemeName>(DEFAULT_THEME);
+  const [backupIncludeKey, setBackupIncludeKey] = useState(false);
   const [cursor, setCursor] = useState(0);
 
   useEffect(() => {
     void loadProfile().then((p) => { if (p) setProfile(p); });
+    void getSetting(THEME_KEY).then((v) => {
+      if (v && (THEME_NAMES as string[]).includes(v)) setTheme(v as ThemeName);
+    });
+    void getSetting(BACKUP_INCLUDE_KEY_KEY).then((v) => setBackupIncludeKey(v === 'true'));
   }, []);
   const [editing, setEditing] = useState(false);
   const [editBuffer, setEditBuffer] = useState('');
 
   useEffect(() => { setTyping(editing); }, [editing, setTyping]);
 
-  const rows = useMemo(() => buildRows(profile), [profile]);
+  const rows = useMemo(() => buildRows(profile, theme, backupIncludeKey), [profile, theme, backupIncludeKey]);
   const clampedCursor = Math.min(cursor, rows.length - 1);
   const currentRow = rows[clampedCursor] as SettingsRow | undefined;
 
@@ -106,6 +123,19 @@ export function Settings({ onNavigate, isActive, showHints }: {
     return m ? parseInt(m[1]) : null;
   }
 
+  function cycleTheme(delta: 1 | -1) {
+    const i = THEME_NAMES.indexOf(theme);
+    const next = THEME_NAMES[(i + delta + THEME_NAMES.length) % THEME_NAMES.length];
+    setTheme(next);
+    void setSetting(THEME_KEY, next);
+  }
+
+  function toggleBackupIncludeKey() {
+    const next = !backupIncludeKey;
+    setBackupIncludeKey(next);
+    void setSetting(BACKUP_INCLUDE_KEY_KEY, next ? 'true' : 'false');
+  }
+
   useInput((input, key) => {
     if (editing) {
       if (key.escape) { setEditing(false); setEditBuffer(''); return; }
@@ -126,6 +156,16 @@ export function Settings({ onNavigate, isActive, showHints }: {
     if (handleNavKey(input, 'settings', onNavigate)) return;
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
+
+    if (currentRow?.kind === 'theme' && (key.leftArrow || key.rightArrow)) {
+      cycleTheme(key.leftArrow ? -1 : 1);
+      return;
+    }
+
+    if (currentRow?.kind === 'toggle' && (key.leftArrow || key.rightArrow)) {
+      toggleBackupIncludeKey();
+      return;
+    }
 
     if (key.return) {
       if (!currentRow) return;
@@ -197,11 +237,33 @@ export function Settings({ onNavigate, isActive, showHints }: {
     );
   }
 
+  function renderTheme(row: ThemeRow, sectionCursor: number) {
+    const isSelected = sectionCursor === clampedCursor;
+    return (
+      <SelectableRow key={row.id} selected={isSelected} gap={2}>
+        <Text color={isSelected ? C_ACCENT : undefined}>{row.label.padEnd(LABEL_W)}</Text>
+        <Text color={isSelected ? C_ACCENT : C_NEUTRAL}>{themeLabel(row.value).padStart(VALUE_W)}</Text>
+        <Text dimColor>{isSelected ? '←→ change  ·  restart to apply' : ''}</Text>
+      </SelectableRow>
+    );
+  }
+
+  function renderToggle(row: ToggleRow, sectionCursor: number) {
+    const isSelected = sectionCursor === clampedCursor;
+    return (
+      <SelectableRow key={row.id} selected={isSelected} gap={2}>
+        <Text color={isSelected ? C_ACCENT : undefined}>{row.label.padEnd(LABEL_W)}</Text>
+        <Text color={isSelected ? C_ACCENT : C_NEUTRAL}>{(row.value ? 'On' : 'Off').padStart(VALUE_W)}</Text>
+        <Text dimColor>{isSelected ? '←→ toggle' : ''}</Text>
+      </SelectableRow>
+    );
+  }
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="settings" showHints={showHints} />
       <Box marginTop={1}><Text bold>Settings</Text></Box>
-      {showHints && <Text dimColor>↑↓ navigate  ·  Enter edit  ·  [a] add  ·  [d] remove  ·  Esc back</Text>}
+      {showHints && <Text dimColor>↑↓ navigate  ·  Enter edit  ·  [a] add  ·  [d] remove  ·  ←→ change theme/toggle  ·  Esc back</Text>}
       <Divider />
 
       {/* Household section */}
@@ -235,6 +297,24 @@ export function Settings({ onNavigate, isActive, showHints }: {
           if (/^child-\d+-(name|year)$/.test(row.id)) return renderField(row, i);
           return null;
         })}
+      </Box>
+
+      {/* Appearance section */}
+      <Box flexDirection="column" marginTop={1}>
+        <SectionHeader>APPEARANCE</SectionHeader>
+        {rows.map((row, i) => row.kind === 'theme' ? renderTheme(row, i) : null)}
+      </Box>
+
+      {/* Backup section */}
+      <Box flexDirection="column" marginTop={1}>
+        <SectionHeader>BACKUP</SectionHeader>
+        {rows.map((row, i) => row.kind === 'toggle' ? renderToggle(row, i) : null)}
+        <Box marginTop={1}>
+          <Text dimColor>
+            Your ~/.fungible/key file decrypts linked bank connections. Off by default so backups
+            don&apos;t bundle the key with the data it protects — turn on to include it in daily backups.
+          </Text>
+        </Box>
       </Box>
 
     </Box>

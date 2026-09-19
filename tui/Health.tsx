@@ -3,8 +3,9 @@ import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
+import { loadHealthData, yearsToFire, coastYears, computeSavingsRate, type HealthData } from '../core/health.js';
 import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../core/settings.js';
+import { BASIS_LABEL } from '../core/dateUtils.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
 import { SectionHeader, PageHeader, DialRow } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -40,7 +41,7 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, savingsRate: 0, cash: 0, liquid: 0, retirement: 0, totalDebt: 0, loanDebt: 0, netWorth: 0 };
+const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, retirement: 0, totalDebt: 0, loanDebt: 0, netWorth: 0, basis: 'trailing-365d', basisLabel: BASIS_LABEL['trailing-365d'] };
 
 export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
@@ -161,13 +162,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const years          = yearsToFire(data.netWorth, monthlySavings + pretaxSavings, fireNumber, growth);
   const coast          = coastYears(data.netWorth, fireNumber, growth);
 
-  const grossIncome = data.monthlyIncome + pretaxSavings;
-  const savingsRate = grossIncome > 0
-    ? ((monthlySavings + pretaxSavings) / grossIncome) * 100
-    : null;
-  const rawSavingsRate = data.monthlyIncome > 0
-    ? (monthlySavings / data.monthlyIncome) * 100
-    : null;
+  const grossIncome    = data.monthlyIncome + pretaxSavings;
+  const savingsRate    = computeSavingsRate(data.monthlyIncome, monthlySavings, pretaxSavings);
+  const rawSavingsRate = computeSavingsRate(data.monthlyIncome, monthlySavings, 0);
 
   const netCash        = data.cash - data.totalDebt;
   const remainingDebt  = Math.max(0, data.totalDebt - data.cash);
@@ -255,34 +252,55 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       </Box>
 
       {/* ── Debt (only shown if there is debt) ─────────────────────────────── */}
-      {data.totalDebt > 0 && (
+      {(data.totalDebt > 0 || data.loanDebt > 0) && (
         <Box flexDirection="column" marginTop={1}>
           <SectionHeader>DEBT</SectionHeader>
-          <Box gap={3} marginTop={1}>
-            <Text dimColor>{'Net cash'.padEnd(L)}</Text>
-            <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
-              {fmtSigned(netCash).padStart(V)}
-            </Text>
-            <Text dimColor>
-              {netCash >= 0
-                ? 'could pay off now'
-                : `${fmtCompact(data.cash)} cash · ${fmtCompact(data.totalDebt)} debt`}
-            </Text>
-          </Box>
-          {netCash < 0 && (
-            <Box gap={3}>
-              <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
-              {debtMonths === null ? (
-                <Text color={C_NEGATIVE}>{'no surplus'.padStart(V)}</Text>
-              ) : (
-                <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
-                  {fmtMonths(debtMonths).padStart(V)}
+          {data.loanDebt > 0 && (
+            <>
+              <Box gap={3} marginTop={1}>
+                <Text dimColor>{'Credit cards'.padEnd(L)}</Text>
+                <Text bold color={C_NEGATIVE}>{fmt(data.totalDebt).padStart(V)}</Text>
+              </Box>
+              <Box gap={3}>
+                <Text dimColor>{'Loans'.padEnd(L)}</Text>
+                <Text bold color={C_NEGATIVE}>{fmt(data.loanDebt).padStart(V)}</Text>
+                <Text dimColor>mortgage / auto / student</Text>
+              </Box>
+              <Box gap={3}>
+                <Text dimColor>{'Total'.padEnd(L)}</Text>
+                <Text bold color={C_NEGATIVE}>{fmt(data.totalDebt + data.loanDebt).padStart(V)}</Text>
+              </Box>
+            </>
+          )}
+          {data.totalDebt > 0 && (
+            <>
+              <Box gap={3} marginTop={1}>
+                <Text dimColor>{'Net cash'.padEnd(L)}</Text>
+                <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
+                  {fmtSigned(netCash).padStart(V)}
                 </Text>
+                <Text dimColor>
+                  {netCash >= 0
+                    ? 'could pay off now'
+                    : `${fmtCompact(data.cash)} cash · ${fmtCompact(data.totalDebt)} debt`}
+                </Text>
+              </Box>
+              {netCash < 0 && (
+                <Box gap={3}>
+                  <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
+                  {debtMonths === null ? (
+                    <Text color={C_NEGATIVE}>{'no surplus'.padStart(V)}</Text>
+                  ) : (
+                    <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
+                      {fmtMonths(debtMonths).padStart(V)}
+                    </Text>
+                  )}
+                  <Text dimColor>
+                    {debtMonths !== null ? `${fmtCompact(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
+                  </Text>
+                </Box>
               )}
-              <Text dimColor>
-                {debtMonths !== null ? `${fmtCompact(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
-              </Text>
-            </Box>
+            </>
           )}
         </Box>
       )}

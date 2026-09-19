@@ -18,6 +18,12 @@ function parseDate(raw: string): string {
   return raw; // already YYYY-MM-DD
 }
 
+// This script keeps its own hash-derived ids and writes no dedup_key or
+// import_id, so its rows are "imported before import history" in the same sense
+// as pre-migration rows: they still deduplicate against Plaid and still can't be
+// imported twice (the hash id sees to that), they just aren't an undoable batch.
+// One file here can span several accounts — parseCheckingOrSavings derives the
+// account from each row — so a per-file import record would not be well defined.
 function txId(accountMask: string, date: string, description: string, amount: number): string {
   const hash = crypto
     .createHash('sha1')
@@ -97,7 +103,7 @@ async function parseCheckingOrSavings(filePath: string): Promise<number> {
     const id = txId(mask, date, name, amount);
 
     inserts.push({
-      sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+      sql: "INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending, source) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'csv')",
       args: [id, accountId, date, name, amount, category, null],
     });
   }
@@ -129,7 +135,7 @@ async function parseCreditCard(filePath: string): Promise<number> {
     const id = txId(cardMask, txDate, txName, amount);
 
     const result = await db.execute({
-      sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+      sql: "INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending, source) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'csv')",
       args: [id, accountId, txDate, txName, amount, category, rawCapOneCategory],
     });
     // if row already existed (Plaid dupe), update its category if it was uncategorized

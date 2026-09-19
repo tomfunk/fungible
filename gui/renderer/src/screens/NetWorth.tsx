@@ -15,7 +15,7 @@ import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtSigned, fmtCompact } from '../../../../core/fmt.js';
 import type { AccountBalance, NetWorthGranularity } from '../../../../core/queries.js';
 import { isAssetAccount, isLiabilityAccount } from '../../../../core/account-class.js';
-import { CHART, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
+import { useChartTheme, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
 import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
@@ -64,14 +64,15 @@ function periodLabel(period: string, range: NetWorthGranularity): string {
 }
 
 type SeriesKey = 'assets' | 'liabilities' | 'net';
-const SERIES: { key: SeriesKey; label: string; color: string }[] = [
-  { key: 'assets',      label: 'Assets',      color: CHART.positive },
-  { key: 'liabilities', label: 'Liabilities', color: CHART.negative },
-  { key: 'net',         label: 'Net worth',   color: CHART.accent   },
-];
 
 export function NetWorth() {
   const { navigate } = useNav();
+  const chartTheme = useChartTheme();
+  const SERIES: { key: SeriesKey; label: string; color: string }[] = [
+    { key: 'assets',      label: 'Assets',      color: chartTheme.positive },
+    { key: 'liabilities', label: 'Liabilities', color: chartTheme.negative },
+    { key: 'net',         label: 'Net worth',   color: chartTheme.accent   },
+  ];
   const [view, setView] = useState<'accounts' | 'types'>('accounts');
   const [range, setRange] = useState<NetWorthGranularity>('month');
   const [hiddenSeries, setHiddenSeries] = useState<Set<SeriesKey>>(new Set());
@@ -217,23 +218,23 @@ export function NetWorth() {
               </div>
               <ResponsiveContainer width="100%" height={360}>
                 <ComposedChart data={chartData}>
-                  <CartesianGrid stroke={CHART.grid} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" stroke={CHART.axis} tick={{ fontSize: 12 }} minTickGap={24} />
-                  <YAxis stroke={CHART.axis} tick={{ fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} width={80} />
+                  <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" stroke={chartTheme.axis} tick={{ fontSize: 12 }} minTickGap={24} />
+                  <YAxis stroke={chartTheme.axis} tick={{ fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} width={80} />
                   <Tooltip
                     contentStyle={tooltipStyle}
                     labelStyle={tooltipLabelStyle}
                     formatter={(value, name) => [fmt(Number(value)), String(name)]}
                   />
-                  <ReferenceLine y={0} stroke={CHART.axis} />
+                  <ReferenceLine y={0} stroke={chartTheme.axis} />
                   {!hiddenSeries.has('assets') && (
-                    <Area type="monotone" dataKey="assets" name="Assets" stroke={CHART.positive} fill={CHART.positive} fillOpacity={0.15} strokeWidth={1.5} />
+                    <Area type="monotone" dataKey="assets" name="Assets" stroke={chartTheme.positive} fill={chartTheme.positive} fillOpacity={0.15} strokeWidth={1.5} />
                   )}
                   {!hiddenSeries.has('liabilities') && (
-                    <Area type="monotone" dataKey="liabilities" name="Liabilities" stroke={CHART.negative} fill={CHART.negative} fillOpacity={0.15} strokeWidth={1.5} />
+                    <Area type="monotone" dataKey="liabilities" name="Liabilities" stroke={chartTheme.negative} fill={chartTheme.negative} fillOpacity={0.15} strokeWidth={1.5} />
                   )}
                   {!hiddenSeries.has('net') && (
-                    <Line type="monotone" dataKey="net" name="Net worth" stroke={CHART.accent} dot={false} strokeWidth={2.5} />
+                    <Line type="monotone" dataKey="net" name="Net worth" stroke={chartTheme.accent} dot={false} strokeWidth={2.5} />
                   )}
                 </ComposedChart>
               </ResponsiveContainer>

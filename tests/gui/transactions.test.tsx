@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('../../core/db.js', async () => {
@@ -104,6 +104,43 @@ describe('GUI Transactions', () => {
       expect(row.textContent).toContain('◆');
       expect(row.textContent).toContain('Dining');
     });
+  });
+
+  it('edit modal reattributes a transaction date and preserves the posting date', async () => {
+    const { container } = renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('Trader Joes')).toBeTruthy());
+    await userEvent.click(screen.getByText('Trader Joes'));
+    await waitFor(() => expect(screen.getByText(/^Edit/)).toBeTruthy());
+
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(dateInput.value).toBe('2026-05-14');
+    fireEvent.change(dateInput, { target: { value: '2026-05-20' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.getByText('Transaction updated')).toBeTruthy());
+    await waitFor(() => {
+      const row = screen.getByText('Trader Joes').closest('tr')!;
+      expect(row.textContent).toContain('2026-05-20');
+    });
+
+    // First edit stashes the bank's posting date so it can always be restored.
+    const res = await db.execute("SELECT date, original_date FROM transactions WHERE id = 'tx-groc-2'");
+    expect(res.rows[0]).toMatchObject({ date: '2026-05-20', original_date: '2026-05-14' });
+  });
+
+  it('edit modal shows a reattributed-from note and restores the posting date', async () => {
+    await db.execute(
+      "UPDATE transactions SET date = '2026-05-20', original_date = '2026-05-14' WHERE id = 'tx-groc-2'",
+    );
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('Trader Joes')).toBeTruthy());
+    await userEvent.click(screen.getByText('Trader Joes'));
+    await waitFor(() => expect(screen.getByText('Reattributed from 2026-05-14')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'restore posting date' }));
+    await waitFor(() => expect(screen.getByText('Date restored to posting date')).toBeTruthy());
+
+    const res = await db.execute("SELECT date, original_date FROM transactions WHERE id = 'tx-groc-2'");
+    expect(res.rows[0]).toMatchObject({ date: '2026-05-14', original_date: null });
   });
 
   it('edit modal with a pattern shows live match count and saves a rule', async () => {

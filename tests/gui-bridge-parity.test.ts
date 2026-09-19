@@ -36,11 +36,20 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   evalExpr: 'renderer imports pure core/canvas-spec.ts directly',
   fmtValue: 'renderer imports pure core/canvas-spec.ts directly',
   fmtDialValue: 'renderer imports pure core/canvas-spec.ts directly',
+  computeOutputValues: 'renderer imports pure core/canvas-spec.ts directly',
+  buildListScope: 'renderer imports pure core/canvas-spec.ts directly',
+  projectSeries: 'renderer imports pure core/canvas-spec.ts directly',
 
   // Pure scorecard helpers — renderer imports core/scorecard.ts directly (GUI PR2)
   bucketDrift: 'renderer imports pure core/scorecard.ts directly',
   isSignificantDelta: 'renderer imports pure core/scorecard.ts directly',
   ratioLabel: 'renderer imports pure core/scorecard.ts directly',
+
+  // Pure rule-merge helper -- renderer imports core/rules-merge.ts directly
+  mergeRules: 'renderer imports pure core/rules-merge.ts directly',
+
+  // Pure savings-rate helper — TUI imports it via core/health.ts (re-export)
+  computeSavingsRate: 'renderer imports pure core/savings-rate.ts directly (extracted from health.ts so the browser bundle doesn\'t pull in db.ts/crypto.ts)',
 
   // Electron-side bridge namespaces live in gui/main/bridge.ts (not registry.ts)
   getDefaultDaysRequested: 'bridge plaid namespace (gui/main/bridge.ts)',
@@ -64,6 +73,12 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // something resyncs, so main runs both steps together where they cannot be
   // interleaved with another sync.
   deleteSyncCursor: 'GUI bridges the composed sync.deleteCursorAndResync instead',
+
+  // The GUI bridges the composed action (canvas.updateSpec) rather than the two
+  // bare history/write functions, so a row edit re-resolves bindings and rewrites
+  // CANVAS_SPEC_PATH as one atomic step (see gui/main/registry.ts canvas.updateSpec).
+  updateHistoryEntrySpec: 'GUI bridges the composed canvas.updateSpec instead',
+  resolveAndWriteCanvasSpec: 'GUI bridges the composed canvas.updateSpec instead',
 
   // On-demand /transactions/refresh (core/transactions-refresh.ts) — bridged, but
   // not through the registry: the poll runs for minutes and streams progress, so

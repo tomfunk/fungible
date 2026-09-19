@@ -21,6 +21,17 @@ function getKey(): Buffer {
   return _key;
 }
 
+/** The on-disk path of the encryption key file, for callers that need to check
+ *  its presence without triggering loadOrCreateKey's create-if-missing behavior. */
+export const KEY_FILE_PATH = KEY_PATH;
+
+/** True if the key file exists on disk. Does not create one — unlike getKey(),
+ *  which lazily generates a key on first use, this is a pure existence check
+ *  for health/diagnostic callers (see core/key-health.ts). */
+export function keyFileExists(): boolean {
+  return existsSync(KEY_PATH);
+}
+
 /** Encrypts a plaintext string. Returns a `iv:authTag:ciphertext` base64 triple. */
 export function encryptToken(plaintext: string): string {
   const iv = randomBytes(12);

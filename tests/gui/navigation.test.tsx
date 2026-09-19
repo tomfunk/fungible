@@ -81,6 +81,22 @@ describe('GUI App navigation', () => {
     expect(localStorage.getItem('fungible-theme')).toBe('light');
   });
 
+  it('color palette defaults to "default" and selecting one sets the document palette and persists', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
+    expect(document.documentElement.dataset.palette).toBe('default');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+
+    const paletteSelect = screen.getByRole('combobox', { name: 'Color palette' });
+    expect((paletteSelect as HTMLSelectElement).value).toBe('default');
+
+    await userEvent.selectOptions(paletteSelect, 'deuteranopia');
+    expect(document.documentElement.dataset.palette).toBe('deuteranopia');
+    expect(localStorage.getItem('fungible-palette')).toBe('deuteranopia');
+  });
+
   it('FilterBar appears on filterable screens only', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());

@@ -13,13 +13,18 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
-import { getLinkedAccounts, getCsvAccounts, getLinkedItems, type LinkedAccount, type CsvAccount, type LinkedItem } from '../core/queries.js';
+import { getLinkedAccounts, getImportTargets, getLinkedItems, type LinkedAccount, type ImportTarget, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
+import { checkKeyHealth, type KeyHealth } from '../core/key-health.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountExcluded, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
 } from '../core/accounts.js';
+import {
+  getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
+  type ImportRow, type ImportImpact,
+} from '../core/imports.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { fmtSyncedAt } from '../core/fmt.js';
@@ -56,6 +61,10 @@ type AddStep =
   | 'new-acct-name'
   | 'new-acct-type';
 
+const TARGET_GROUP: Record<ImportTarget['kind'], string> = {
+  plaid: '(linked)', csv: '(csv)', manual: '(manual asset)',
+};
+
 const ACCOUNT_TYPES = ['depository', 'investment', 'credit', 'loan', 'other'] as const;
 
 const SUBTYPES: Record<string, string[]> = {
@@ -87,6 +96,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
+
+  // Whether the on-disk encryption key can still decrypt this database's Plaid
+  // tokens — a lost or swapped key silently breaks every connection (#179).
+  // Checked once on mount; a persistent banner above the Links list is the
+  // right severity here since it affects every item at once, not a single row.
+  const [keyHealth, setKeyHealth] = useState<KeyHealth | null>(null);
+  useEffect(() => { void checkKeyHealth().then(setKeyHealth); }, []);
 
   // Accounts view state
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
@@ -137,6 +153,18 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [fileError, setFileError] = useState('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<string[][]>([]);
+  const [csvFile, setCsvFile] = useState<{ name: string; hash: string }>({ name: '', hash: '' });
+  // Prior imports of the exact same bytes, looked up when the file is loaded.
+  const [priorImports, setPriorImports] = useState<ImportRow[]>([]);
+  // Import history, shown on the Add Data landing so undo and move are reachable
+  // without leaving the screen that created them.
+  const [imports, setImports] = useState<ImportRow[]>([]);
+  const [importCursor, setImportCursor] = useState(0);
+  // The import awaiting confirmation, and which action it is awaiting.
+  const [importAction, setImportAction] = useState<'undo' | 'move' | null>(null);
+  const [importImpact, setImportImpact] = useState<ImportImpact | null>(null);
+  const [moveCursor, setMoveCursor] = useState(0);
+  const [importMsg, setImportMsg] = useState('');
   const [colCursor, setColCursor] = useState(0);
   const [dateCol, setDateCol] = useState<number | null>(null);
   const [nameCol, setNameCol] = useState<number | null>(null);
@@ -146,7 +174,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [creditCol, setCreditCol] = useState<number | null>(null);
   const [positiveIsInflow, setPositiveIsInflow] = useState(false);
   const [csvAccountCursor, setCsvAccountCursor] = useState(0);
-  const [csvAccounts, setCsvAccounts] = useState<CsvAccount[]>([]);
+  const [csvAccounts, setCsvAccounts] = useState<ImportTarget[]>([]);
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
 
   // Manual asset state
@@ -268,6 +296,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     return accts;
   }
   useEffect(() => { void loadAccounts(); }, [refreshKey]);
+  useEffect(() => { void getImports().then(setImports); }, [refreshKey]);
+  // Targets are loaded on mount, not just partway through the import wizard:
+  // the move-import picker on the Add Data landing needs them too.
+  useEffect(() => { void getImportTargets().then(setCsvAccounts); }, [refreshKey]);
   useEffect(() => {
     void loadProfile().then((p) => setOwnerMembers(householdMembers(p)));
   }, [isActive]);
@@ -472,9 +504,41 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       });
   }
 
+  // Accounts an import can be moved to: anything but the one it is already in.
+  const moveTargets = csvAccounts.filter((t) => t.id !== imports[importCursor]?.account_id);
+
+  async function refreshImports(cursorHint = importCursor) {
+    const next = await getImports();
+    setImports(next);
+    setImportCursor(Math.min(cursorHint, Math.max(0, next.length - 1)));
+  }
+
+  async function confirmUndoImport() {
+    const imp = imports[importCursor];
+    if (!imp) return;
+    const removed = await deleteImport(imp.id);
+    setImportAction(null);
+    setImportImpact(null);
+    setImportMsg(`Undid ${imp.file_name} — ${removed} transaction${removed === 1 ? '' : 's'} removed`);
+    await refreshImports();
+    void loadAccounts();
+  }
+
+  async function confirmMoveImport() {
+    const imp = imports[importCursor];
+    const target = moveTargets[moveCursor];
+    if (!imp || !target) return;
+    const result = await moveImport(imp.id, target.id);
+    setImportAction(null);
+    const tail = result.displaced > 0 ? `, ${result.displaced} already there` : '';
+    setImportMsg(`Moved ${result.moved} transaction${result.moved === 1 ? '' : 's'} to ${target.nickname ?? target.name}${tail}`);
+    await refreshImports();
+    void loadAccounts();
+  }
+
   function saveNewAcct() {
     void createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null).then(() => {
-      void getCsvAccounts().then((accts) => {
+      void getImportTargets().then((accts) => {
         setCsvAccounts(accts);
         setCsvAccountCursor(accts.length - 1);
         setAddStep('account');
@@ -602,6 +666,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (!parsed.headers.length) { setFileError('No columns found'); return; }
       setHeaders(parsed.headers);
       setCsvRows(parsed.rows);
+      setCsvFile({ name: parsed.fileName, hash: parsed.fileHash });
+      void getImportsOfFile(parsed.fileHash).then(setPriorImports);
       setFileError('');
       const h = parsed.headers.map((x) => x.toLowerCase());
       const dateGuess = h.findIndex((x) => x.includes('date') || x.includes('posted'));
@@ -617,10 +683,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function doImport() {
     const acct = csvAccounts[csvAccountCursor];
-    void importCsvTransactions(csvRows, acct, {
+    void importCsvTransactions(csvRows, acct.id, {
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
-    }).then((result) => {
+    }, csvFile).then((result) => {
+      void getImports().then(setImports);
       setImportResult(result);
       setAddStep('done');
     });
@@ -849,12 +916,47 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     // ── Add-data view ──────────────────────────────────────────────────────────
     if (addStep === 'landing') {
+      // The import-history confirmations live inside the landing step rather
+      // than as steps of their own: they are actions on a list that is already
+      // on screen, not another stage of the import wizard.
+      if (importAction === 'undo') {
+        if (key.escape) { setImportAction(null); return; }
+        if (key.return) { void confirmUndoImport(); return; }
+        return;
+      }
+      if (importAction === 'move') {
+        if (key.escape) { setImportAction(null); return; }
+        if (key.upArrow)   { setMoveCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.downArrow) { setMoveCursor((c) => Math.min(moveTargets.length - 1, c + 1)); return; }
+        if (key.return && moveTargets[moveCursor]) { void confirmMoveImport(); return; }
+        return;
+      }
+
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('dupes'); return; }
       if (input === 'l') { setDaysInput(String(defaultDays)); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
+
+      if (imports.length > 0) {
+        if (key.upArrow)   { setImportCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.downArrow) { setImportCursor((c) => Math.min(imports.length - 1, c + 1)); return; }
+        if (input === 'u' && imports[importCursor]) {
+          setImportMsg('');
+          void getImportImpact(imports[importCursor].id).then((impact) => {
+            setImportImpact(impact);
+            setImportAction('undo');
+          });
+          return;
+        }
+        if (input === 'v' && imports[importCursor]) {
+          setImportMsg('');
+          setMoveCursor(0);
+          setImportAction('move');
+          return;
+        }
+      }
       return;
     }
 
@@ -902,7 +1004,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         else if (addStep === 'map-debit')  { setDebitCol(colCursor); setColCursor(0); setAddStep('map-credit'); }
         else if (addStep === 'map-credit') {
           setCreditCol(colCursor);
-          void getCsvAccounts().then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
+          void getImportTargets().then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
         }
       }
       return;
@@ -917,8 +1019,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'direction') {
       if (key.escape) { setAddStep('landing'); return; }
-      if (input === 'i') { setPositiveIsInflow(true);  void getCsvAccounts().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
-      if (input === 'o') { setPositiveIsInflow(false); void getCsvAccounts().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'i') { setPositiveIsInflow(true);  void getImportTargets().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'o') { setPositiveIsInflow(false); void getImportTargets().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
       return;
     }
 
@@ -1161,6 +1263,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {/* ── Links view ────────────────────────────────────────────────── */}
       {mainView === 'links' && (
         <Box flexDirection="column" marginTop={1}>
+          {keyHealth && !keyHealth.ok && (
+            <Box marginBottom={1}>
+              <Text bold color={C_NEGATIVE}>
+                {keyHealth.reason === 'missing_key'
+                  ? `⚠ Encryption key missing — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} can't sync until it's restored.`
+                  : `⚠ Encryption key doesn't match this database — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} may need re-linking.`}
+              </Text>
+            </Box>
+          )}
           {linkedItems.length === 0 ? (
             <>
               <Text dimColor>No bank connections yet.</Text>
@@ -1337,6 +1448,77 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 </Text>
               </Box>
               {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text></Box>}
+
+              {imports.length > 0 && importAction === null && (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text bold>Import history</Text>
+                  <Text dimColor>↑↓ select · [u] undo · [v] move to another account</Text>
+                  <Box flexDirection="column" marginTop={1}>
+                    {imports.map((imp, i) => (
+                      <SelectableRow key={imp.id} selected={i === importCursor}>
+                        <Text color={i === importCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== importCursor}>
+                          {truncate(imp.file_name, 28).padEnd(28)}
+                          <Text dimColor>
+                            {' '}{truncate(imp.account_name || '(deleted)', 18).padEnd(18)}
+                            {/* present vs imported: sync folds CSV rows into
+                                their Plaid counterparts over time. */}
+                            {String(imp.present).padStart(5)}
+                            {imp.present !== imp.imported ? ` of ${imp.imported}` : ''}
+                            {imp.min_date && imp.max_date ? `  ${imp.min_date} → ${imp.max_date}` : ''}
+                          </Text>
+                        </Text>
+                      </SelectableRow>
+                    ))}
+                  </Box>
+                </Box>
+              )}
+
+              {importAction === 'undo' && imports[importCursor] && (
+                <Box flexDirection="column" marginTop={1} gap={1}>
+                  <Text bold color={C_WARNING}>Undo import — {imports[importCursor].file_name}</Text>
+                  <Text dimColor>
+                    Removes the {importImpact?.present ?? imports[importCursor].present} transaction
+                    {(importImpact?.present ?? imports[importCursor].present) === 1 ? '' : 's'} still in the
+                    database from this import, and the record of it.
+                  </Text>
+                  {importImpact && (importImpact.manualCategories > 0 || importImpact.renamed > 0 || importImpact.tagged > 0) && (
+                    <Text color={C_NEGATIVE}>
+                      This throws away your own edits:{' '}
+                      {[
+                        importImpact.manualCategories > 0 && `${importImpact.manualCategories} with a category you set`,
+                        importImpact.renamed > 0 && `${importImpact.renamed} renamed`,
+                        importImpact.tagged > 0 && `${importImpact.tagged} tagged`,
+                      ].filter(Boolean).join(', ')}.
+                    </Text>
+                  )}
+                  <Text dimColor>Enter to undo · Esc to cancel</Text>
+                </Box>
+              )}
+
+              {importAction === 'move' && imports[importCursor] && (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text bold>Move {imports[importCursor].file_name} to which account?</Text>
+                  <Text dimColor>↑↓ select · Enter confirm · Esc cancel</Text>
+                  <Box flexDirection="column" marginTop={1}>
+                    {moveTargets.map((t, i) => (
+                      <SelectableRow key={t.id} selected={i === moveCursor}>
+                        <Text color={i === moveCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== moveCursor}>
+                          {t.nickname ?? t.name}
+                          <Text dimColor>  {t.mask ? `···${t.mask}` : ''}  {TARGET_GROUP[t.kind]}</Text>
+                        </Text>
+                      </SelectableRow>
+                    ))}
+                  </Box>
+                  <Box marginTop={1}>
+                    <Text dimColor>
+                      Rows the destination already holds are dropped rather than moved. Categories are left
+                      as they are.
+                    </Text>
+                  </Box>
+                </Box>
+              )}
+
+              {importMsg && <Box marginTop={1}><Text color={C_POSITIVE}>{importMsg}</Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
             </Box>
           )}
@@ -1448,13 +1630,41 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 {csvAccounts.map((acct, i) => (
                   <SelectableRow key={acct.id} selected={i === csvAccountCursor}>
                     <Text color={i === csvAccountCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== csvAccountCursor}>
-                      {acct.name}
-                      <Text dimColor>  {acct.mask ? `···${acct.mask}` : ''}</Text>
+                      {acct.nickname ?? acct.name}
+                      <Text dimColor>  {acct.mask ? `···${acct.mask}` : ''}  {TARGET_GROUP[acct.kind]}</Text>
                     </Text>
                   </SelectableRow>
                 ))}
               </Box>
               {csvAccounts.length === 0 && <Text dimColor>No accounts yet — press [n] to create one.</Text>}
+              {/* Backfilling a linked account is legitimate; discovering after
+                  the fact that you did it is not. */}
+              {csvAccounts[csvAccountCursor]?.kind === 'plaid' && (
+                <Box marginTop={1} flexDirection="column">
+                  <Text color={C_WARNING}>Backfilling a linked account.</Text>
+                  <Text dimColor>
+                    {csvAccounts[csvAccountCursor].institution_name ?? 'This connection'} holds{' '}
+                    {csvAccounts[csvAccountCursor].days_requested ?? 90} days of history
+                    {csvAccounts[csvAccountCursor].earliest_date
+                      ? `, back to ${csvAccounts[csvAccountCursor].earliest_date}`
+                      : ''}
+                    . Rows on or after that date are matched against Plaid and deduplicated.
+                  </Text>
+                </Box>
+              )}
+              {csvAccounts[csvAccountCursor]?.kind === 'manual' && (
+                <Box marginTop={1}>
+                  <Text dimColor>This is a manual asset, tracked by value rather than by transactions.</Text>
+                </Box>
+              )}
+              {priorImports.length > 0 && (
+                <Box marginTop={1}>
+                  <Text color={C_WARNING}>
+                    You already imported this file{priorImports[0].account_name ? ` into ${priorImports[0].account_name}` : ''}
+                    {' '}— {priorImports[0].imported} row{priorImports[0].imported === 1 ? '' : 's'}. Importing again adds nothing.
+                  </Text>
+                </Box>
+              )}
             </Box>
           )}
 
