@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
-  getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
+  getCategoryDriftData, getFlexDriftData, getAccountDriftData, getIncomeDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
   type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow,
   type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow, type DriftSlice,
 } from '../core/queries.js';
@@ -50,6 +50,16 @@ function fmtDelta(delta: number): string {
   return fmtSigned(delta, 0);
 }
 
+/**
+ * Income drift color: the inverse of driftColor's sense — for income a rise
+ * vs the 12-month median is good and a drop is bad, so it's just a two-way
+ * split (no over-typical-under ratio banding like spending gets).
+ */
+function incomeDriftColor(slice: Pick<DriftSlice, 'medianDelta' | 'median12m'>): string {
+  if (!isSignificantDelta(slice.medianDelta, slice.median12m)) return C_NEUTRAL;
+  return slice.medianDelta >= 0 ? C_POSITIVE : C_NEGATIVE;
+}
+
 
 const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [
   { key: 'fixed',         label: 'Fixed',        color: FLEX_COLORS.fixed         },
@@ -86,6 +96,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
   const [flexDrift, setFlexDrift] = useState<FlexDriftData  | null>(null);
   const [acctDrift, setAcctDrift] = useState<AccountDrift[] | null>(null);
+  const [incomeDrift, setIncomeDrift] = useState<DriftSlice | null>(null);
   const [merchantRows, setMerchantRows] = useState<MerchantSummaryRow[]>([]);
   const [merchantCursor, setMerchantCursor] = useState(0);
   const [merchantDrill, setMerchantDrill] = useState<{ category: string; from: string; to: string } | null>(null);
@@ -150,15 +161,16 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   }, [range, anchor.toISOString().slice(0, 10), queryFilter, refreshKey]);
 
   useEffect(() => {
-    if (!scorecardMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
+    if (!scorecardMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); setIncomeDrift(null); return; }
     const windows = getDriftWindows(range, anchor, new Date());
-    if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
+    if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); setIncomeDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
     const token = driftGuard.begin();
     const ok = <T,>(setter: (v: T) => void) => (v: T) => { if (driftGuard.isLatest(token)) setter(v); };
     void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setCatDrift));
     void getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setFlexDrift));
     void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(ok(setAcctDrift));
+    void getIncomeDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setIncomeDrift));
   }, [scorecardMode, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   const setTyping = useSetTyping();
@@ -581,7 +593,18 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       ) : displaySummary ? (
         <>
           <Box gap={6} marginY={1}>
-            <StatCard label="Income" value={fmt(displaySummary.income)} color={C_POSITIVE} />
+            <StatCard
+              label="Income"
+              value={
+                <>
+                  {fmt(displaySummary.income)}
+                  {scorecardMode && incomeDrift && isSignificantDelta(incomeDrift.medianDelta, incomeDrift.median12m) && (
+                    <Text color={incomeDriftColor(incomeDrift)}> {fmtDelta(incomeDrift.medianDelta)}</Text>
+                  )}
+                </>
+              }
+              color={C_POSITIVE}
+            />
             <StatCard label="Expenses" value={fmt(displaySummary.expenses)} color={C_NEGATIVE} />
             <StatCard label="Net" value={fmtSigned(displaySummary.net)} color={displaySummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
             {!search && uncategorized > 0 && (

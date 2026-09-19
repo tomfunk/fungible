@@ -49,6 +49,15 @@ function driftClass(slice: Pick<DriftSlice, 'current' | 'median12m' | 'medianDel
   return slice.current / slice.median12m >= 1.3 ? 'neg' : 'warn';
 }
 
+/**
+ * Same significance gating as driftClass, but income runs the opposite
+ * direction: above the 12mo median is the good outcome (green), below it
+ * is the signal worth noticing (red) — so the sign maps the other way.
+ */
+function incomeDriftClass(delta: number): string {
+  return delta > 0 ? 'pos' : delta < 0 ? 'neg' : '';
+}
+
 const BUCKET_META = {
   over:    { label: 'Over',    cls: 'neg' },
   typical: { label: 'Typical', cls: 'dim' },
@@ -141,6 +150,13 @@ export function Dashboard() {
         ? api.queries.getAccountDriftData(driftWindows.current, driftWindows.lastPeriod, driftWindows.lastYear, driftWindows.rolling12)
         : Promise.resolve(null),
     [scorecardMode, from, to],
+  );
+  const incomeDrift = useQuery(
+    () =>
+      driftWindows
+        ? api.queries.getIncomeDriftData(driftWindows.current, driftWindows.lastPeriod, driftWindows.lastYear, driftWindows.rolling12, filter)
+        : Promise.resolve(null),
+    [scorecardMode, from, to, acctId, sharedFilter],
   );
 
   const searchStats = useQuery(
@@ -343,7 +359,14 @@ export function Dashboard() {
         <div className={styles.cards}>
           <div className={styles.card}>
             <div className={styles.cardLabel}>Income</div>
-            <div className={`num pos ${styles.cardValue}`}>{fmt(displaySummary.income)}</div>
+            <div className={`num pos ${styles.cardValue}`}>
+              {fmt(displaySummary.income)}
+              {scorecardMode && incomeDrift && isSignificantDelta(incomeDrift.medianDelta, incomeDrift.median12m) && (
+                <span className={`num ${incomeDriftClass(incomeDrift.medianDelta)} ${styles.cardDelta}`}>
+                  {fmtDelta(incomeDrift.medianDelta)}
+                </span>
+              )}
+            </div>
           </div>
           <div className={styles.card}>
             <div className={styles.cardLabel}>Expenses</div>

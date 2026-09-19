@@ -200,6 +200,12 @@
   font-weight: 600;
 }
 
+.cardDelta {
+  font-size: 12px;
+  font-weight: 500;
+  margin-left: 8px;
+}
+
 .panel {
   background: var(--bg-panel);
   border: 1px solid var(--border);

@@ -7,7 +7,7 @@ vi.mock('../core/db.js', async () => {
 
 import { db } from '../core/db.js';
 import { getDriftWindows } from '../core/dateUtils.js';
-import { getCategoryDriftData, getFlexDriftData, getAccountDriftData } from '../core/queries.js';
+import { getCategoryDriftData, getFlexDriftData, getAccountDriftData, getIncomeDriftData } from '../core/queries.js';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -392,6 +392,108 @@ describe('getFlexDriftData', () => {
     const data = await getFlexDriftData(current, lastPeriod, lastYear, rolling12);
     expect(data.flexible.avg12m).toBeCloseTo(100);
     expect(data.flexible.avg12mDelta).toBeCloseTo(100);
+  });
+});
+
+// ── getIncomeDriftData ─────────────────────────────────────────────────────────
+
+describe('getIncomeDriftData', () => {
+  const current    = { from: '2026-05-01', to: '2026-05-27' };
+  const lastPeriod = { from: '2026-04-01', to: '2026-04-27' };
+  const lastYear   = { from: '2025-05-01', to: '2025-05-27' };
+  const rolling12 = [
+    { from: '2026-04-01', to: '2026-04-27' },
+    { from: '2026-03-01', to: '2026-03-27' },
+    { from: '2026-02-01', to: '2026-02-27' },
+    { from: '2026-01-01', to: '2026-01-27' },
+    { from: '2025-12-01', to: '2025-12-27' },
+    { from: '2025-11-01', to: '2025-11-27' },
+    { from: '2025-10-01', to: '2025-10-27' },
+    { from: '2025-09-01', to: '2025-09-27' },
+    { from: '2025-08-01', to: '2025-08-27' },
+    { from: '2025-07-01', to: '2025-07-27' },
+    { from: '2025-06-01', to: '2025-06-27' },
+    { from: '2025-05-01', to: '2025-05-27' },
+  ];
+
+  it('returns a zero slice when there is no income', async () => {
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.current).toBe(0);
+    expect(result.avg12m).toBe(0);
+  });
+
+  it('computes income deltas against last period and last year', async () => {
+    await insertTx({ date: '2026-05-15', amount: -3000, category: 'Paycheck' });
+    await insertTx({ date: '2026-04-15', amount: -2500, category: 'Paycheck' });
+    await insertTx({ date: '2025-05-15', amount: -2000, category: 'Paycheck' });
+
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.current).toBeCloseTo(3000);
+    expect(result.lastPeriodDelta).toBeCloseTo(500);
+    expect(result.lastYearDelta).toBeCloseTo(1000);
+  });
+
+  it('nets a real income category against its own outflows (e.g. a clawback)', async () => {
+    await insertTx({ date: '2026-05-15', amount: -3000, category: 'Paycheck' });
+    await insertTx({ date: '2026-05-20', amount: 200, category: 'Paycheck' }); // clawback/correction
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.current).toBeCloseTo(2800);
+  });
+
+  it('splits Uncategorized by flow direction so stray spend does not cancel a paycheck', async () => {
+    await insertTx({ date: '2026-05-15', amount: -2000, category: 'Uncategorized' }); // stray paycheck
+    await insertTx({ date: '2026-05-16', amount: 500, category: 'Uncategorized' });   // stray spend
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    // Income should reflect the full 2000 inflow, unreduced by the 500 outflow
+    // (which instead counts as Uncategorized expense, per summarizeBuckets).
+    expect(result.current).toBeCloseTo(2000);
+  });
+
+  it('a normal expense category (net outflow) contributes nothing to income', async () => {
+    await insertTx({ date: '2026-05-15', amount: 100, category: 'Food' });
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.current).toBe(0);
+  });
+
+  it('avg12m and median12m follow rolling-window income totals', async () => {
+    const months = ['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11',
+                    '2025-10','2025-09','2025-08','2025-07','2025-06','2025-05'];
+    for (const ym of months) {
+      await insertTx({ date: `${ym}-15`, amount: -2000, category: 'Paycheck' });
+    }
+    await insertTx({ date: '2026-05-15', amount: -2400, category: 'Paycheck' });
+
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.avg12m).toBeCloseTo(2000);
+    expect(result.avg12mDelta).toBeCloseTo(400);
+    expect(result.median12m).toBeCloseTo(2000);
+  });
+
+  it('excludes hidden categories from income', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await insertTx({ date: '2026-05-15', amount: -1000, category: 'Transfer' });
+    await insertTx({ date: '2026-05-15', amount: -2000, category: 'Paycheck' });
+
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.current).toBeCloseTo(2000);
+  });
+
+  it('excludes pending and ignored transactions', async () => {
+    await insertTx({ date: '2026-05-15', amount: -2000, category: 'Paycheck', pending: 1 });
+    await insertTx({ date: '2026-05-15', amount: -2000, category: 'Paycheck', ignored: 1 });
+
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12);
+    expect(result.current).toBe(0);
+  });
+
+  it('filters by accountId when provided', async () => {
+    await insertAcct('acct1');
+    await insertAcct('acct2');
+    await insertTx({ date: '2026-05-15', amount: -1000, category: 'Paycheck', account_id: 'acct1' });
+    await insertTx({ date: '2026-05-15', amount: -5000, category: 'Paycheck', account_id: 'acct2' });
+
+    const result = await getIncomeDriftData(current, lastPeriod, lastYear, rolling12, { accounts: ['acct1'] });
+    expect(result.current).toBeCloseTo(1000);
   });
 });
 

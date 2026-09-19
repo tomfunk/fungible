@@ -164,4 +164,27 @@ describe('GUI Dashboard', () => {
     expect(expenses).toBeCloseTo(1088.99, 2);          // 388.99 seeded + 200 net Travel + 500 uncat
     expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
   });
+
+  it('shows a colored income drift badge next to Income in scorecard mode', async () => {
+    // April income (the only rolling-window baseline) is seeded at $3,500.
+    // Push May to $4,500 so the delta (+$1,000) clears the significance gate.
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-income-bonus', 'test-checking', '2026-05-15', 'Bonus Deposit', -1000.00, 'Income', 0, 0)`,
+    ], 'write');
+
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
+    await waitFor(() => expect(screen.getByText('$4,500.00')).toBeTruthy());
+
+    // Not in scorecard mode yet: no badge.
+    expect(screen.queryByText('+$1,000')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
+
+    const badge = await waitFor(() => screen.getByText('+$1,000'));
+    // Income above the median is the good outcome, so the badge reads green
+    // ('pos'), unlike spending drift where above-median reads red.
+    expect(badge.className).toContain('pos');
+    expect(badge.closest('div')!.textContent).toContain('$4,500.00');
+  });
 });

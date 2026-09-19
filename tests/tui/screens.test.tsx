@@ -314,6 +314,27 @@ describe('Dashboard', () => {
     await waitFor(() => expect(frame(r)).toContain('scorecard'));
   });
 
+  it('scorecard mode shows a significant income delta next to the Income stat', async () => {
+    // Seeded May/April income (3500/3500) nets to a zero, insignificant delta.
+    // Bump May well above the rolling median to make the delta significant.
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+            VALUES ('tx-income-bonus', 'test-checking', '2026-05-15', 'Bonus', -2000.00, 'Income', 0, 0)`,
+      args: [],
+    });
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    // Not shown outside scorecard mode.
+    expect(frame(r)).not.toContain('+$2,000');
+    r.stdin.write('s');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('scorecard');
+      // current 5,500 vs 3,500 rolling median → +$2,000, above the significance floor.
+      expect(f).toContain('+$2,000');
+    });
+  });
+
   it('pressing a nav number calls onNavigate', async () => {
     const onNavigate = vi.fn();
     const r = render(

@@ -269,10 +269,14 @@ export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
 export type AccountDrift  = { id: string; name: string; subtype: string | null } & DriftSlice;
 type Window = { from: string; to: string };
 
-async function queryCategoryTotals(from: string, to: string, filter?: Filter): Promise<Map<string, number>> {
+// Per-category spending AND income for a window, using the same rule as
+// getRangeSummary (net real categories, split Uncategorized) so both delta
+// mode's per-category breakdown and its income-drift signal reconcile with
+// the dashboard's headline Income/Expenses StatCards. Computed once here so
+// getIncomeDriftData isn't a second, slightly-different "income" formula
+// competing with summarizeBuckets (see issue #178 / decisions.md 2026-09-15).
+async function queryPeriodTotals(from: string, to: string, filter?: Filter): Promise<{ income: number; byCategory: Map<string, number> }> {
   const f = buildFilterClause(filter, 'transactions');
-  // Per-category spending using the same rule as getRangeSummary (net real
-  // categories, split Uncategorized) so delta mode reconciles with the breakdown.
   const result = await db.execute({
     sql: `SELECT category,
             SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as outflow,
@@ -283,8 +287,12 @@ async function queryCategoryTotals(from: string, to: string, filter?: Filter): P
           GROUP BY category`,
     args: [from, to, ...f.args],
   });
-  const { byCategory } = summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
-  return new Map(byCategory.map((c) => [c.category, c.total]));
+  const { income, byCategory } = summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
+  return { income, byCategory: new Map(byCategory.map((c) => [c.category, c.total])) };
+}
+
+async function queryCategoryTotals(from: string, to: string, filter?: Filter): Promise<Map<string, number>> {
+  return (await queryPeriodTotals(from, to, filter)).byCategory;
 }
 
 async function queryFlexTotals(from: string, to: string, filter?: Filter): Promise<FlexSummary> {
@@ -386,6 +394,24 @@ export async function getFlexDriftData(
   return Object.fromEntries(
     tiers.map((tier) => [tier, sliceFor(cur[tier], last[tier], yr[tier], rolls.map((r) => r[tier]))]),
   ) as FlexDriftData;
+}
+
+// Income drift, netted per category exactly like getRangeSummary/summarizeBuckets
+// (not a naive SUM(amount < 0)) so this reconciles with the Income StatCard
+// already shown on Dashboard. There's only one "income" dimension, so this
+// returns a single DriftSlice rather than an array/record like the category
+// and flex-tier variants.
+export async function getIncomeDriftData(
+  currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
+): Promise<DriftSlice> {
+  const rolling = await clampToHistory(rolling12);
+  const [cur, last, yr, ...rolls] = await Promise.all([
+    queryPeriodTotals(currentWin.from, currentWin.to, filter),
+    queryPeriodTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
+    queryPeriodTotals(lastYearWin.from, lastYearWin.to, filter),
+    ...rolling.map((w) => queryPeriodTotals(w.from, w.to, filter)),
+  ]);
+  return sliceFor(cur.income, last.income, yr.income, rolls.map((r) => r.income));
 }
 
 export async function getAccountDriftData(
