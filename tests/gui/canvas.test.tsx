@@ -102,7 +102,9 @@ describe('GUI CanvasView', () => {
     expect(screen.getByText('INPUTS')).toBeTruthy();
     expect(screen.getByText(/Adjust the dials/)).toBeTruthy();
     expect(screen.getByText('Balance')).toBeTruthy();
-    expect(screen.getByText('$20,000')).toBeTruthy();
+    const balanceDial = screen.getByText('Balance').closest('div')!.parentElement!;
+    expect((balanceDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('20000');
+    expect(balanceDial.textContent).toContain('$'); // dollar unit adornment on the input, no duplicate readout
     expect(screen.getByText('Months to payoff')).toBeTruthy();
     // 20000 @ 22% APR with $500/mo → 72.8 months
     expect(screen.getByText('72.8 mo')).toBeTruthy();
@@ -113,10 +115,10 @@ describe('GUI CanvasView', () => {
     const monthlyDial = screen.getByText('Monthly payment').closest('div')!.parentElement!;
     const plus = Array.from(monthlyDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    expect(screen.getByText('$550')).toBeTruthy();
+    expect((monthlyDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('550');
     expect(screen.queryByText('72.8 mo')).toBeNull(); // recomputed
     await userEvent.click(screen.getByText('reset'));
-    expect(screen.getByText('$500')).toBeTruthy();
+    expect((monthlyDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('500');
     expect(screen.getByText('72.8 mo')).toBeTruthy();
   });
 
@@ -193,7 +195,7 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
     const raiseDial = screen.getByText('Raise amount').closest('div')!.parentElement!;
     const plus = Array.from(raiseDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    expect(screen.getByText('$5,500')).toBeTruthy();
+    expect((raiseDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('5500');
 
     // hide it again
     await userEvent.click(checkbox); // hasRaise -> 0
@@ -201,7 +203,8 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
 
     // reshow — value should have survived (frozen), not reset to the 5000 default
     await userEvent.click(checkbox); // hasRaise -> 1
-    expect(screen.getByText('$5,500')).toBeTruthy();
+    const raiseDialAgain = screen.getByText('Raise amount').closest('div')!.parentElement!;
+    expect((raiseDialAgain.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('5500');
   });
 });
 
@@ -285,7 +288,8 @@ describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)',
 
     await userEvent.selectOptions(select, '1'); // strategy -> 1 (Aggressive)
     expect(screen.getByText('Strategy detail')).toBeTruthy();
-    expect(screen.getByText('42')).toBeTruthy();
+    const detailDial = screen.getByText('Strategy detail').closest('div')!.parentElement!;
+    expect((detailDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('42');
   });
 
   it('hides both select and detail dial immediately when the toggle is flipped back off, and freezes the detail value', async () => {
@@ -299,7 +303,7 @@ describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)',
     const detailDial = screen.getByText('Strategy detail').closest('div')!.parentElement!;
     const plus = Array.from(detailDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
-    expect(screen.getByText('43')).toBeTruthy();
+    expect((detailDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('43');
 
     // flip the toggle off — both select and detail dial vanish immediately
     await userEvent.click(checkbox); // has_option -> 0
@@ -311,7 +315,8 @@ describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)',
     await userEvent.click(checkbox); // has_option -> 1
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('1');
     expect(screen.getByText('Strategy detail')).toBeTruthy();
-    expect(screen.getByText('43')).toBeTruthy();
+    const detailDialAgain = screen.getByText('Strategy detail').closest('div')!.parentElement!;
+    expect((detailDialAgain.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('43');
   });
 });
 
@@ -591,12 +596,15 @@ const EMPTY_PROJECTION_SPEC: CanvasSpec = {
 };
 
 // "Years out" also appears inside the chart's "Click a point to move…" caption,
-// so pick the label whose immediate sibling is the dial's own formatted-value
-// span (DialRow renders label+value as siblings inside one header div) rather
-// than assuming there's only one match.
-function yearsDialValue(): string | null {
-  const label = screen.getAllByText('Years out').find((el) => el.parentElement?.querySelector('.num'));
-  return label!.parentElement!.querySelector('.num')!.textContent;
+// so pick the label whose ancestor .dial row actually owns a numeric input
+// (DialRow's header is label-only; the raw value lives on the input itself)
+// rather than assuming there's only one match.
+function yearsDialValue(): string {
+  const label = screen
+    .getAllByText('Years out')
+    .find((el) => el.closest('div')?.parentElement?.querySelector('input[type="number"]'));
+  const dial = label!.closest('div')!.parentElement!;
+  return (dial.querySelector('input[type="number"]') as HTMLInputElement).value;
 }
 
 describe('GUI CanvasView chart element', () => {

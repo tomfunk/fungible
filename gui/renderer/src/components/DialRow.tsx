@@ -54,40 +54,54 @@ export function DialRow({
     else onChange(defaultValue);
   }
 
+  // Inline unit adornment on the input itself, replacing the old header
+  // readout — the input's raw number was always a duplicate of the header's
+  // formatted one, so the format cue (currency, percent, duration) moves onto
+  // the input instead of living in a second line. 'integer' and 'year' (a
+  // plain calendar year, e.g. "2035") read fine as a bare number and get no
+  // adornment. Suffix abbreviations ("mo"/"yr") match fmtValue/fmtDialValue's
+  // existing convention in core/canvas-spec.ts and core/fmt.ts.
+  const unitPrefix = format === 'dollar' ? '$' : undefined;
+  const unitSuffix =
+    format === 'percent' ? '%' : format === 'months' ? 'mo' : format === 'years' ? 'yr' : undefined;
+
   return (
     <div className={styles.dial}>
       <div className={styles.dialHeader}>
         <span className={styles.dialLabel}>{label}</span>
-        <span className={`num ${styles.dialValue}`}>{fmtDialValue(value, format)}</span>
       </div>
       <div className={styles.dialControls}>
         <button className={styles.stepBtn} onClick={() => apply(value - step)}>
           −
         </button>
-        <input
-          type="number"
-          className={styles.dialInput}
-          value={value}
-          step={step}
-          min={min}
-          max={max}
-          onChange={(e) => {
-            const n = parseFloat(e.target.value);
-            if (!isNaN(n)) apply(n);
-          }}
-          onKeyDown={(e) => {
-            // Explicit arrow-key stepping: a range input gets this natively,
-            // a bare number input doesn't reliably (and not at all in jsdom),
-            // so wire it directly rather than lean on browser default behavior.
-            if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              apply(value + step);
-            } else if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              apply(value - step);
-            }
-          }}
-        />
+        <div className={`num ${styles.dialInputWrap}`}>
+          {unitPrefix && <span className={styles.dialUnit}>{unitPrefix}</span>}
+          <input
+            type="number"
+            className={styles.dialInput}
+            value={value}
+            step={step}
+            min={min}
+            max={max}
+            onChange={(e) => {
+              const n = parseFloat(e.target.value);
+              if (!isNaN(n)) apply(n);
+            }}
+            onKeyDown={(e) => {
+              // Explicit arrow-key stepping: a range input gets this natively,
+              // a bare number input doesn't reliably (and not at all in jsdom),
+              // so wire it directly rather than lean on browser default behavior.
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                apply(value + step);
+              } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                apply(value - step);
+              }
+            }}
+          />
+          {unitSuffix && <span className={styles.dialUnit}>{unitSuffix}</span>}
+        </div>
         <button className={styles.stepBtn} onClick={() => apply(value + step)}>
           +
         </button>
