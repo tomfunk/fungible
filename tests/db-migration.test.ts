@@ -32,6 +32,19 @@ const OLD_SCHEMA = [
     manual_category TEXT, display_name TEXT, ignored INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (account_id) REFERENCES accounts(id)
   )`,
+  // Pre-created here (rather than left to initDb's own CREATE TABLE IF NOT
+  // EXISTS) so a tag row can reference a transaction *before* initDb ever
+  // runs — reproducing a real production database, which already has tagged
+  // transactions by the time this migration first runs against it.
+  `CREATE TABLE tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE
+  )`,
+  `CREATE TABLE transaction_tags (
+    transaction_id TEXT NOT NULL, tag_id INTEGER NOT NULL,
+    PRIMARY KEY (transaction_id, tag_id),
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id),
+    FOREIGN KEY (tag_id) REFERENCES tags(id)
+  )`,
 ];
 
 // Old-style rows. The CSV ids are the hash form the retired generateTxId
@@ -93,6 +106,15 @@ beforeAll(async () => {
       args: [id, date, name, amount],
     });
   }
+
+  // A tagged transaction, exactly like a real database has by the time this
+  // migration first runs against it. transaction_tags.transaction_id has an
+  // FK to transactions(id); dropping the parent table during the source-CHECK
+  // rebuild while this child row still references it is what tripped
+  // SQLITE_CONSTRAINT_FOREIGNKEY against Thomas's real database (the earlier
+  // version of this migration wrongly assumed FK enforcement was off).
+  await db.execute("INSERT INTO tags (name) VALUES ('recurring')");
+  await db.execute("INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('csv-aaaa1111bbbb2222', 1)");
 
   await mod.initDb();
 });
@@ -239,6 +261,28 @@ describe('initDb transactions.source widened to include manual', () => {
       sql: `INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source)
             VALUES ('bogus-1', 'chase', '2025-01-01', 'X', 1, 0, 0, 'bogus')`,
     })).rejects.toThrow(/CHECK/i);
+  });
+
+  // The regression test for the real-database bug: beforeAll seeds a
+  // transaction_tags row referencing a pre-existing transaction *before*
+  // initDb runs. If the rebuild dropped the parent table with FK enforcement
+  // still on, beforeAll itself would have thrown
+  // SQLITE_CONSTRAINT_FOREIGNKEY and every test in this file would have
+  // failed to even start — so the fact that any of them ran at all is part
+  // of the proof. This asserts the tag link specifically survived, correctly
+  // still pointing at the same transaction id.
+  it('preserves a tag row that referenced a transaction before the rebuild', async () => {
+    const links = (await db.execute(
+      "SELECT transaction_id, tag_id FROM transaction_tags WHERE tag_id = 1",
+    )).rows as unknown as { transaction_id: string; tag_id: number }[];
+    expect(links).toEqual([{ transaction_id: 'csv-aaaa1111bbbb2222', tag_id: 1 }]);
+
+    // FK enforcement is restored to ON after the rebuild, so a dangling
+    // reference is rejected exactly as it would have been before the rebuild.
+    await expect(db.execute({
+      sql: 'INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)',
+      args: ['does-not-exist', 1],
+    })).rejects.toThrow(/FOREIGN KEY/i);
   });
 
   it('keeps every pre-existing plaid and csv row exactly as it was, and accepts a manual row', async () => {

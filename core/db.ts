@@ -173,11 +173,24 @@ export async function initDb() {
   // they're recreated here explicitly; idx_transactions_dedup and
   // idx_transactions_import are recreated further down by their own
   // pre-existing `CREATE ... IF NOT EXISTS` statements, unchanged.
+  //
+  // `transaction_tags.transaction_id` has an FK to `transactions(id)`. On a
+  // real database with tagged transactions, FK enforcement in the local
+  // sqlite3 driver `@libsql/client` actually uses is on (unlike the assumption
+  // this comment used to make, based only on nothing ever issuing
+  // `PRAGMA foreign_keys=ON` explicitly) — dropping the parent table while
+  // those child rows still reference it fails with SQLITE_CONSTRAINT_FOREIGNKEY.
+  // SQLite's own recommended procedure for an FK-constrained rebuild is to
+  // bracket it in `PRAGMA foreign_keys=OFF` / `=ON`, and that pragma is
+  // documented as a no-op inside an active transaction — so it has to sit
+  // outside `db.batch`, as its own `db.execute` calls, not as statements
+  // inside the batch (which runs as one transaction).
   const txSchema = await db.execute(
     `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'`,
   );
   const txSchemaSql = (txSchema.rows[0] as unknown as { sql: string } | undefined)?.sql ?? '';
   if (!txSchemaSql.includes("'manual'")) {
+    await db.execute('PRAGMA foreign_keys = OFF');
     await db.batch([
       `CREATE TABLE transactions_new (
         id TEXT PRIMARY KEY,
@@ -211,6 +224,7 @@ export async function initDb() {
       `CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)`,
       `CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)`,
     ], 'write');
+    await db.execute('PRAGMA foreign_keys = ON');
   }
 
   // Label existing rows by provenance. Until now the only signal was the id
