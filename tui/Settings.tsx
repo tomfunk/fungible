@@ -92,12 +92,12 @@ export function Settings({ onNavigate, isActive, showHints }: {
       next.self = { ...next.self, name: value };
     } else if (row.id === 'self-year') {
       const y = parseInt(value);
-      if (value && !isNaN(y) && y >= 1900 && y <= 2025) next.self = { ...next.self, birthYear: y };
+      if (value && !isNaN(y) && y >= 1900 && y <= new Date().getFullYear()) next.self = { ...next.self, birthYear: y };
     } else if (row.id === 'spouse-name' && next.spouse) {
       next.spouse = { ...next.spouse, name: value };
     } else if (row.id === 'spouse-year' && next.spouse) {
       const y = parseInt(value);
-      if (value && !isNaN(y) && y >= 1900 && y <= 2025) next.spouse = { ...next.spouse, birthYear: y };
+      if (value && !isNaN(y) && y >= 1900 && y <= new Date().getFullYear()) next.spouse = { ...next.spouse, birthYear: y };
     } else {
       const m = row.id.match(/^child-(\d+)-(name|year)$/);
       if (m) {
@@ -108,7 +108,7 @@ export function Settings({ onNavigate, isActive, showHints }: {
           child.name = value;
         } else {
           const y = parseInt(value);
-          if (value && !isNaN(y) && y >= 1900 && y <= 2025) child.birthYear = y;
+          if (value && !isNaN(y) && y >= 1900 && y <= new Date().getFullYear()) child.birthYear = y;
         }
         next.children = [...next.children.slice(0, idx), child, ...next.children.slice(idx + 1)];
       }

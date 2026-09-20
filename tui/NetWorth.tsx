@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getAccountsWithBalances, getNetWorthHistory, type AccountBalance, type NetWorthPeriod } from '../core/queries.js';
+import {
+  getAccountsWithBalances, getNetWorthHistory, groupAccountsByType, buildTypeToAccountIds,
+  type AccountBalance, type NetWorthPeriod, type TypeBalance,
+} from '../core/queries.js';
 import { isAssetAccount, isLiabilityAccount } from '../core/account-class.js';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
@@ -18,29 +21,7 @@ type NWRange = 'week' | 'month' | 'quarter' | 'year';
 const NW_RANGES: NWRange[] = ['week', 'month', 'quarter', 'year'];
 const NW_RANGE_LABELS: Record<NWRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
-type TypeBalance = { label: string; balance: number };
-
-function groupByType(accs: AccountBalance[]): TypeBalance[] {
-  const map = new Map<string, number>();
-  for (const a of accs) {
-    const raw = a.subtype ?? a.type;
-    const key = SUBTYPE_DISPLAY[raw] ?? raw;
-    map.set(key, (map.get(key) ?? 0) + a.balance);
-  }
-  return [...map.entries()]
-    .map(([label, balance]) => ({ label, balance }))
-    .sort((a, b) => b.balance - a.balance);
-}
-
-function buildTypeToIds(accs: AccountBalance[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  for (const a of accs) {
-    const key = SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type);
-    const existing = map.get(key);
-    if (existing) existing.push(a.id); else map.set(key, [a.id]);
-  }
-  return map;
-}
+const typeLabel = (raw: string) => SUBTYPE_DISPLAY[raw] ?? raw;
 
 function periodLabel(period: string, range: NWRange): string {
   if (range === 'year') return period;
@@ -95,9 +76,9 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const excluded = accounts.filter((a) => a.excluded);
   const assets      = included.filter(isAssetAccount);
   const liabilities = included.filter(isLiabilityAccount);
-  const assetTypes      = groupByType(assets);
-  const liabilityTypes  = groupByType(liabilities);
-  const typeToIds = buildTypeToIds(included);
+  const assetTypes      = groupAccountsByType(assets, typeLabel);
+  const liabilityTypes  = groupAccountsByType(liabilities, typeLabel);
+  const typeToIds = buildTypeToAccountIds(included, typeLabel);
 
   const navigableItems = view === 'accounts'
     ? [...assets, ...liabilities]

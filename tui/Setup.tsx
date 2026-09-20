@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
-import fs from 'node:fs';
-import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
-import { DATA_DIR } from '../core/paths.js';
+import { readEnvFile, writeEnvFile } from '../core/env-file.js';
 import { getSetting, setSetting, getDefaultDaysRequested, daysFromStartDate, DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, START_DATE_BUFFER_DAYS } from '../core/settings.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 import { TextInput } from './components/index.js';
@@ -24,30 +22,9 @@ type Step =
 type PlaidEnv = 'sandbox' | 'production';
 const PLAID_ENVS: PlaidEnv[] = ['sandbox', 'production'];
 
-const ENV_PATH = path.join(DATA_DIR, '.env');
-
-function readEnv(): Record<string, string> {
-  const envPath = ENV_PATH;
-  const out: Record<string, string> = {};
-  if (!fs.existsSync(envPath)) return out;
-  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-    const m = line.match(/^([A-Z_]+)=(.*)$/);
-    if (m) out[m[1]] = m[2].trim();
-  }
-  return out;
-}
-
-function writeEnv(values: Record<string, string>) {
-  const envPath = ENV_PATH;
-  const existing = readEnv();
-  const merged = { ...existing, ...values };
-  const content = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
-  fs.writeFileSync(envPath, content, 'utf8');
-}
-
 export function Setup() {
   const { exit } = useApp();
-  const existing = readEnv();
+  const existing = readEnvFile();
 
   const [step, setStep] = useState<Step>('welcome');
 
@@ -74,19 +51,29 @@ export function Setup() {
   // Seed status
   const [seedResult, setSeedResult] = useState<{ rules: number; recategorized: number } | null>(null);
 
+  // Surfaced when writeEnvFile rejects a value (e.g. a pasted newline)
+  const [envError, setEnvError] = useState('');
+
   const alreadyConfigured =
     !!existing['PLAID_CLIENT_ID'] && !!existing['PLAID_SECRET'] && !!existing['PLAID_ENV'];
 
-  function savePlaidCreds() {
-    writeEnv({
-      PLAID_CLIENT_ID: clientId.trim(),
-      PLAID_SECRET: secret.trim(),
-      PLAID_ENV: PLAID_ENVS[plaidEnvIdx],
-    });
+  function savePlaidCreds(): boolean {
+    try {
+      writeEnvFile({
+        PLAID_CLIENT_ID: clientId.trim(),
+        PLAID_SECRET: secret.trim(),
+        PLAID_ENV: PLAID_ENVS[plaidEnvIdx],
+      });
+    } catch (err) {
+      setEnvError(err instanceof Error ? err.message : 'Failed to save Plaid credentials.');
+      return false;
+    }
     // Reload env for the current process
     process.env['PLAID_CLIENT_ID'] = clientId.trim();
     process.env['PLAID_SECRET'] = secret.trim();
     process.env['PLAID_ENV'] = PLAID_ENVS[plaidEnvIdx];
+    setEnvError('');
+    return true;
   }
 
   async function startLink() {
@@ -181,7 +168,7 @@ export function Setup() {
       if (key.escape) { setStep('plaid-secret'); return; }
       if (key.leftArrow)  { setPlaidEnvIdx((i) => (i - 1 + PLAID_ENVS.length) % PLAID_ENVS.length); return; }
       if (key.rightArrow) { setPlaidEnvIdx((i) => (i + 1) % PLAID_ENVS.length); return; }
-      if (key.return) { savePlaidCreds(); setStep('start-date'); return; }
+      if (key.return) { if (savePlaidCreds()) setStep('start-date'); return; }
       return;
     }
 
@@ -310,6 +297,7 @@ export function Setup() {
             <Text dimColor> →</Text>
           </Box>
           <Text dimColor>← → to change · Enter to save</Text>
+          {envError && <Text color={C_NEGATIVE}>{envError}</Text>}
         </Box>
       )}
 

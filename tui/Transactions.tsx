@@ -23,7 +23,7 @@ import { useFilter } from './FilterContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
-import { fmtTimeAgo } from '../core/fmt.js';
+import { fmtTimeAgo, fmtTxAmount } from '../core/fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
 import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -49,11 +49,6 @@ const SORT_LABEL: Record<SortMode, string> = {
   'name-asc':      'name ↑', 'name-desc':     'name ↓',
   'category-asc':  'category ↑', 'category-desc': 'category ↓',
 };
-
-function fmt(amount: number) {
-  const s = `$${Math.abs(amount).toFixed(2)}`;
-  return amount < 0 ? `+${s}` : `-${s}`;
-}
 
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
@@ -668,7 +663,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               </Text>
               <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW).padEnd(descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
-                {fmt(tx.amount).padStart(10)}
+                {fmtTxAmount(tx.amount).padStart(10)}
               </Text>
               <Text
                 color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : isPinned ? C_MANUAL : undefined}

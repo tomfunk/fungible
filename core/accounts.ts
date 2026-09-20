@@ -4,6 +4,9 @@ import { applyTagRules } from './tag-rules.js';
 import { parseDate, assignOrdinals, dedupKey } from './csv.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
+import { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
+
+export { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
 
 export async function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): Promise<void> {
   await db.execute({ sql: 'UPDATE accounts SET type = ?, subtype = ? WHERE id = ?', args: [type, subtype, id] });
@@ -110,7 +113,7 @@ export async function importCsvTransactions(
   cfg: ImportConfig,
   file: { name: string; hash: string },
 ): Promise<{ imported: number; skipped: number; importId: number }> {
-  const { amountMode, dateCol, nameCol, amountCol, debitCol, creditCol, positiveIsInflow } = cfg;
+  const { dateCol, nameCol } = cfg;
   const rules = await loadCategoryRules();
 
   // Parse the whole file before writing anything: ordinals are an occurrence
@@ -122,15 +125,7 @@ export async function importCsvTransactions(
   csvRows.forEach((row, rowIndex) => {
     const rawDate = row[dateCol] ?? '';
     const name = row[nameCol] ?? '';
-    let amount: number;
-    if (amountMode === 'split') {
-      const debit  = parseFloat(row[debitCol!]  || '0') || 0;
-      const credit = parseFloat(row[creditCol!] || '0') || 0;
-      amount = debit > 0 ? debit : -credit;
-    } else {
-      const raw = parseFloat(row[amountCol!] || '0') || 0;
-      amount = positiveIsInflow ? -raw : raw;
-    }
+    const amount = resolveCsvAmount(row, cfg);
     if (!rawDate || !name || isNaN(amount)) { skipped++; return; }
     parsed.push({ rowIndex, date: parseDate(rawDate), name, amount });
   });

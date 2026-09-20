@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { bucketDrift, isSignificantDelta, ratioLabel, SIGNIFICANCE_FLOOR } from '../core/scorecard.js';
+import {
+  bucketDrift, isSignificantDelta, ratioLabel, SIGNIFICANCE_FLOOR,
+  isHighSeverityDrift, driftSeverity, HIGH_DRIFT_RATIO,
+} from '../core/scorecard.js';
 import type { CategoryDrift } from '../core/queries.js';
 
 // Minimal CategoryDrift with only the fields the scorecard cares about filled
@@ -87,5 +90,51 @@ describe('bucketDrift', () => {
       row('Home', 271, 302),
     ]);
     expect(typical.map((r) => r.category)).toEqual(['Bills', 'Insurance', 'Home']);
+  });
+});
+
+describe('isHighSeverityDrift', () => {
+  it('is true when current/median12m clears the ratio', () => {
+    expect(isHighSeverityDrift(150, 100)).toBe(true);  // 1.5x
+    expect(isHighSeverityDrift(HIGH_DRIFT_RATIO * 100, 100)).toBe(true); // exactly 1.3x
+  });
+
+  it('is false when below the ratio', () => {
+    expect(isHighSeverityDrift(120, 100)).toBe(false); // 1.2x
+  });
+
+  it('is true (bug fix) when median12m is 0, regardless of current', () => {
+    // Old gui/tui inline check computed current/0 -> NaN >= 1.3 -> false,
+    // silently downgrading a brand-new no-history category to "moderate".
+    expect(isHighSeverityDrift(500, 0)).toBe(true);
+    expect(isHighSeverityDrift(0, 0)).toBe(true);
+  });
+});
+
+describe('driftSeverity', () => {
+  it('is neutral when current and median12m are both 0', () => {
+    expect(driftSeverity(0, 0)).toBe('neutral');
+  });
+
+  it('is neutral within the noise band (not a significant delta)', () => {
+    // $100 over a $4,000 baseline is noise (needs $600, see isSignificantDelta)
+    expect(driftSeverity(4100, 4000)).toBe('neutral');
+  });
+
+  it('is good when significantly under the baseline', () => {
+    expect(driftSeverity(291, 762)).toBe('good'); // -471, well past the floor
+  });
+
+  it('is bad when significantly over and past the high-severity ratio', () => {
+    expect(driftSeverity(626, 149)).toBe('bad'); // 4.2x
+  });
+
+  it('is caution when significantly over but under the high-severity ratio', () => {
+    // +$300 over a $2,000 baseline (significant: > max(50, 300)) but only 1.15x
+    expect(driftSeverity(2300, 2000)).toBe('caution');
+  });
+
+  it('is bad (bug fix) for new spending with no baseline history', () => {
+    expect(driftSeverity(500, 0)).toBe('bad');
   });
 });

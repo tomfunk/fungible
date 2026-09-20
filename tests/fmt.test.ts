@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt } from '../core/fmt.js';
+import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt } from '../core/fmt.js';
 import { MONTHS } from '../core/dateUtils.js';
 import { bar, truncate } from '../tui/charUtils.js';
 
@@ -33,6 +33,25 @@ describe('fmtSigned', () => {
 
   it('treats zero as positive', () => {
     expect(fmtSigned(0)).toBe('+$0.00');
+  });
+});
+
+describe('fmtTxAmount', () => {
+  it('shows a leading minus for a positive stored amount (outflow)', () => {
+    expect(fmtTxAmount(42.5)).toBe('-$42.50');
+  });
+
+  it('shows a leading plus for a negative stored amount (inflow)', () => {
+    expect(fmtTxAmount(-42.5)).toBe('+$42.50');
+  });
+
+  it('respects custom decimals', () => {
+    expect(fmtTxAmount(1000, 0)).toBe('-$1,000');
+  });
+
+  it('delegates to fmtSigned(-amount, decimals)', () => {
+    expect(fmtTxAmount(17.3)).toBe(fmtSigned(-17.3));
+    expect(fmtTxAmount(-17.3, 1)).toBe(fmtSigned(17.3, 1));
   });
 });
 

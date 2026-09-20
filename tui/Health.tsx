@@ -3,25 +3,17 @@ import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { loadHealthData, yearsToFire, coastYears, computeSavingsRate, type HealthData } from '../core/health.js';
+import {
+  loadHealthData, yearsToFire, coastYears, computeSavingsRate,
+  computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity,
+  type HealthData,
+} from '../core/health.js';
 import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../core/settings.js';
 import { BASIS_LABEL } from '../core/dateUtils.js';
-import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, severityColor } from './ui.js';
 import { SectionHeader, PageHeader, DialRow } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
-function savingsRateColor(rate: number): string {
-  if (rate < 0)  return C_NEGATIVE;
-  if (rate < 10) return C_WARNING;
-  if (rate < 20) return C_NEUTRAL;
-  return C_POSITIVE;
-}
-
-function runwayColor(months: number, green: number, yellow: number): string {
-  if (months >= green)  return C_POSITIVE;
-  if (months >= yellow) return C_WARNING;
-  return C_NEGATIVE;
-}
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_WITHDRAWAL    = 4.0;
@@ -153,22 +145,31 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   }, { isActive: isActive !== false });
 
   // ── Derived ─────────────────────────────────────────────────────────────────
-  const cashMonths   = monthlySpend > 0 ? data.cash   / monthlySpend : 0;
-  const liquidMonths = monthlySpend > 0 ? data.liquid / monthlySpend : 0;
+  const {
+    annualSpend,
+    fireNumber,
+    fireProgress,
+    cashRunwayMonths: cashMonths,
+    liquidRunwayMonths: liquidMonths,
+    netCash,
+    remainingDebt,
+    debtPayoffMonths: debtMonths,
+  } = computeFireRunwayMetrics({
+    monthlySpend,
+    withdrawalRatePct: withdrawal,
+    cash: data.cash,
+    liquid: data.liquid,
+    totalDebt: data.totalDebt,
+    monthlySavings, // cash savings only -- NOT combined with pretaxSavings (that combination stays local to yearsToFire below)
+    netWorth: data.netWorth,
+  });
 
-  const annualSpend    = monthlySpend * 12;
-  const fireNumber     = annualSpend / (withdrawal / 100);
-  const fireProgress   = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
   const years          = yearsToFire(data.netWorth, monthlySavings + pretaxSavings, fireNumber, growth);
   const coast          = coastYears(data.netWorth, fireNumber, growth);
 
   const grossIncome    = data.monthlyIncome + pretaxSavings;
   const savingsRate    = computeSavingsRate(data.monthlyIncome, monthlySavings, pretaxSavings);
   const rawSavingsRate = computeSavingsRate(data.monthlyIncome, monthlySavings, 0);
-
-  const netCash        = data.cash - data.totalDebt;
-  const remainingDebt  = Math.max(0, data.totalDebt - data.cash);
-  const debtMonths     = monthlySavings > 0 ? remainingDebt / monthlySavings : null;
 
   const defaultSpend    = Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP);
   const defaultSavings  = Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP;
@@ -201,7 +202,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           {savingsRate === null ? (
             <Text dimColor>{'—'.padStart(V)}</Text>
           ) : (
-            <Text bold color={savingsRateColor(savingsRate)}>
+            <Text bold color={severityColor(savingsRateSeverity(savingsRate))}>
               {fmtPct(savingsRate).padStart(V)}
             </Text>
           )}
@@ -237,14 +238,14 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         <SectionHeader>RUNWAY</SectionHeader>
         <Box gap={3} marginTop={1}>
           <Text dimColor>{'Cash'.padEnd(L)}</Text>
-          <Text bold color={runwayColor(cashMonths, 6, 3)}>
+          <Text bold color={severityColor(runwaySeverity(cashMonths, 6, 3))}>
             {fmtMonths(cashMonths).padStart(V)}
           </Text>
           <Text dimColor>{fmt(data.cash)} in checking/savings</Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Liquid'.padEnd(L)}</Text>
-          <Text bold color={runwayColor(liquidMonths, 12, 6)}>
+          <Text bold color={severityColor(runwaySeverity(liquidMonths, 12, 6))}>
             {fmtMonths(liquidMonths).padStart(V)}
           </Text>
           <Text dimColor>{fmt(data.liquid)} incl. brokerage</Text>
@@ -291,7 +292,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
                   {debtMonths === null ? (
                     <Text color={C_NEGATIVE}>{'no surplus'.padStart(V)}</Text>
                   ) : (
-                    <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
+                    <Text bold color={severityColor(debtPayoffSeverity(debtMonths, 6, 24))}>
                       {fmtMonths(debtMonths).padStart(V)}
                     </Text>
                   )}

@@ -92,6 +92,22 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // settings.setPretaxMonthly) rather than the raw getSetting/setSetting functions.
   getSetting: 'GUI exposes typed wrappers (getPretaxMonthly/setPretaxMonthly) via settings namespace instead of generic access',
   setSetting: 'GUI exposes typed wrappers (getPretaxMonthly/setPretaxMonthly) via settings namespace instead of generic access',
+
+  // Pure CSV-amount-resolution helper — renderer imports core/accounts.ts directly
+  resolveCsvAmount: 'renderer imports pure core/accounts.ts directly',
+
+  // Pure drift-severity helper — renderer imports core/scorecard.ts directly
+  driftSeverity: 'renderer imports pure core/scorecard.ts directly',
+
+  // Pure FIRE/runway/debt-payoff helpers — renderer imports core/health.ts directly
+  computeFireRunwayMetrics: 'renderer imports pure core/health.ts directly',
+  savingsRateSeverity: 'renderer imports pure core/health.ts directly',
+  runwaySeverity: 'renderer imports pure core/health.ts directly',
+  debtPayoffSeverity: 'renderer imports pure core/health.ts directly',
+
+  // Pure account-grouping helpers — renderer imports core/queries.ts directly
+  groupAccountsByType: 'renderer imports pure core/queries.ts directly',
+  buildTypeToAccountIds: 'renderer imports pure core/queries.ts directly',
 };
 
 function collectTuiCoreImports(): Map<string, string[]> {

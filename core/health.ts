@@ -167,3 +167,16 @@ export function coastYears(
 }
 
 export { computeSavingsRate } from './savings-rate.js';
+
+// FIRE/runway/debt-payoff math and severity bands live in health-metrics.ts
+// (DB-free, so the gui renderer bundle can import them without pulling in
+// db.ts) -- re-exported here so existing `from './health.js'` imports (tui)
+// keep working unchanged.
+export {
+  computeFireRunwayMetrics,
+  savingsRateSeverity,
+  runwaySeverity,
+  debtPayoffSeverity,
+  type FireRunwayInputs,
+  type FireRunwayMetrics,
+} from './health-metrics.js';

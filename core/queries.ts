@@ -843,6 +843,13 @@ export async function getImportTargets(): Promise<ImportTarget[]> {
 
 export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
 
+// Pure account-grouping helpers (TypeBalance, groupAccountsByType,
+// buildTypeToAccountIds) live in account-rollup.ts (DB-free, so the gui
+// renderer bundle can import them without pulling in db.ts) -- re-exported
+// here so existing `from './queries.js'` imports (tui) keep working
+// unchanged.
+export { type TypeBalance, groupAccountsByType, buildTypeToAccountIds } from './account-rollup.js';
+
 // SQLite has no boolean type — integer 0/1 columns are coerced here.
 const toBool = (v: unknown): boolean => Number(v) === 1;
 export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };

@@ -6,7 +6,7 @@ import {
   type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow,
   type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow, type DriftSlice,
 } from '../core/queries.js';
-import { bucketDrift, isSignificantDelta, ratioLabel } from '../core/scorecard.js';
+import { bucketDrift, driftSeverity, ratioLabel } from '../core/scorecard.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
   getDriftWindows, BASIS_LABEL,
@@ -15,7 +15,7 @@ import {
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
+import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, severityColor } from './ui.js';
 import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -35,13 +35,13 @@ function pct(part: number, total: number) {
 /**
  * Heat-map color vs the median baseline, gated on significance: rows inside
  * the noise band stay neutral so only deltas worth acting on get color.
+ *
+ * Note: a zero baseline (current !== 0, median12m === 0) now always reads as
+ * high severity via core's driftSeverity, instead of silently falling into
+ * "moderate" -- matches the MCP scorecard tool, not a regression.
  */
 function driftColor(slice: Pick<DriftSlice, 'current' | 'median12m' | 'medianDelta'>): string {
-  if (slice.current === 0 && slice.median12m === 0) return C_NEUTRAL;
-  if (!isSignificantDelta(slice.medianDelta, slice.median12m)) return C_NEUTRAL;
-  if (slice.medianDelta < 0) return C_POSITIVE;                    // meaningfully under
-  if (slice.median12m === 0) return C_NEGATIVE;                    // new spending, no history
-  return slice.current / slice.median12m >= 1.3 ? C_NEGATIVE : C_WARNING;
+  return severityColor(driftSeverity(slice.current, slice.median12m));
 }
 
 /** Format a drift delta value compactly (no cents). */

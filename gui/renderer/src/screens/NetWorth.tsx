@@ -13,7 +13,8 @@ import {
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtSigned, fmtCompact } from '../../../../core/fmt.js';
-import type { AccountBalance, NetWorthGranularity } from '../../../../core/queries.js';
+import { groupAccountsByType, buildTypeToAccountIds } from '../../../../core/account-rollup.js';
+import type { NetWorthGranularity } from '../../../../core/queries.js';
 import { isAssetAccount, isLiabilityAccount } from '../../../../core/account-class.js';
 import { useChartTheme, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
 import { useNav } from '../hooks/useNav.js';
@@ -25,29 +26,7 @@ import styles from './NetWorth.module.css';
 const NW_RANGES: NetWorthGranularity[] = ['week', 'month', 'quarter', 'year'];
 const NW_RANGE_LABELS: Record<string, string> = { day: 'Day', week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
-type TypeBalance = { label: string; balance: number };
-
-function groupByType(accs: AccountBalance[]): TypeBalance[] {
-  const map = new Map<string, number>();
-  for (const a of accs) {
-    const raw = a.subtype ?? a.type;
-    const key = SUBTYPE_DISPLAY[raw] ?? raw;
-    map.set(key, (map.get(key) ?? 0) + a.balance);
-  }
-  return [...map.entries()]
-    .map(([label, balance]) => ({ label, balance }))
-    .sort((a, b) => b.balance - a.balance);
-}
-
-function buildTypeToIds(accs: AccountBalance[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  for (const a of accs) {
-    const key = SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type);
-    const existing = map.get(key);
-    if (existing) existing.push(a.id); else map.set(key, [a.id]);
-  }
-  return map;
-}
+const typeLabel = (raw: string) => SUBTYPE_DISPLAY[raw] ?? raw;
 
 function periodLabel(period: string, range: NetWorthGranularity): string {
   if (range === 'year') return period;
@@ -113,7 +92,7 @@ export function NetWorth() {
     net: r.net_worth,
   }));
 
-  const typeToIds = buildTypeToIds(included);
+  const typeToIds = buildTypeToAccountIds(included, typeLabel);
 
   function toggleSeries(key: SeriesKey) {
     setHiddenSeries((prev) => {
@@ -268,7 +247,7 @@ export function NetWorth() {
                           </tr>
                         );
                       })
-                    : groupByType(assets).map((t) => {
+                    : groupAccountsByType(assets, typeLabel).map((t) => {
                         const inChart = typeInChart(t.label);
                         return (
                           <tr
@@ -318,7 +297,7 @@ export function NetWorth() {
                             </tr>
                           );
                         })
-                      : groupByType(liabilities).map((t) => {
+                      : groupAccountsByType(liabilities, typeLabel).map((t) => {
                           const inChart = typeInChart(t.label);
                           return (
                             <tr
