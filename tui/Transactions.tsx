@@ -7,6 +7,7 @@ import {
   upsertCategoryRule, upsertNameRule,
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
+import { suggestRuleForTransaction, saveCategoryRule, type RuleSuggestion } from '../core/rules.js';
 import { syncAll } from '../core/sync.js';
 import {
   getTagOptions, getTransactionTagIds, getOrCreateTag,
@@ -15,7 +16,7 @@ import {
 } from '../core/tags.js';
 import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
-import { getTransactions, getAllCategories, getDataBounds, getLastSyncedAt, type TxRow, type SortMode } from '../core/queries.js';
+import { getTransactions, getAllCategories, getAllRules, getDataBounds, getLastSyncedAt, type TxRow, type SortMode } from '../core/queries.js';
 import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
@@ -34,7 +35,7 @@ import { useSetTyping } from './TypingContext.js';
 type Tx = TxRow;
 
 
-type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all';
+type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all' | 'rule-prompt';
 type EditField = 'name' | 'category' | 'date' | 'pattern' | 'type';
 
 /** Reattributed dates are always stored as ISO YYYY-MM-DD; reject anything else before calling core. */
@@ -80,6 +81,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [editCatCursor, setEditCatCursor] = useState(0);
   const [editPattern, setEditPattern] = useState('');
   const [editMatchType, setEditMatchType] = useState<'name' | 'regex'>('name');
+
+  // Inline "always categorize as…?" prompt shown after a plain manual
+  // recategorize (no Pattern typed — that path goes through saveAsRule
+  // instead, which is already an explicit rule save).
+  const [ruleSuggestion, setRuleSuggestion] = useState<RuleSuggestion | null>(null);
 
   // Tag panel state. The applied-tag set is kept together with the transaction
   // it was read for: the panel acts on whatever row the cursor is on, and that
@@ -199,6 +205,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     const nameChanged = newDisplay.length > 0;
     const catChanged = newCat !== selected.category;
     const dateChanged = newDate.length > 0 && newDate !== selected.date;
+    const txId = selected.id;
+    const oldCategory = selected.category;
 
     if (dateChanged) {
       if (!ISO_DATE_RE.test(newDate)) {
@@ -224,8 +232,57 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (nameChanged || catChanged || dateChanged) {
       showStatus(dateChanged && !nameChanged && !catChanged ? `Date set to ${newDate}` : 'Transaction updated');
     }
+
+    // Plain manual recategorize with no Pattern typed — offer to turn it into
+    // a standing rule instead of silently dropping back to the list.
+    if (catChanged) {
+      const suggestion = await suggestRuleForTransaction(txId, oldCategory, newCat);
+      if (suggestion) {
+        setRuleSuggestion(suggestion);
+        setMode('rule-prompt');
+        load(search, true);
+        return;
+      }
+    }
+
     setMode('list');
     load(search, true);
+  }
+
+  async function acceptRuleSuggestion() {
+    if (!ruleSuggestion) { setMode('list'); return; }
+    try {
+      let count: number;
+      if (ruleSuggestion.conflictingRule) {
+        // saveCategoryRule does a full UPDATE — fetch the existing rule's
+        // amount range / account scope so accepting the suggestion only
+        // repoints its category, rather than silently wiping those fields.
+        const conflicting = ruleSuggestion.conflictingRule;
+        const existing = (await getAllRules()).find((r) => r.id === conflicting.id);
+        count = await saveCategoryRule({
+          pattern: conflicting.pattern,
+          matchType: conflicting.matchType,
+          category: ruleSuggestion.newCategory,
+          minAmount: existing?.min_amount ?? null,
+          maxAmount: existing?.max_amount ?? null,
+          accountId: existing?.account_id ?? null,
+          editingId: conflicting.id,
+        });
+      } else {
+        count = await upsertCategoryRule(ruleSuggestion.pattern, ruleSuggestion.matchType, ruleSuggestion.newCategory);
+      }
+      showStatus(`Saved: category rule (${count} updated)`);
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to save rule', 4000);
+    }
+    setRuleSuggestion(null);
+    setMode('list');
+    load(search, true);
+  }
+
+  function declineRuleSuggestion() {
+    setRuleSuggestion(null);
+    setMode('list');
   }
 
   async function saveAsRule() {
@@ -397,6 +454,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       } else if (editField === 'type') {
         if (key.leftArrow || key.rightArrow) { setEditMatchType((t) => t === 'name' ? 'regex' : 'name'); return; }
       }
+      return;
+    }
+
+    if (mode === 'rule-prompt') {
+      if (input === 'y' || input === 'Y') { void acceptRuleSuggestion(); return; }
+      if (input === 'n' || input === 'N' || key.escape) { declineRuleSuggestion(); return; }
       return;
     }
 
@@ -719,6 +782,29 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
           <Box marginTop={1}>
             <Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text>
+          </Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'rule-prompt' && ruleSuggestion && (
+        <ModalPanel borderColor={C_MANUAL}>
+          {ruleSuggestion.conflictingRule ? (
+            <Text bold color={C_MANUAL}>
+              <Text color={C_ACCENT}>{ruleSuggestion.pattern}</Text> already has a rule categorizing it as <Text color={C_ACCENT}>{ruleSuggestion.conflictingRule.category}</Text>. Update that rule to <Text color={C_ACCENT}>{ruleSuggestion.newCategory}</Text> instead?
+            </Text>
+          ) : (
+            <Text bold color={C_MANUAL}>
+              Always categorize <Text color={C_ACCENT}>{ruleSuggestion.pattern}</Text> as <Text color={C_ACCENT}>{ruleSuggestion.newCategory}</Text>?
+            </Text>
+          )}
+          {ruleSuggestion.matchCount - 1 > 0 && (
+            <Box marginTop={1}>
+              <Text dimColor>(would also apply to {ruleSuggestion.matchCount - 1} other transaction{ruleSuggestion.matchCount - 1 !== 1 ? 's' : ''})</Text>
+            </Box>
+          )}
+          <Box marginTop={1} gap={4}>
+            <Text color={C_MANUAL}>[y] Yes, always</Text>
+            <Text dimColor>[n] / Esc  No, just this once</Text>
           </Box>
         </ModalPanel>
       )}

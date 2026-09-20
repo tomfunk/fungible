@@ -816,6 +816,86 @@ describe('Transactions', () => {
     });
   });
 
+  it('recategorizing without a pattern offers to save a category rule, and [y] saves it', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[D'); // cycle Grocery → Dining, no Pattern typed
+    await waitFor(() => expect(frame(r)).toContain('← Dining  →'));
+    r.stdin.write('\r'); // save — plain recategorize, not saveAsRule
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Always categorize');
+      expect(f).toContain('Trader Joes');
+      expect(f).toContain('Dining');
+      expect(f).toContain('Yes, always');
+    });
+    r.stdin.write('y');
+    await waitFor(() => expect(frame(r)).toContain('Saved: category rule'));
+    const rule = await db.execute("SELECT category FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect((rule.rows[0] as unknown as { category: string }).category).toBe('Dining');
+  });
+
+  it('[n] on the rule prompt declines and creates no rule', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery'));
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[D'); // Grocery → Dining
+    await waitFor(() => expect(frame(r)).toContain('← Dining  →'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Always categorize'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Always categorize');
+      expect(f).toContain('Trader Joes'); // back on the list
+    });
+    const rule = await db.execute("SELECT id FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect(rule.rows.length).toBe(0);
+  });
+
+  it('recategorizing over a conflicting rule offers to update it instead, and [y] repoints it without losing its amount range or account scope', async () => {
+    // tx-groc-2 (Trader Joes) is on test-credit, amount 85.00 — the range and
+    // account below still match it, so the conflict is still detected, and
+    // acceptRuleSuggestion must carry these through rather than nulling them.
+    await db.execute(
+      "INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount, account_id) " +
+      "VALUES (10, 'name', 'Trader Joes', 'Bills & Utilities', 50.00, 200.00, 'test-credit')",
+    );
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery'));
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[C'); // cycle Grocery → Income, no Pattern typed
+    await waitFor(() => expect(frame(r)).toContain('← Income  →'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('already has a rule');
+      expect(f).toContain('Bills & Utilities');
+      expect(f).toContain('Update that rule to');
+      expect(f).toContain('Income');
+    });
+    r.stdin.write('y');
+    await waitFor(() => expect(frame(r)).toContain('Saved: category rule'));
+    const rules = await db.execute("SELECT category, min_amount, max_amount, account_id FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect(rules.rows.length).toBe(1); // updated in place, not duplicated
+    const rule = rules.rows[0] as unknown as { category: string; min_amount: number; max_amount: number; account_id: string };
+    expect(rule.category).toBe('Income');
+    // The amount range and account scope must survive the update untouched.
+    expect(rule.min_amount).toBe(50);
+    expect(rule.max_amount).toBe(200);
+    expect(rule.account_id).toBe('test-credit');
+  });
+
   it('edit panel shows a Date field prefilled with the transaction date', async () => {
     const r = txns();
     await waitFor(() => expect(frame(r)).toContain('Trader Joes'));

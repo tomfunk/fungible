@@ -2,7 +2,7 @@ import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
 import { applyTagRules, type TagMatchType } from './tag-rules.js';
-import { validateRegex } from './rule-utils.js';
+import { validateRegex, inAmountRange, matchesPattern, countPatternMatches } from './rule-utils.js';
 
 async function applyAll(): Promise<number> {
   const rules = await loadCategoryRules();
@@ -167,6 +167,87 @@ export async function deleteCategory(name: string): Promise<void> {
     { sql: 'DELETE FROM hidden_categories WHERE category = ?', args: [name] },
     { sql: 'DELETE FROM categories WHERE name = ?', args: [name] },
   ], 'write');
+}
+
+// ── Post-manual-edit rule suggestion (#181) ────────────────────────────────
+
+export interface RuleSuggestion {
+  pattern: string;
+  matchType: 'name';
+  newCategory: string;
+  matchCount: number;
+  conflictingRule: { id: number; pattern: string; matchType: 'name' | 'regex'; category: string } | null;
+}
+
+type RuleRow = {
+  id: number;
+  match_type: 'name' | 'regex';
+  pattern: string;
+  category: string;
+  min_amount: number | null;
+  max_amount: number | null;
+  account_id: string | null;
+};
+
+/**
+ * After a user manually recategorizes a transaction, decide whether to offer
+ * "always categorize MERCHANT as CATEGORY?" — read-only, does not write
+ * anything. The caller (tui/gui) applies the suggestion via the existing
+ * upsertCategoryRule (clean case) or saveCategoryRule with editingId (conflict
+ * case) — the same write paths the manual "type a pattern to save as rule"
+ * flow already uses.
+ */
+export async function suggestRuleForTransaction(
+  transactionId: string,
+  oldCategory: string,
+  newCategory: string,
+): Promise<RuleSuggestion | null> {
+  if (newCategory === oldCategory) return null;
+
+  const hiddenRes = await db.execute({
+    sql: 'SELECT 1 FROM hidden_categories WHERE category = ?',
+    args: [newCategory],
+  });
+  if (hiddenRes.rows.length > 0) return null;
+
+  const txRes = await db.execute({
+    sql: 'SELECT account_id, name, merchant_name, amount FROM transactions WHERE id = ?',
+    args: [transactionId],
+  });
+  if (txRes.rows.length === 0) return null;
+  const tx = txRes.rows[0] as unknown as {
+    account_id: string; name: string; merchant_name: string | null; amount: number;
+  };
+
+  const pattern = tx.merchant_name ?? tx.name;
+  if (!pattern) return null;
+
+  // Same haystack construction categorizeWithRules uses, so matching a rule
+  // here means the same rule would apply during normal categorization.
+  const haystacks = [tx.name.toLowerCase()];
+  if (tx.merchant_name && tx.merchant_name.toLowerCase() !== tx.name.toLowerCase()) {
+    haystacks.push(tx.merchant_name.toLowerCase());
+  }
+
+  const rulesRes = await db.execute(
+    'SELECT id, match_type, pattern, category, min_amount, max_amount, account_id FROM category_rules ORDER BY priority DESC, (account_id IS NULL) ASC, id ASC'
+  );
+  const rules = rulesRes.rows as unknown as RuleRow[];
+
+  let conflictingRule: RuleSuggestion['conflictingRule'] = null;
+  for (const rule of rules) {
+    if (rule.account_id !== null && rule.account_id !== tx.account_id) continue;
+    if (!inAmountRange(tx.amount, rule.min_amount, rule.max_amount)) continue;
+    if (matchesPattern(rule.pattern, rule.match_type, haystacks)) {
+      if (rule.category === newCategory) return null; // already covered
+      conflictingRule = { id: rule.id, pattern: rule.pattern, matchType: rule.match_type, category: rule.category };
+      break;
+    }
+  }
+
+  const matchCount = await countPatternMatches(pattern, 'name');
+
+  return { pattern, matchType: 'name', newCategory, matchCount, conflictingRule };
 }
 
 export async function renameCategory(oldName: string, newName: string): Promise<void> {

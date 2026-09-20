@@ -90,7 +90,7 @@ describe('GUI Transactions', () => {
     });
   });
 
-  it('edit modal sets a manual category with override marker', async () => {
+  it('edit modal sets a manual category with override marker, declining the rule offer', async () => {
     renderScreen(<Transactions />);
     await waitFor(() => expect(screen.getByText('Trader Joes')).toBeTruthy());
     await userEvent.click(screen.getByText('Trader Joes'));
@@ -98,12 +98,58 @@ describe('GUI Transactions', () => {
     const selects = screen.getAllByRole('combobox');
     await userEvent.selectOptions(selects[0], 'Dining');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    // A plain recategorize (no typed pattern) offers to turn it into a rule.
+    await waitFor(() => expect(screen.getByText(/Always categorize/)).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'No, just this once' }));
     await waitFor(() => expect(screen.getByText('Transaction updated')).toBeTruthy());
     await waitFor(() => {
       const row = screen.getByText('Trader Joes').closest('tr')!;
       expect(row.textContent).toContain('◆');
       expect(row.textContent).toContain('Dining');
     });
+
+    // Declining persists no rule.
+    const rule = await db.execute("SELECT * FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect(rule.rows).toHaveLength(0);
+  });
+
+  it('edit modal offers a rule suggestion and creates a rule on accept', async () => {
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('Trader Joes')).toBeTruthy());
+    await userEvent.click(screen.getByText('Trader Joes'));
+    await waitFor(() => expect(screen.getByText(/^Edit/)).toBeTruthy());
+    await userEvent.selectOptions(screen.getAllByRole('combobox')[0], 'Dining');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.getByText(/Always categorize/)).toBeTruthy());
+    expect(screen.getByText(/Always categorize/).textContent).toContain('Trader Joes');
+    expect(screen.getByText(/1 other transaction/)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, make a rule' }));
+    await waitFor(() => expect(screen.getByText(/rule created/)).toBeTruthy());
+
+    const rule = await db.execute("SELECT * FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect(rule.rows[0]).toMatchObject({ match_type: 'name', category: 'Dining' });
+  });
+
+  it('edit modal offers to update a conflicting rule instead of creating a new one', async () => {
+    await db.execute(
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Sweetgreen', 'Dining')",
+    );
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getAllByText('Sweetgreen').length).toBeGreaterThan(0));
+    await userEvent.click(screen.getAllByText('Sweetgreen')[0]);
+    await waitFor(() => expect(screen.getByText(/^Edit/)).toBeTruthy());
+    await userEvent.selectOptions(screen.getAllByRole('combobox')[0], 'Shopping');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(screen.getByText(/already has a rule/)).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Yes, update the rule' }));
+    await waitFor(() => expect(screen.getByText(/rule updated/)).toBeTruthy());
+
+    const rule = await db.execute("SELECT * FROM category_rules WHERE pattern = 'Sweetgreen'");
+    expect(rule.rows).toHaveLength(1);
+    expect(rule.rows[0]).toMatchObject({ category: 'Shopping' });
   });
 
   it('edit modal reattributes a transaction date and preserves the posting date', async () => {
