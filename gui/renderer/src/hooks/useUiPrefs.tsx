@@ -29,7 +29,7 @@ const Ctx = createContext<UiPrefs>({
   toggleKeys: () => {},
   palette: 'default',
   setPalette: () => {},
-  density: 'balanced',
+  density: 'compact',
   setDensity: () => {},
 });
 
@@ -41,9 +41,12 @@ function readPalette(): PaletteName {
   return (PALETTE_NAMES as string[]).includes(stored ?? '') ? (stored as PaletteName) : 'default';
 }
 
+// Default is 'compact' — anyone with an explicit stored preference (set
+// before or after this default flipped) keeps exactly what they chose;
+// only a never-set preference picks up the new default.
 function readDensity(): RowDensity {
   const stored = localStorage.getItem('fungible-density');
-  return (DENSITY_NAMES as string[]).includes(stored ?? '') ? (stored as RowDensity) : 'balanced';
+  return (DENSITY_NAMES as string[]).includes(stored ?? '') ? (stored as RowDensity) : 'compact';
 }
 
 export function UiPrefsProvider({ children }: { children: React.ReactNode }) {

@@ -97,20 +97,34 @@ describe('GUI App navigation', () => {
     expect(localStorage.getItem('fungible-palette')).toBe('deuteranopia');
   });
 
-  it('row density defaults to "balanced" and selecting compact sets the document density and persists', async () => {
+  it('row density defaults to "compact" and selecting balanced sets the document density and persists', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
+    expect(document.documentElement.dataset.density).toBe('compact');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+
+    const densitySelect = screen.getByRole('combobox', { name: 'Row density' });
+    expect((densitySelect as HTMLSelectElement).value).toBe('compact');
+
+    await userEvent.selectOptions(densitySelect, 'balanced');
+    expect(document.documentElement.dataset.density).toBe('balanced');
+    expect(localStorage.getItem('fungible-density')).toBe('balanced');
+  });
+
+  it('an explicit stored row density preference overrides the "compact" default', async () => {
+    // A user who chose "Balanced" before (or after) the default flipped to
+    // "Compact" keeps exactly what they picked — only a never-set preference
+    // should see the new default.
+    localStorage.setItem('fungible-density', 'balanced');
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     expect(document.documentElement.dataset.density).toBe('balanced');
 
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
-
-    const densitySelect = screen.getByRole('combobox', { name: 'Row density' });
-    expect((densitySelect as HTMLSelectElement).value).toBe('balanced');
-
-    await userEvent.selectOptions(densitySelect, 'compact');
-    expect(document.documentElement.dataset.density).toBe('compact');
-    expect(localStorage.getItem('fungible-density')).toBe('compact');
+    expect((screen.getByRole('combobox', { name: 'Row density' }) as HTMLSelectElement).value).toBe('balanced');
   });
 
   it('FilterBar appears on filterable screens only', async () => {

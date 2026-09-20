@@ -34,10 +34,14 @@
   --radius-sm: 5px; /* everywhere else — nav items, chips, bordered
                         mini-buttons, bar fills, progress tracks, controls */
 
-  /* Row density — "Balanced" (default). Every data table's row/header
-     padding reads from these two, so Settings' density control drives all
-     of them from one place. Compact override lives in
-     :root[data-density='compact'] below. */
+  /* Row density — "Balanced" values (the CSS-level fallback for when no
+     data-density attribute is set yet). The app's own default preference is
+     "Compact" — see useUiPrefs.tsx's readDensity() — but that's a JS-level
+     decision applied via the data-density attribute on mount; these plain
+     :root values just define what "Balanced" looks like as a level. Every
+     data table's row/header padding reads from these two, so Settings'
+     density control drives all of them from one place. Compact override
+     lives in :root[data-density='compact'] below. */
   --table-row-padding: 9px;
   --table-header-padding-bottom: 8px;
 }

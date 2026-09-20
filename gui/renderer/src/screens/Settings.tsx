@@ -157,9 +157,12 @@ const PALETTE_OPTIONS: { value: PaletteName; label: string }[] = [
   { value: 'monochrome', label: 'Monochrome' },
 ];
 
+// Compact listed first — it's the default now (see useUiPrefs.tsx's
+// readDensity()), matching how the palette list above leads with its
+// own default ('default').
 const DENSITY_OPTIONS: { value: RowDensity; label: string }[] = [
-  { value: 'balanced', label: 'Balanced' },
   { value: 'compact', label: 'Compact' },
+  { value: 'balanced', label: 'Balanced' },
 ];
 
 function AppearancePanel() {
