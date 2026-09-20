@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
 import { computeSavingsRate } from '../../../../core/savings-rate.js';
+import { computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity } from '../../../../core/health.js';
+import type { SeverityLevel } from '../../../../core/severity.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { DialRow } from '../components/DialRow.js';
 import styles from './Health.module.css';
@@ -13,17 +15,14 @@ const SPEND_STEP = 100;
 const WITHDRAWAL_STEP = 0.5;
 const GROWTH_STEP = 1.0;
 
-function savingsRateClass(rate: number): string {
-  if (rate < 0) return 'neg';
-  if (rate < 10) return 'warn';
-  if (rate < 20) return '';
-  return 'pos';
-}
-
-function runwayClass(months: number, green: number, yellow: number): string {
-  if (months >= green) return 'pos';
-  if (months >= yellow) return 'warn';
-  return 'neg';
+// SeverityLevel -> this screen's existing pos/warn/neg/(neutral) class names.
+function severityToClass(level: SeverityLevel): string {
+  switch (level) {
+    case 'good': return 'pos';
+    case 'caution': return 'warn';
+    case 'bad': return 'neg';
+    case 'neutral': return '';
+  }
 }
 
 function roundToStep(n: number): number {
@@ -50,8 +49,19 @@ export function Health() {
   const savings = monthlySavings ?? defaultSavings;
   const pretax = pretaxSavings ?? 0;
 
-  const annualSpend = spend * 12;
-  const fireNumber = annualSpend / (withdrawal / 100);
+  const {
+    annualSpend, fireNumber, fireProgress,
+    cashRunwayMonths: cashMonths, liquidRunwayMonths: liquidMonths,
+    netCash, remainingDebt, debtPayoffMonths: debtMonths,
+  } = computeFireRunwayMetrics({
+    monthlySpend: spend,
+    withdrawalRatePct: withdrawal,
+    cash: data?.cash ?? 0,
+    liquid: data?.liquid ?? 0,
+    totalDebt: data?.totalDebt ?? 0,
+    monthlySavings: savings,
+    netWorth: data?.netWorth ?? 0,
+  });
 
   const [years, setYears] = useState<number | null>(null);
   const [coast, setCoast] = useState<number | null>(null);
@@ -63,15 +73,9 @@ export function Health() {
 
   if (!data) return <p className="dim">Loading…</p>;
 
-  const cashMonths = spend > 0 ? data.cash / spend : 0;
-  const liquidMonths = spend > 0 ? data.liquid / spend : 0;
-  const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
   const grossIncome = data.monthlyIncome + pretax;
   const savingsRate = computeSavingsRate(data.monthlyIncome, savings, pretax);
   const rawSavingsRate = computeSavingsRate(data.monthlyIncome, savings, 0);
-  const netCash = data.cash - data.totalDebt;
-  const remainingDebt = Math.max(0, data.totalDebt - data.cash);
-  const debtMonths = savings > 0 ? remainingDebt / savings : null;
   const combinedDebt = data.totalDebt + data.loanDebt;
   const hasLoanDebt = data.loanDebt > 0;
 
@@ -87,7 +91,7 @@ export function Health() {
           {savingsRate === null ? (
             <div className={`dim ${styles.cardValue}`}>—</div>
           ) : (
-            <div className={`num ${savingsRateClass(savingsRate)} ${styles.cardValue}`}>{fmtPct(savingsRate)}</div>
+            <div className={`num ${severityToClass(savingsRateSeverity(savingsRate))} ${styles.cardValue}`}>{fmtPct(savingsRate)}</div>
           )}
         </div>
         <div className={styles.card}>
@@ -118,7 +122,7 @@ export function Health() {
             {savingsRate === null ? (
               <span className="dim">—</span>
             ) : (
-              <span className={`num ${savingsRateClass(savingsRate)} ${styles.metricValue}`}>{fmtPct(savingsRate)}</span>
+              <span className={`num ${severityToClass(savingsRateSeverity(savingsRate))} ${styles.metricValue}`}>{fmtPct(savingsRate)}</span>
             )}
             <span className={`dim ${styles.metricHint}`}>
               {savingsRate === null
@@ -139,12 +143,12 @@ export function Health() {
           </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Cash runway</span>
-            <span className={`num ${runwayClass(cashMonths, 6, 3)} ${styles.metricValue}`}>{fmtMonths(cashMonths)}</span>
+            <span className={`num ${severityToClass(runwaySeverity(cashMonths, 6, 3))} ${styles.metricValue}`}>{fmtMonths(cashMonths)}</span>
             <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.cash)} in checking/savings</span>
           </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Liquid runway</span>
-            <span className={`num ${runwayClass(liquidMonths, 12, 6)} ${styles.metricValue}`}>{fmtMonths(liquidMonths)}</span>
+            <span className={`num ${severityToClass(runwaySeverity(liquidMonths, 12, 6))} ${styles.metricValue}`}>{fmtMonths(liquidMonths)}</span>
             <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.liquid)} incl. brokerage</span>
           </div>
           {combinedDebt > 0 && !hasLoanDebt && (
@@ -197,7 +201,7 @@ export function Health() {
               {debtMonths === null ? (
                 <span className={`neg ${styles.metricValue}`}>no surplus</span>
               ) : (
-                <span className={`num ${debtMonths <= 6 ? 'pos' : debtMonths <= 24 ? 'warn' : ''} ${styles.metricValue}`}>
+                <span className={`num ${severityToClass(debtPayoffSeverity(debtMonths, 6, 24))} ${styles.metricValue}`}>
                   {fmtMonths(debtMonths)}
                 </span>
               )}

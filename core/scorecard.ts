@@ -1,4 +1,5 @@
 import type { CategoryDrift } from './queries.js';
+import type { SeverityLevel } from './severity.js';
 
 // Pure bucketing of drift rows into a scorecard verdict. Kept free of DB and
 // UI imports so the GUI renderer can import it directly (no bridge needed).
@@ -24,6 +25,35 @@ export function isSignificantDelta(delta: number, baseline: number): boolean {
 export function ratioLabel(current: number, baseline: number): string {
   if (baseline <= 0) return current > 0 ? 'n/a' : '';
   return `${(current / baseline).toFixed(1)}x`;
+}
+
+// A drift ratio of 1.3x+ vs the 12mo median crosses from "worth a yellow
+// flag" to "worth a red one". A zero baseline (brand-new category, no
+// history) has no ratio to compute and is always treated as high severity --
+// see isHighSeverityDrift.
+export const HIGH_DRIFT_RATIO = 1.3;
+
+export function isHighSeverityDrift(current: number, median12m: number): boolean {
+  return median12m === 0 || current / median12m >= HIGH_DRIFT_RATIO;
+}
+
+/**
+ * Combines isSignificantDelta + isHighSeverityDrift into the 3 rendered bands
+ * gui/tui currently derive locally as pos/warn/neg (driftClass/driftColor).
+ *
+ * Note: median12m === 0 with current !== 0 now always reads as 'bad' via
+ * isHighSeverityDrift's explicit zero-baseline guard. The old inline gui/tui
+ * code computed `current / median12m >= 1.3` directly, which is `NaN >= 1.3`
+ * (false) when median12m is 0 -- silently landing a brand-new category with
+ * no history in the "moderate" band instead of "high severity". This matches
+ * what core/tools.ts's MCP scorecard emoji rendering already did correctly.
+ */
+export function driftSeverity(current: number, median12m: number): SeverityLevel {
+  const medianDelta = current - median12m;
+  if (current === 0 && median12m === 0) return 'neutral';
+  if (!isSignificantDelta(medianDelta, median12m)) return 'neutral';
+  if (medianDelta < 0) return 'good';
+  return isHighSeverityDrift(current, median12m) ? 'bad' : 'caution';
 }
 
 export function bucketDrift(rows: CategoryDrift[]): Scorecard {

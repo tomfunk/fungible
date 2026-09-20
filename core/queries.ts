@@ -843,6 +843,37 @@ export async function getImportTargets(): Promise<ImportTarget[]> {
 
 export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
 
+export type TypeBalance = { label: string; balance: number };
+
+/** Group accounts by (subtype ?? type), labeled via the caller-supplied
+ *  `typeLabel` (each UI's own SUBTYPE_DISPLAY lookup stays there), summed by
+ *  balance and sorted descending. Ported from gui/tui NetWorth.tsx's
+ *  identical local groupByType. */
+export function groupAccountsByType(accs: AccountBalance[], typeLabel: (raw: string) => string): TypeBalance[] {
+  const map = new Map<string, number>();
+  for (const a of accs) {
+    const raw = a.subtype ?? a.type;
+    const key = typeLabel(raw);
+    map.set(key, (map.get(key) ?? 0) + a.balance);
+  }
+  return [...map.entries()]
+    .map(([label, balance]) => ({ label, balance }))
+    .sort((a, b) => b.balance - a.balance);
+}
+
+/** Same grouping as groupAccountsByType, but returns the account ids per
+ *  group instead of a summed balance -- used to filter transactions by the
+ *  clicked type slice. Ported from gui/tui NetWorth.tsx's buildTypeToIds. */
+export function buildTypeToAccountIds(accs: AccountBalance[], typeLabel: (raw: string) => string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const a of accs) {
+    const key = typeLabel(a.subtype ?? a.type);
+    const existing = map.get(key);
+    if (existing) existing.push(a.id); else map.set(key, [a.id]);
+  }
+  return map;
+}
+
 // SQLite has no boolean type — integer 0/1 columns are coerced here.
 const toBool = (v: unknown): boolean => Number(v) === 1;
 export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };

@@ -20,6 +20,7 @@ import { checkKeyHealth, type KeyHealth } from '../core/key-health.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountExcluded, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
+  resolveCsvAmount,
 } from '../core/accounts.js';
 import {
   getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
@@ -697,14 +698,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     const date = dateCol !== null ? parseDate(row[dateCol] ?? '') : '—';
     const name = nameCol !== null ? truncate(row[nameCol] ?? '', 28) : '—';
     let amount = '—';
-    if (amountMode === 'single' && amountCol !== null) {
-      const raw = parseFloat(row[amountCol] || '0') || 0;
-      const v = positiveIsInflow ? -raw : raw;
+    const columnsChosen = amountMode === 'single' ? amountCol !== null : (debitCol !== null && creditCol !== null);
+    if (columnsChosen) {
+      const v = resolveCsvAmount(row, { amountMode, amountCol, debitCol, creditCol, positiveIsInflow });
       amount = `$${Math.abs(v).toFixed(2)}`;
-    } else if (amountMode === 'split' && debitCol !== null && creditCol !== null) {
-      const d = parseFloat(row[debitCol] || '0') || 0;
-      const c = parseFloat(row[creditCol] || '0') || 0;
-      amount = `$${Math.abs(d > 0 ? d : c).toFixed(2)}`;
     }
     return { date, name, amount };
   }

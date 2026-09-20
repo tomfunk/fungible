@@ -104,13 +104,28 @@ export type ImportConfig = {
   positiveIsInflow: boolean;
 };
 
+export type CsvAmountConfig = Pick<ImportConfig, 'amountMode' | 'amountCol' | 'debitCol' | 'creditCol' | 'positiveIsInflow'>;
+
+/** Resolve a CSV row's transaction amount per the column mapping. Assumes a
+ *  fully-chosen `cfg` -- callers (import preview UIs) are responsible for
+ *  guarding the "columns not yet chosen" case before calling this. */
+export function resolveCsvAmount(row: string[], cfg: CsvAmountConfig): number {
+  if (cfg.amountMode === 'split') {
+    const debit  = parseFloat(row[cfg.debitCol!]  || '0') || 0;
+    const credit = parseFloat(row[cfg.creditCol!] || '0') || 0;
+    return debit > 0 ? debit : -credit;
+  }
+  const raw = parseFloat(row[cfg.amountCol!] || '0') || 0;
+  return cfg.positiveIsInflow ? -raw : raw;
+}
+
 export async function importCsvTransactions(
   csvRows: string[][],
   accountId: string,
   cfg: ImportConfig,
   file: { name: string; hash: string },
 ): Promise<{ imported: number; skipped: number; importId: number }> {
-  const { amountMode, dateCol, nameCol, amountCol, debitCol, creditCol, positiveIsInflow } = cfg;
+  const { dateCol, nameCol } = cfg;
   const rules = await loadCategoryRules();
 
   // Parse the whole file before writing anything: ordinals are an occurrence
@@ -122,15 +137,7 @@ export async function importCsvTransactions(
   csvRows.forEach((row, rowIndex) => {
     const rawDate = row[dateCol] ?? '';
     const name = row[nameCol] ?? '';
-    let amount: number;
-    if (amountMode === 'split') {
-      const debit  = parseFloat(row[debitCol!]  || '0') || 0;
-      const credit = parseFloat(row[creditCol!] || '0') || 0;
-      amount = debit > 0 ? debit : -credit;
-    } else {
-      const raw = parseFloat(row[amountCol!] || '0') || 0;
-      amount = positiveIsInflow ? -raw : raw;
-    }
+    const amount = resolveCsvAmount(row, cfg);
     if (!rawDate || !name || isNaN(amount)) { skipped++; return; }
     parsed.push({ rowIndex, date: parseDate(rawDate), name, amount });
   });

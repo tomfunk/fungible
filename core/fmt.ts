@@ -8,6 +8,12 @@ export function fmtSigned(n: number, decimals = 2): string {
   return `${n >= 0 ? '+' : '-'}${fmt(Math.abs(n), decimals)}`;
 }
 
+/** Flips the Plaid sign convention for display: positive stored = outflow,
+ *  shown with a leading '-'; negative stored = inflow, shown '+'. */
+export function fmtTxAmount(amount: number, decimals = 2): string {
+  return fmtSigned(-amount, decimals);
+}
+
 export function fmtPct(n: number, decimals = 1): string {
   return `${n.toFixed(decimals)}%`;
 }

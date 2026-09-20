@@ -21,7 +21,11 @@ import {
   getAccountsWithBalances,
   getLinkedAccounts,
   getLinkedItems,
+  groupAccountsByType,
+  buildTypeToAccountIds,
+  type AccountBalance,
 } from '../core/queries.js';
+import { makeAccount } from './helpers/makeAccount.js';
 
 let txId = 0;
 async function insertTx(opts: {
@@ -995,5 +999,49 @@ describe('getLinkedItems', () => {
 
   it('returns nothing when no items are linked', async () => {
     expect(await getLinkedItems()).toEqual([]);
+  });
+});
+
+describe('groupAccountsByType / buildTypeToAccountIds', () => {
+  const identity = (raw: string) => raw;
+  const upper = (raw: string) => raw.toUpperCase();
+
+  const accounts: AccountBalance[] = [
+    makeAccount({ id: 'a1', type: 'depository', subtype: 'checking', balance: 1000 }),
+    makeAccount({ id: 'a2', type: 'depository', subtype: 'checking', balance: 500 }),
+    makeAccount({ id: 'a3', type: 'credit', subtype: null, balance: -200 }),
+    makeAccount({ id: 'a4', type: 'investment', subtype: 'brokerage', balance: 5000 }),
+  ];
+
+  it('groups by subtype (falling back to type), summing balances', () => {
+    expect(groupAccountsByType(accounts, identity)).toEqual([
+      { label: 'brokerage', balance: 5000 },
+      { label: 'checking', balance: 1500 },
+      { label: 'credit', balance: -200 },
+    ]);
+  });
+
+  it('sorts groups by descending balance', () => {
+    const result = groupAccountsByType(accounts, identity);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i - 1].balance).toBeGreaterThanOrEqual(result[i].balance);
+    }
+  });
+
+  it('applies the caller-supplied typeLabel to the grouping key', () => {
+    const result = groupAccountsByType(accounts, upper);
+    expect(result.map((r) => r.label)).toEqual(['BROKERAGE', 'CHECKING', 'CREDIT']);
+  });
+
+  it('buildTypeToAccountIds groups ids under the same key as groupAccountsByType', () => {
+    const map = buildTypeToAccountIds(accounts, identity);
+    expect(map.get('checking')).toEqual(['a1', 'a2']);
+    expect(map.get('credit')).toEqual(['a3']);
+    expect(map.get('brokerage')).toEqual(['a4']);
+  });
+
+  it('returns empty results for an empty account list', () => {
+    expect(groupAccountsByType([], identity)).toEqual([]);
+    expect(buildTypeToAccountIds([], identity).size).toBe(0);
   });
 });

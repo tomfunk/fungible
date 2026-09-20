@@ -13,7 +13,7 @@ const { TEST_DATA_DIR } = vi.hoisted(() => {
 
 vi.mock('../core/paths.js', () => ({ DATA_DIR: TEST_DATA_DIR }));
 
-import { writeEnvFile } from '../core/env-file.js';
+import { writeEnvFile, readEnvFile } from '../core/env-file.js';
 
 const ENV_PATH = path.join(TEST_DATA_DIR, '.env');
 
@@ -83,5 +83,33 @@ describe('writeEnvFile', () => {
   it('rejects invalid key names', () => {
     expect(() => writeEnvFile({ 'bad key': 'x' })).toThrow(/Invalid env key/);
     expect(() => writeEnvFile({ 'X=Y\nZ': 'x' })).toThrow(/Invalid env key/);
+  });
+});
+
+describe('readEnvFile', () => {
+  it('returns {} when the file does not exist', () => {
+    expect(readEnvFile()).toEqual({});
+  });
+
+  it('parses key=value lines into a map', () => {
+    fs.writeFileSync(ENV_PATH, 'PLAID_CLIENT_ID=abc\nPLAID_SECRET=shh\n');
+    expect(readEnvFile()).toEqual({ PLAID_CLIENT_ID: 'abc', PLAID_SECRET: 'shh' });
+  });
+
+  it('skips comments and blank lines', () => {
+    fs.writeFileSync(ENV_PATH, '# bank\nPLAID_CLIENT_ID=abc\n\n# other\n');
+    expect(readEnvFile()).toEqual({ PLAID_CLIENT_ID: 'abc' });
+  });
+
+  it('trims whitespace around values', () => {
+    fs.writeFileSync(ENV_PATH, 'PLAID_CLIENT_ID=  abc  \n');
+    expect(readEnvFile()).toEqual({ PLAID_CLIENT_ID: 'abc' });
+  });
+
+  it('round-trips through writeEnvFile', () => {
+    fs.writeFileSync(ENV_PATH, 'PLAID_CLIENT_ID=abc\nPLAID_SECRET=shh\n');
+    const existing = readEnvFile();
+    writeEnvFile({ ...existing, PLAID_SECRET: 'newsecret' });
+    expect(readEnvFile()).toEqual({ PLAID_CLIENT_ID: 'abc', PLAID_SECRET: 'newsecret' });
   });
 });

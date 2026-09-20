@@ -12,13 +12,8 @@ import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useLoadGuard } from '../hooks/useLoadGuard.js';
 import type { TagOption } from '../../../../core/tags.js';
-import { fmtTimeAgo } from '../../../../core/fmt.js';
+import { fmtTimeAgo, fmtTxAmount } from '../../../../core/fmt.js';
 import styles from './Transactions.module.css';
-
-function fmtAmount(amount: number) {
-  const s = `$${Math.abs(amount).toFixed(2)}`;
-  return amount < 0 ? `+${s}` : `-${s}`;
-}
 
 type SortCol = 'date' | 'name' | 'amount' | 'category';
 
@@ -325,7 +320,7 @@ export function Transactions() {
                 <td className={`num ${styles.tdDate}`}>{tx.date}</td>
                 <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
                 <td className={`num ${styles.tdAmount} ${!isIgnored && tx.amount < 0 ? 'pos' : ''}`}>
-                  {fmtAmount(tx.amount)}
+                  {fmtTxAmount(tx.amount)}
                 </td>
                 <td
                   className={`${styles.tdCat} ${

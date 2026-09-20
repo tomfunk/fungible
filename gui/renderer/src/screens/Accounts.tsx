@@ -15,6 +15,7 @@ import {
   describeRefreshProgress, describeRefreshResult, POLL_DELAYS_MS,
   type RefreshProgress, type RefreshResult,
 } from '../../../../core/transactions-refresh-format.js';
+import { resolveCsvAmount } from '../../../../core/accounts.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
@@ -1297,17 +1298,16 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
     (amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0);
 
   function previewAmount(row: string[]): string {
-    if (amountMode === 'single' && amountCol >= 0) {
-      const raw = parseFloat(row[amountCol] || '0') || 0;
-      const v = positiveIsInflow ? -raw : raw;
-      return `$${Math.abs(v).toFixed(2)}`;
-    }
-    if (amountMode === 'split' && debitCol >= 0 && creditCol >= 0) {
-      const d = parseFloat(row[debitCol] || '0') || 0;
-      const c = parseFloat(row[creditCol] || '0') || 0;
-      return `$${Math.abs(d > 0 ? d : c).toFixed(2)}`;
-    }
-    return '—';
+    const columnsChosen = amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0;
+    if (!columnsChosen) return '—';
+    const amount = resolveCsvAmount(row, {
+      amountMode,
+      amountCol: amountCol >= 0 ? amountCol : null,
+      debitCol: debitCol >= 0 ? debitCol : null,
+      creditCol: creditCol >= 0 ? creditCol : null,
+      positiveIsInflow,
+    });
+    return `$${Math.abs(amount).toFixed(2)}`;
   }
 
   async function doImport() {

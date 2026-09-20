@@ -14,7 +14,7 @@ import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows, getPeriodStart, formatPeriodLabel, BASIS_LABEL } from './dateUtils.js';
-import { bucketDrift, ratioLabel } from './scorecard.js';
+import { bucketDrift, ratioLabel, isHighSeverityDrift } from './scorecard.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { applyCategoriesToAll } from './categorize.js';
@@ -631,7 +631,7 @@ async function executeToolImpl(
           (ratio ? `  (${ratio})` : '') + ` ${mark}`;
       };
       const overMark = (r: CategoryDrift) =>
-        r.median12m === 0 || r.current / r.median12m >= 1.3 ? '🔴' : '🟡';
+        isHighSeverityDrift(r.current, r.median12m) ? '🔴' : '🟡';
 
       const out: string[] = [`Scorecard — ${label} · vs typical month (${rows[0]?.basisLabel ?? BASIS_LABEL['calendar-12mo']})`];
       if (over.length) {

@@ -17,7 +17,8 @@ import {
   type Range,
 } from '../../../../core/dateUtils.js';
 import type { AccountRow, CategoryDrift, DriftSlice, FlexSummary } from '../../../../core/queries.js';
-import { bucketDrift, isSignificantDelta, ratioLabel } from '../../../../core/scorecard.js';
+import { bucketDrift, driftSeverity, ratioLabel } from '../../../../core/scorecard.js';
+import type { SeverityLevel } from '../../../../core/severity.js';
 import { mergeFilters, type Filter } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import type { TxFilter } from '../../../shared/nav.js';
@@ -36,17 +37,23 @@ function pct(part: number, total: number) {
   return total === 0 ? '0%' : `${Math.round((part / total) * 100)}%`;
 }
 
+// SeverityLevel -> this screen's existing pos/warn/neg/(neutral) class names.
+function severityToClass(level: SeverityLevel): string {
+  switch (level) {
+    case 'good': return 'pos';
+    case 'caution': return 'warn';
+    case 'bad': return 'neg';
+    case 'neutral': return '';
+  }
+}
+
 /**
  * Heat-map class vs the median baseline, gated on significance (mirrors TUI
  * driftColor): rows inside the noise band stay neutral so only deltas worth
  * acting on get color.
  */
 function driftClass(slice: Pick<DriftSlice, 'current' | 'median12m' | 'medianDelta'>): string {
-  if (slice.current === 0 && slice.median12m === 0) return '';
-  if (!isSignificantDelta(slice.medianDelta, slice.median12m)) return '';
-  if (slice.medianDelta < 0) return 'pos';                       // meaningfully under
-  if (slice.median12m === 0) return 'neg';                       // new spending, no history
-  return slice.current / slice.median12m >= 1.3 ? 'neg' : 'warn';
+  return severityToClass(driftSeverity(slice.current, slice.median12m));
 }
 
 const BUCKET_META = {
