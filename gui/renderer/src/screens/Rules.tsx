@@ -91,21 +91,21 @@ export function Rules() {
       <KeyHints hints="[1-9·0] screens   [tab] section   [/] filter   [a] add" />
       <div className={styles.topBar}>
         <h1 className={styles.title}>Rules</h1>
-        <div className={styles.tabs}>
-          <button className={tab === 'rules' ? styles.tabActive : styles.tab} onClick={() => setTab('rules')}>
+        <div className="tabGroup">
+          <button className={tab === 'rules' ? 'tabActive' : 'tab'} onClick={() => setTab('rules')}>
             Rules ({merged.length})
           </button>
-          <button className={tab === 'tags' ? styles.tabActive : styles.tab} onClick={() => setTab('tags')}>
+          <button className={tab === 'tags' ? 'tabActive' : 'tab'} onClick={() => setTab('tags')}>
             Tag rules ({tagRules.length})
           </button>
-          <button className={tab === 'categories' ? styles.tabActive : styles.tab} onClick={() => setTab('categories')}>
+          <button className={tab === 'categories' ? 'tabActive' : 'tab'} onClick={() => setTab('categories')}>
             Categories ({catDetails.length})
           </button>
         </div>
         {tab !== 'categories' && (
           <input
             ref={searchRef}
-            className={styles.search}
+            className={`underline ${styles.search}`}
             placeholder="Filter…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -119,7 +119,7 @@ export function Rules() {
         )}
         {uncategorized > 0 && <span className="warn">{uncategorized} uncategorized</span>}
         <button
-          className={styles.addBtn}
+          className={`ghostBtn ${styles.addBtn}`}
           onClick={() => {
             if (tab === 'rules') setRuleForm({ editing: null });
             else if (tab === 'tags') setTagRuleForm({ editing: null });
@@ -509,11 +509,11 @@ function RuleFormModal({
       {pattern.trim() && !canSave && (
         <p className={styles.saveHint}>Pick a category or enter a display name to save.</p>
       )}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => void save()} disabled={!canSave}>
+        <button className="btnPrimary" onClick={() => void save()} disabled={!canSave}>
           Save
         </button>
       </div>
@@ -626,11 +626,11 @@ function TagRuleFormModal({
         </p>
       )}
       {error && <p className="neg">{error}</p>}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => void save()} disabled={!canSave}>
+        <button className="btnPrimary" onClick={() => void save()} disabled={!canSave}>
           Save
         </button>
       </div>
@@ -664,11 +664,11 @@ function CatNameModal({
         autoFocus
         className={styles.modalInput}
       />
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
+        <button className="btnPrimary" onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
           Save
         </button>
       </div>

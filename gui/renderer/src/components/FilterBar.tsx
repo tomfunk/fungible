@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
+import { useQuery } from '../hooks/useQuery.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { Modal } from './Modal.js';
 import {
@@ -23,22 +24,38 @@ import styles from './FilterBar.module.css';
 // instead of one per keystroke. Mirrors PREVIEW_DEBOUNCE_MS in tui/FilterPanel.
 const PREVIEW_DEBOUNCE_MS = 120;
 
+function fmtClock(ms: number | null | undefined): string | null {
+  if (ms === null || ms === undefined) return null;
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function FilterBar() {
   const { filter, committed, setFilter } = useFilter();
   const [open, setOpen] = useState(false);
   const active = isFilterActive(filter);
+  const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), []);
+  const synced = fmtClock(lastSynced);
 
   return (
     <div className={styles.bar}>
-      <button className={active ? styles.filterBtnActive : styles.filterBtn} onClick={() => setOpen(true)}>
-        ⚲ Filter{active ? `: ${filterSummary(filter)}` : ''}
-      </button>
-      {active && (
-        <button className={styles.clearBtn} onClick={() => setFilter(EMPTY_FILTER)}>
-          clear
+      <div className={styles.left}>
+        <button
+          className={active ? `chip ${styles.filterBtnActive}` : `chip ${styles.filterBtn}`}
+          onClick={() => setOpen(true)}
+        >
+          ⌕ filter{active ? `: ${filterSummary(filter)}` : ''}
         </button>
-      )}
-      <span className={`dim ${styles.hint}`}>applies to Dashboard, Transactions & Trends</span>
+        {active && (
+          <button className={styles.clearBtn} onClick={() => setFilter(EMPTY_FILTER)}>
+            clear
+          </button>
+        )}
+        <span className={styles.hint}>
+          {active ? 'applies to' : 'no filters ·'} dashboard, transactions, trends
+        </span>
+      </div>
+      {synced && <span className={styles.synced}>synced {synced}</span>}
       {open && (
         <FilterPanel
           committed={committed}
@@ -212,11 +229,11 @@ function FilterPanel({
             </div>
           )}
 
-          <div className={styles.actions}>
-            <button className={styles.btnSecondary} onClick={onClose}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={onClose}>
               Cancel
             </button>
-            <button className={styles.btnPrimary} onClick={apply}>
+            <button className="btnPrimary" onClick={apply}>
               Apply
             </button>
           </div>

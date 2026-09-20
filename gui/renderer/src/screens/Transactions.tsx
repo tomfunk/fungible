@@ -38,6 +38,7 @@ export function Transactions() {
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
   const [syncing, setSyncing] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const bounds = useQuery(() => api.queries.getDataBounds(), []);
   const categories = useQuery(() => api.queries.getAllCategories(), [reloadKey]) ?? [];
@@ -49,6 +50,29 @@ export function Transactions() {
       () => api.queries.getTransactions({ filter: sharedFilter, from, to, search, sort, txType, flex }),
       [from, to, search, sort, txType, flex, sharedFilter, reloadKey],
     ) ?? [];
+
+  // Selection is scoped to the current query result — any change to what's
+  // visible (filters, reload) drops a now-stale selection rather than
+  // silently carrying over ids that may no longer be on screen.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [from, to, search, sort, txType, flex, sharedFilter, reloadKey]);
+
+  const selectedTxs = selected.size > 0 ? txs.filter((t) => selected.has(t.id)) : txs;
+  const allVisibleSelected = txs.length > 0 && txs.every((t) => selected.has(t.id));
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelected(allVisibleSelected ? new Set() : new Set(txs.map((t) => t.id)));
+  }
 
   // ── Modals ──
   const [editTx, setEditTx] = useState<TxRow | null>(null);
@@ -191,10 +215,16 @@ export function Transactions() {
     <div className={styles.screen}>
       <KeyHints hints="[1-9·0] screens   [/] search   [s] sort   [u] uncategorized   [a] all   [← →] month   [esc] clear" />
       <div className={styles.topBar}>
-        <h1 className={styles.title}>Transactions</h1>
+        <div className={styles.titleRow}>
+          <h1 className={styles.title}>Transactions</h1>
+          <span className={`num ${styles.count}`}>
+            {txs.length} transaction{txs.length === 1 ? '' : 's'}
+            {txs.length === 200 ? ' (limit 200)' : ''}
+          </span>
+        </div>
         <input
           ref={searchRef}
-          className={styles.search}
+          className={`underline ${styles.search}`}
           placeholder="Search…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -205,9 +235,9 @@ export function Transactions() {
             }
           }}
         />
-        <div className={styles.quickFilters}>
+        <div className="pillGroup">
           <button
-            className={sharedFilter.categories?.length === 1 && sharedFilter.categories[0] === 'Uncategorized' ? styles.qfActive : styles.qf}
+            className={sharedFilter.categories?.length === 1 && sharedFilter.categories[0] === 'Uncategorized' ? 'pillActive' : 'pill'}
             onClick={() => {
               setSearch('');
               setFrom(null);
@@ -217,16 +247,16 @@ export function Transactions() {
           >
             Uncategorized
           </button>
-          <button className={styles.qf} onClick={clearAll}>
+          <button className="pill" onClick={clearAll}>
             All
           </button>
         </div>
         <div className={styles.syncRow}>
-          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
+          <button className="ghostBtn" onClick={() => void forceSync()} disabled={syncing}>
             {syncing ? 'Syncing…' : '⟳ Sync'}
           </button>
           {lastSynced !== undefined && (
-            <span className="dim">Last synced {fmtTimeAgo(lastSynced ?? null)}</span>
+            <span className={styles.syncedAt}>Last synced {fmtTimeAgo(lastSynced ?? null)}</span>
           )}
         </div>
       </div>
@@ -259,52 +289,70 @@ export function Transactions() {
       )}
 
       <div className={styles.bulkBar}>
-        <span className="dim">
-          {txs.length} transaction{txs.length === 1 ? '' : 's'}
-          {txs.length === 200 ? ' (limit 200)' : ''}
+        <span className={styles.bulkCount}>
+          {selected.size > 0 ? `${selected.size} selected` : `${txs.length} visible`}
         </span>
         {txs.length > 0 && (
           <div className={styles.bulkBtns}>
-            <button className={styles.bulkBtn} onClick={() => setBulkCat(true)}>
-              Categorize all
+            <button className="ghostBtn" onClick={() => setBulkCat(true)}>
+              Categorize
             </button>
-            <button className={styles.bulkBtn} onClick={() => setBulkTag(true)}>
-              Tag all
+            <button className="ghostBtn" onClick={() => setBulkTag(true)}>
+              Tag
             </button>
             <button
-              className={styles.bulkBtn}
+              className="ghostBtn"
               onClick={async () => {
-                const count = txs.filter((t) => t.manual_category).length;
-                await api.transactions.clearOverridesBulk(txs.map((t) => t.id));
+                const count = selectedTxs.filter((t) => t.manual_category).length;
+                await api.transactions.clearOverridesBulk(selectedTxs.map((t) => t.id));
                 showStatus(`Cleared overrides on ${count} transaction${count === 1 ? '' : 's'}`, 2500);
+                setSelected(new Set());
                 reload();
               }}
             >
               Clear overrides
             </button>
             <button
-              className={styles.bulkBtn}
+              className="ghostBtn"
               onClick={async () => {
-                const target = !txs[0]?.ignored;
-                await api.transactions.setIgnoredBulk(txs.map((t) => t.id), target);
-                showStatus(`${target ? 'Ignored' : 'Un-ignored'} ${txs.length} transaction${txs.length === 1 ? '' : 's'}`, 2500);
+                const target = !selectedTxs[0]?.ignored;
+                await api.transactions.setIgnoredBulk(selectedTxs.map((t) => t.id), target);
+                showStatus(`${target ? 'Ignored' : 'Un-ignored'} ${selectedTxs.length} transaction${selectedTxs.length === 1 ? '' : 's'}`, 2500);
+                setSelected(new Set());
                 reload();
               }}
             >
-              {txs[0]?.ignored ? 'Un-ignore all' : 'Ignore all'}
+              {selectedTxs[0]?.ignored ? 'Un-ignore' : 'Ignore'}
             </button>
           </div>
         )}
       </div>
 
       <table className={styles.table}>
+        <colgroup>
+          <col className={styles.colCheck} />
+          <col className={styles.colDate} />
+          <col />
+          <col className={styles.colCategory} />
+          <col className={styles.colTags} />
+          <col className={styles.colAmount} />
+          <col className={styles.colActions} />
+        </colgroup>
         <thead>
           <tr>
+            <th className={styles.th}>
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleSelectAll}
+                aria-label="Select all visible"
+              />
+            </th>
             {sortHeader('date', 'Date')}
             {sortHeader('name', 'Description')}
-            {sortHeader('amount', 'Amount', true)}
             {sortHeader('category', 'Category')}
             <th className={styles.th}>Tags</th>
+            {sortHeader('amount', 'Amount', true)}
             <th className={styles.th} />
           </tr>
         </thead>
@@ -318,22 +366,28 @@ export function Transactions() {
                 className={`${styles.row} ${isIgnored ? styles.rowIgnored : ''}`}
                 onClick={() => setEditTx(tx)}
               >
-                <td className={`num ${styles.tdDate}`}>{tx.date}</td>
-                <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
-                <td className={`num ${styles.tdAmount} ${!isIgnored && tx.amount < 0 ? 'pos' : ''}`}>
-                  {fmtTxAmount(tx.amount)}
+                <td className={styles.tdCheck} onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggleSelected(tx.id)} />
                 </td>
+                <td className={`num ${styles.tdDate}`}>{dl ? tx.date.slice(5) : tx.date}</td>
+                <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
                 <td
                   className={`${styles.tdCat} ${
-                    isIgnored ? '' : tx.category === 'Uncategorized' ? 'warn' : isPinned ? 'manual' : ''
+                    isIgnored ? '' : tx.category === 'Uncategorized' ? 'warn' : isPinned ? 'manual' : 'dim'
                   }`}
                   title={isPinned ? 'Manually categorized' : undefined}
                 >
-                  {isPinned ? '◆ ' : ''}
                   {isIgnored ? '~ ' : ''}
                   {tx.category}
                 </td>
-                <td className={`${styles.tdTags} accent`}>{tx.tag_names ?? ''}</td>
+                <td className={styles.tdTags}>
+                  {tx.tag_names?.split(', ').map((t) => (
+                    <span key={t}>{t}</span>
+                  ))}
+                </td>
+                <td className={`num ${styles.tdAmount} ${!isIgnored && tx.amount < 0 ? 'pos' : ''}`}>
+                  {fmtTxAmount(tx.amount)}
+                </td>
                 <td className={styles.tdActions}>
                   <button
                     className={styles.rowBtn}
@@ -418,12 +472,13 @@ export function Transactions() {
       {bulkCat && (
         <BulkCategoryModal
           categories={categories}
-          count={txs.length}
+          count={selectedTxs.length}
           onClose={() => setBulkCat(false)}
           onPick={async (cat) => {
-            await api.transactions.setTransactionCategoryBulk(txs.map((t) => t.id), cat);
+            await api.transactions.setTransactionCategoryBulk(selectedTxs.map((t) => t.id), cat);
             setBulkCat(false);
-            showStatus(`Set category to "${cat}" for ${txs.length} transaction${txs.length === 1 ? '' : 's'}`, 3000);
+            showStatus(`Set category to "${cat}" for ${selectedTxs.length} transaction${selectedTxs.length === 1 ? '' : 's'}`, 3000);
+            setSelected(new Set());
             reload();
           }}
         />
@@ -431,12 +486,13 @@ export function Transactions() {
 
       {bulkTag && (
         <BulkTagModal
-          count={txs.length}
+          count={selectedTxs.length}
           onClose={() => setBulkTag(false)}
           onPick={async (tagId) => {
-            await api.tags.addTagToTransactions(txs.map((t) => t.id), tagId);
+            await api.tags.addTagToTransactions(selectedTxs.map((t) => t.id), tagId);
             setBulkTag(false);
-            showStatus(`Tagged ${txs.length} transaction${txs.length === 1 ? '' : 's'}`, 2500);
+            showStatus(`Tagged ${selectedTxs.length} transaction${selectedTxs.length === 1 ? '' : 's'}`, 2500);
+            setSelected(new Set());
             reload();
           }}
         />
@@ -597,11 +653,11 @@ function EditModal({
           </p>
         )}
         {error && <p className="neg">{error}</p>}
-        <div className={styles.modalActions}>
-          <button className={styles.btnSecondary} onClick={declineSuggestion}>
+        <div className="modalActions">
+          <button className="btnSecondary" onClick={declineSuggestion}>
             No, just this once
           </button>
-          <button className={styles.btnPrimary} onClick={() => void acceptSuggestion()}>
+          <button className="btnPrimary" onClick={() => void acceptSuggestion()}>
             {isConflict ? 'Yes, update the rule' : 'Yes, make a rule'}
           </button>
         </div>
@@ -651,11 +707,11 @@ function EditModal({
         </p>
       )}
       {error && <p className="neg">{error}</p>}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => void save()}>
+        <button className="btnPrimary" onClick={() => void save()}>
           {isRule ? 'Save as rule' : 'Save'}
         </button>
       </div>
@@ -714,17 +770,17 @@ function TagModal({ tx, onClose }: { tx: TxRow; onClose: () => void }) {
         autoFocus
         className={styles.tagInput}
       />
-      <div className={styles.tagList}>
+      <div className="pickList">
         {filteredTags.map((t) => {
           const has = txTagIds.has(t.id);
           return (
-            <button key={t.id} className={has ? styles.tagRowOn : styles.tagRow} onClick={() => void toggle(t.id)}>
+            <button key={t.id} className={has ? "pickRowOn" : "pickRow"} onClick={() => void toggle(t.id)}>
               <span>{has ? '●' : '○'}</span> {t.name}
             </button>
           );
         })}
         {filteredTags.length === 0 && input.trim() && (
-          <button className={styles.tagRow} onClick={() => void createAndApply()}>
+          <button className="pickRow" onClick={() => void createAndApply()}>
             + create “{input.trim()}”
           </button>
         )}
@@ -752,9 +808,9 @@ function BulkCategoryModal({
   return (
     <Modal title={`Set category for ${count} visible transaction${count === 1 ? '' : 's'}`} onClose={onClose} accent="var(--manual)">
       <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter…" autoFocus className={styles.tagInput} />
-      <div className={styles.tagList}>
+      <div className="pickList">
         {visible.map((c) => (
-          <button key={c} className={styles.tagRow} onClick={() => onPick(c)}>
+          <button key={c} className="pickRow" onClick={() => onPick(c)}>
             {c}
           </button>
         ))}
@@ -799,14 +855,14 @@ function BulkTagModal({
         autoFocus
         className={styles.tagInput}
       />
-      <div className={styles.tagList}>
+      <div className="pickList">
         {filteredTags.map((t) => (
-          <button key={t.id} className={styles.tagRow} onClick={() => onPick(t.id)}>
+          <button key={t.id} className="pickRow" onClick={() => onPick(t.id)}>
             {t.name}
           </button>
         ))}
         {filteredTags.length === 0 && input.trim() && (
-          <button className={styles.tagRow} onClick={() => void createAndApply()}>
+          <button className="pickRow" onClick={() => void createAndApply()}>
             + create & apply “{input.trim()}”
           </button>
         )}

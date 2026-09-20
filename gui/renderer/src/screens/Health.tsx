@@ -85,22 +85,22 @@ export function Health() {
       <h1 className={styles.title}>Financial Health</h1>
 
       {/* Three-number summary — the whole story at a glance */}
-      <div className={styles.cards}>
-        <div className={styles.card}>
-          <div className={styles.cardLabel}>Savings Rate</div>
+      <div className="kpiStrip">
+        <div className="kpiCell">
+          <div className="kpiLabel">Savings Rate</div>
           {savingsRate === null ? (
-            <div className={`dim ${styles.cardValue}`}>—</div>
+            <div className="dim kpiFigure">—</div>
           ) : (
-            <div className={`num ${severityToClass(savingsRateSeverity(savingsRate))} ${styles.cardValue}`}>{fmtPct(savingsRate)}</div>
+            <div className={`num ${severityToClass(savingsRateSeverity(savingsRate))} kpiFigure`}>{fmtPct(savingsRate)}</div>
           )}
         </div>
-        <div className={styles.card}>
-          <div className={styles.cardLabel}>Net Worth</div>
-          <div className={`num ${data.netWorth >= 0 ? 'pos' : 'neg'} ${styles.cardValue}`}>{fmtCompact(data.netWorth)}</div>
+        <div className="kpiCell">
+          <div className="kpiLabel">Net Worth</div>
+          <div className={`num kpiFigure ${data.netWorth >= 0 ? 'pos' : 'neg'}`}>{fmtCompact(data.netWorth)}</div>
         </div>
-        <div className={styles.card}>
-          <div className={styles.cardLabel}>Years to FIRE</div>
-          <div className={`num ${years === null ? 'warn' : years === 0 ? 'pos' : 'accent'} ${styles.cardValue}`}>
+        <div className="kpiCell">
+          <div className="kpiLabel">Years to FIRE</div>
+          <div className={`num kpiFigure ${years === null ? 'warn' : years === 0 ? 'pos' : 'accent'}`}>
             {years === null ? '100+ yr' : years === 0 ? 'Now!' : `~${Math.ceil(years)} yr`}
           </div>
         </div>
@@ -108,7 +108,7 @@ export function Health() {
 
       {/* Cash Flow + Retirement detail */}
       <div className={styles.twoCol}>
-        <section className={`${styles.panel} ${styles.panelFlex}`}>
+        <section className={styles.panel}>
           <h2>Cash Flow</h2>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Monthly income</span>
@@ -120,7 +120,7 @@ export function Health() {
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Savings rate</span>
             {savingsRate === null ? (
-              <span className="dim">—</span>
+              <span className={`dim ${styles.metricValue}`}>—</span>
             ) : (
               <span className={`num ${severityToClass(savingsRateSeverity(savingsRate))} ${styles.metricValue}`}>{fmtPct(savingsRate)}</span>
             )}
@@ -214,7 +214,7 @@ export function Health() {
           )}
         </section>
 
-        <section className={`${styles.panel} ${styles.panelFlex}`}>
+        <section className={styles.panel}>
           <h2>Retirement</h2>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Net worth</span>

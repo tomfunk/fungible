@@ -13,36 +13,38 @@
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
+/* Native <select>, restyled: appearance stripped, own caret drawn via the
+   wrapper's ::after so it matches the hairline system's 5px-radius bordered
+   controls instead of the OS default. */
+.viewSelectWrap {
+  position: relative;
+  min-width: 170px;
+}
+
 .viewSelect {
-  min-width: 160px;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 170px;
+  padding: 5px 26px 5px 10px;
+  font-size: 13px;
 }
 
-.rangePills {
-  display: flex;
-  gap: 4px;
-}
-
-.pill,
-.pillActive {
-  padding: 5px 12px;
-  border-radius: 14px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-}
-
-.pill:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.pillActive {
-  background: var(--bg-raised);
-  color: var(--accent);
-  font-weight: 600;
+.viewSelectWrap::after {
+  content: '▾';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-faint);
+  pointer-events: none;
 }
 
 .searchWrap {
@@ -56,6 +58,12 @@
   width: 220px;
 }
 
+.matchCount {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
 .clearSearch {
   color: var(--text-dim);
   font-size: 12.5px;
@@ -66,51 +74,36 @@
   color: var(--text);
 }
 
-.panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 12px 6px;
+.chartSection {
+  display: flex;
+  flex-direction: column;
 }
 
 .chartHint {
   text-align: center;
   font-size: 12px;
+  color: var(--text-faint);
   margin: 4px 0 8px;
 }
 
-.cards {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 20px;
-  min-width: 150px;
-  text-align: left;
-}
-
-.cardClickable {
+/* Peak KPI cell deviates from the standard 24px .kpiFigure — a period label
+   at 21px next to a smaller inline mono amount — so it gets its own figure
+   classes layered under the shared .kpiCell/.kpiLabel. */
+.peakCell {
   cursor: pointer;
 }
 
-.cardClickable:hover {
-  border-color: var(--accent);
+.peakCell:hover {
+  background: var(--bg-hover);
 }
 
-.cardLabel {
-  font-size: 12px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 6px;
+.peakValue {
+  font-size: 21px;
+  color: var(--text);
+  display: block;
 }
 
-.cardValue {
-  font-size: 18px;
-  font-weight: 600;
+.peakAmount {
+  font-size: 16px;
+  margin-left: 6px;
 }

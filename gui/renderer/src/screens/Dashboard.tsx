@@ -69,8 +69,8 @@ function fmtDelta(delta: number): string {
 function Bar({ value, max, color }: { value: number; max: number; color?: string }) {
   const w = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
-    <div className={styles.barTrack}>
-      <div className={styles.barFill} style={{ width: `${w}%`, background: color ?? 'var(--accent)' }} />
+    <div className="barTrack">
+      <div className="barFill" style={{ width: `${w}%`, background: color ?? 'var(--accent)' }} />
     </div>
   );
 }
@@ -271,9 +271,9 @@ export function Dashboard() {
             </button>
           )}
         </div>
-        <div className={styles.rangePills}>
+        <div className={`pillGroup ${styles.rangePills}`}>
           {RANGES.map((r) => (
-            <button key={r} className={r === range ? styles.pillActive : styles.pill} onClick={() => pickRange(r)}>
+            <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => pickRange(r)}>
               {RANGE_LABELS[r]}
             </button>
           ))}
@@ -281,9 +281,9 @@ export function Dashboard() {
       </div>
 
       <div className={styles.controls}>
-        <div className={styles.tabs}>
+        <div className="tabGroup">
           {views.map((v) => (
-            <button key={v} className={v === view ? styles.tabActive : styles.tab} onClick={() => { setView(v); setMerchantDrill(null); }}>
+            <button key={v} className={v === view ? 'tabActive' : 'tab'} onClick={() => { setView(v); setMerchantDrill(null); }}>
               {VIEW_LABELS[v]}
             </button>
           ))}
@@ -307,7 +307,7 @@ export function Dashboard() {
         <div className={styles.searchWrap}>
           <input
             ref={searchRef}
-            className={styles.search}
+            className={`underline ${styles.search}`}
             placeholder="Search transactions…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -347,29 +347,29 @@ export function Dashboard() {
       </div>
 
       {displaySummary && (
-        <div className={styles.cards}>
-          <div className={styles.card}>
-            <div className={styles.cardLabel}>Income</div>
-            <div className={`num pos ${styles.cardValue}`}>{fmt(displaySummary.income)}</div>
+        <div className="kpiStrip">
+          <div className="kpiCell">
+            <div className="kpiLabel">Income</div>
+            <div className="num pos kpiFigure">{fmt(displaySummary.income)}</div>
           </div>
-          <div className={styles.card}>
-            <div className={styles.cardLabel}>Expenses</div>
-            <div className={`num neg ${styles.cardValue}`}>{fmt(displaySummary.expenses)}</div>
+          <div className="kpiCell">
+            <div className="kpiLabel">Expenses</div>
+            <div className="num neg kpiFigure">{fmt(displaySummary.expenses)}</div>
           </div>
-          <div className={styles.card}>
-            <div className={styles.cardLabel}>Net</div>
-            <div className={`num ${displaySummary.net >= 0 ? 'pos' : 'neg'} ${styles.cardValue}`}>
+          <div className="kpiCell">
+            <div className="kpiLabel">Net</div>
+            <div className={`num kpiFigure ${displaySummary.net >= 0 ? 'pos' : 'neg'}`}>
               {fmtSigned(displaySummary.net)}
             </div>
           </div>
           {!search && (uncategorized ?? 0) > 0 && (
             <button
-              className={`${styles.card} ${styles.cardClickable}`}
+              className={`kpiCell ${styles.cardClickable}`}
               onClick={() => drillToTransactions({ categories: ['Uncategorized'] })}
               title="Review uncategorized transactions"
             >
-              <div className={styles.cardLabel}>Uncategorized</div>
-              <div className={`num warn ${styles.cardValue}`}>{uncategorized} txns</div>
+              <div className="kpiLabel">Uncategorized</div>
+              <div className="num warn kpiFigure">{uncategorized} txns</div>
             </button>
           )}
         </div>
@@ -512,6 +512,15 @@ export function Dashboard() {
             <p className="dim">{search ? 'No matching transactions for this period.' : 'No expense data for this period.'}</p>
           ) : (
             <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Category</th>
+                  <th className={styles.th}>Amount</th>
+                  <th className={styles.th} />
+                  <th className={styles.th}>Share</th>
+                  <th className={styles.th} />
+                </tr>
+              </thead>
               <tbody>
                 {categories.map((row) => (
                   <tr
@@ -524,6 +533,7 @@ export function Dashboard() {
                     <td className={styles.tdBar}>
                       <Bar value={row.total} max={maxCategorySpend} />
                     </td>
+                    <td className="num dim">{pct(row.total, totalExpenses)}</td>
                     <td className={styles.tdAction}>
                       {!search && (
                         <button

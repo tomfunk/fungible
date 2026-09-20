@@ -84,4 +84,34 @@ describe('GUI Trends', () => {
       expect(selected).toBe('Grocery');
     });
   });
+
+  it('chart type toggle defaults to Bars and switches to Line, updating the hint', async () => {
+    renderScreen(<Trends />);
+    await screen.findByRole('combobox');
+    const barsBtn = await screen.findByRole('button', { name: 'Bars' });
+    const lineBtn = screen.getByRole('button', { name: 'Line' });
+    expect(barsBtn.className).toContain('pillActive');
+    expect(lineBtn.className).not.toContain('pillActive');
+    await waitFor(() => expect(screen.getByText(/Click a bar/)).toBeTruthy());
+
+    await userEvent.click(lineBtn);
+    expect(lineBtn.className).toContain('pillActive');
+    expect(barsBtn.className).not.toContain('pillActive');
+    await waitFor(() => expect(screen.getByText(/Click a point/)).toBeTruthy());
+  });
+
+  it('hides the chart type toggle for the stacked Flexibility breakdown view', async () => {
+    renderScreen(<Trends />);
+    const select = await screen.findByRole('combobox');
+    expect(screen.getByRole('button', { name: 'Line' })).toBeTruthy();
+
+    await userEvent.selectOptions(select, 'Flexibility');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Line' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Bars' })).toBeNull();
+
+    // Switching back to a non-stacked view brings the toggle back, defaulted to Bars.
+    await userEvent.selectOptions(select, 'Expenses');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Line' })).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Bars' }).className).toContain('pillActive');
+  });
 });

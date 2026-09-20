@@ -145,10 +145,10 @@ export function NetWorth() {
   }
 
   function renderDot(inChart: boolean) {
-    if (!isFiltered) return <span className={styles.dotDefault}>●</span>;
+    if (!isFiltered) return <span className={`dim ${styles.dotDefault}`}>●</span>;
     return inChart
-      ? <span className={styles.dotIn}>●</span>
-      : <span className={styles.dotOut}>○</span>;
+      ? <span className="pos">●</span>
+      : <span className={`dim ${styles.dotOut}`}>○</span>;
   }
 
   return (
@@ -157,6 +157,15 @@ export function NetWorth() {
       <div className={styles.topBar}>
         <h1 className={styles.title}>Net Worth</h1>
         <span className={`num ${netWorth >= 0 ? 'pos' : 'neg'} ${styles.bigNumber}`}>{fmtSigned(netWorth)}</span>
+        {chartData.length > 0 && (
+          <div className={`pillGroup ${styles.rangePills}`}>
+            {NW_RANGES.map((r) => (
+              <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
+                {NW_RANGE_LABELS[r]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {accounts.length === 0 ? (
@@ -164,67 +173,78 @@ export function NetWorth() {
       ) : (
         <>
           {chartData.length > 0 && (
-            <section className={`${styles.panel} ${anyFilterActive ? styles.panelFiltered : ''}`}>
-              <div className={styles.panelHeader}>
-                <h2>History</h2>
-                <div className={styles.rangePills}>
-                  {NW_RANGES.map((r) => (
-                    <button key={r} className={r === range ? styles.pillActive : styles.pill} onClick={() => setRange(r)}>
-                      {NW_RANGE_LABELS[r]}
+            <section>
+              <div className="sectionHead">
+                <span className="sectionLabel">History</span>
+                <div className={styles.legendRow}>
+                  {SERIES.map(({ key, label, color }) => (
+                    <button
+                      key={key}
+                      className={hiddenSeries.has(key) ? styles.legendItemHidden : styles.legendItem}
+                      style={hiddenSeries.has(key) ? undefined : { color }}
+                      onClick={() => toggleSeries(key)}
+                    >
+                      <span aria-hidden="true">—</span> {label}
                     </button>
                   ))}
+                </div>
+              </div>
+              {(isFiltered || anyFilterActive) && (
+                <div className={styles.filterRow}>
+                  {isFiltered && (
+                    <span className={`num ${styles.filterNote}`}>
+                      {selectedIds!.size} of {totalIncluded} account{totalIncluded !== 1 ? 's' : ''}
+                    </span>
+                  )}
                   {anyFilterActive && (
                     <button className={styles.resetAllBtn} onClick={resetAll}>Reset</button>
                   )}
                 </div>
+              )}
+              <div className={styles.chartFrame}>
+                <ResponsiveContainer width="100%" height={300}>
+                  <ComposedChart data={chartData}>
+                    <CartesianGrid stroke="var(--rule)" strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      stroke="var(--rule)"
+                      tick={{ fontSize: 11, fill: chartTheme.axis, fontFamily: 'var(--font-mono)' }}
+                      tickLine={false}
+                      minTickGap={24}
+                    />
+                    <YAxis
+                      stroke="var(--rule)"
+                      tick={{ fontSize: 11, fill: chartTheme.axis, fontFamily: 'var(--font-mono)' }}
+                      tickLine={false}
+                      tickFormatter={(v: number) => fmtCompact(v)}
+                      width={70}
+                    />
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      labelStyle={tooltipLabelStyle}
+                      formatter={(value, name) => [fmt(Number(value)), String(name)]}
+                    />
+                    <ReferenceLine y={0} stroke={chartTheme.axis} />
+                    {!hiddenSeries.has('assets') && (
+                      <Area type="monotone" dataKey="assets" name="Assets" stroke={chartTheme.positive} fill={chartTheme.positive} fillOpacity={0.15} strokeWidth={2} />
+                    )}
+                    {!hiddenSeries.has('liabilities') && (
+                      <Area type="monotone" dataKey="liabilities" name="Liabilities" stroke={chartTheme.negative} fill={chartTheme.negative} fillOpacity={0.15} strokeWidth={2} />
+                    )}
+                    {!hiddenSeries.has('net') && (
+                      <Line type="monotone" dataKey="net" name="Net worth" stroke={chartTheme.accent} dot={false} strokeWidth={2} />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
               </div>
-              <div className={styles.seriesRow}>
-                {SERIES.map(({ key, label, color }) => (
-                  <button
-                    key={key}
-                    className={hiddenSeries.has(key) ? styles.seriesPillHidden : styles.seriesPill}
-                    style={hiddenSeries.has(key) ? undefined : { borderColor: color, color }}
-                    onClick={() => toggleSeries(key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-                {isFiltered && (
-                  <span className={styles.filterNote}>
-                    {selectedIds!.size} of {totalIncluded} account{totalIncluded !== 1 ? 's' : ''}
-                  </span>
-                )}
-              </div>
-              <ResponsiveContainer width="100%" height={360}>
-                <ComposedChart data={chartData}>
-                  <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" stroke={chartTheme.axis} tick={{ fontSize: 12 }} minTickGap={24} />
-                  <YAxis stroke={chartTheme.axis} tick={{ fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} width={80} />
-                  <Tooltip
-                    contentStyle={tooltipStyle}
-                    labelStyle={tooltipLabelStyle}
-                    formatter={(value, name) => [fmt(Number(value)), String(name)]}
-                  />
-                  <ReferenceLine y={0} stroke={chartTheme.axis} />
-                  {!hiddenSeries.has('assets') && (
-                    <Area type="monotone" dataKey="assets" name="Assets" stroke={chartTheme.positive} fill={chartTheme.positive} fillOpacity={0.15} strokeWidth={1.5} />
-                  )}
-                  {!hiddenSeries.has('liabilities') && (
-                    <Area type="monotone" dataKey="liabilities" name="Liabilities" stroke={chartTheme.negative} fill={chartTheme.negative} fillOpacity={0.15} strokeWidth={1.5} />
-                  )}
-                  {!hiddenSeries.has('net') && (
-                    <Line type="monotone" dataKey="net" name="Net worth" stroke={chartTheme.accent} dot={false} strokeWidth={2.5} />
-                  )}
-                </ComposedChart>
-              </ResponsiveContainer>
             </section>
           )}
 
           <div className={styles.columns}>
             {/* Assets */}
-            <section className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <h2 className="pos">Assets</h2>
+            <section>
+              <div className="sectionHead">
+                <span className="sectionLabel">Assets</span>
                 <button className={styles.toggleBtn} onClick={() => setView((v) => (v === 'accounts' ? 'types' : 'accounts'))}>
                   {view === 'accounts' ? 'group by type' : 'show accounts'}
                 </button>
@@ -241,9 +261,11 @@ export function NetWorth() {
                             onClick={() => toggleAccount(a.id)}
                           >
                             <td className={styles.tdDot}>{renderDot(inChart)}</td>
-                            <td className={styles.tdName}>{a.nickname ?? a.name}</td>
+                            <td className={styles.tdName}>
+                              {a.nickname ?? a.name}
+                              <span className={styles.tdSub}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</span>
+                            </td>
                             <td className="num">{fmt(a.balance)}</td>
-                            <td className={`dim ${styles.tdSub}`}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</td>
                           </tr>
                         );
                       })
@@ -258,7 +280,6 @@ export function NetWorth() {
                             <td className={styles.tdDot}>{renderDot(inChart)}</td>
                             <td className={styles.tdName}>{t.label}</td>
                             <td className="num">{fmt(t.balance)}</td>
-                            <td />
                           </tr>
                         );
                       })}
@@ -266,16 +287,15 @@ export function NetWorth() {
                     <td />
                     <td className={styles.tdName}>Total assets</td>
                     <td className="num pos">{fmt(totalAssets)}</td>
-                    <td />
                   </tr>
                 </tbody>
               </table>
             </section>
 
             {/* Liabilities */}
-            <section className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <h2 className="neg">Liabilities</h2>
+            <section>
+              <div className={styles.sectionLabelAlone}>
+                <span className="sectionLabel">Liabilities</span>
               </div>
               {liabilities.length === 0 ? (
                 <p className="dim">None — debt free.</p>
@@ -323,23 +343,24 @@ export function NetWorth() {
           </div>
 
           {excluded.length > 0 && (
-            <section className={styles.panel}>
-              <div className={styles.panelHeader}>
-                <h2 className="dim">Excluded (not in net worth)</h2>
+            <section>
+              <div className={styles.sectionLabelAlone}>
+                <span className="sectionLabel">Excluded (not in net worth)</span>
               </div>
               <table className={styles.table}>
                 <tbody>
                   {excluded.map((a) => (
                     <tr key={a.id} className="dim">
-                      <td className={styles.tdName}>{a.nickname ?? a.name}</td>
+                      <td className={styles.tdName}>
+                        {a.nickname ?? a.name}
+                        <span className={styles.tdSub}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</span>
+                      </td>
                       <td className="num">{fmt(a.balance)}</td>
-                      <td className={`dim ${styles.tdSub}`}>{SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type)}</td>
                     </tr>
                   ))}
                   <tr className={styles.totalRow}>
                     <td className={styles.tdName}>Excluded total</td>
                     <td className="num dim">{fmtSigned(exclNet)}</td>
-                    <td />
                   </tr>
                 </tbody>
               </table>

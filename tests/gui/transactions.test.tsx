@@ -235,7 +235,7 @@ describe('GUI Transactions', () => {
   it('bulk categorize-all applies to every visible transaction', async () => {
     renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
     await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Categorize all' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Categorize' }));
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Dining' }));
     await waitFor(() => expect(screen.getByText(/Set category to "Dining" for 3 transactions/)).toBeTruthy());

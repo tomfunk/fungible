@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { useStatus } from '../hooks/useStatus.js';
 import type { Profile, HouseholdMember } from '../../../../core/profile.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { useUiPrefs, type PaletteName } from '../hooks/useUiPrefs.js';
+import { useUiPrefs, type PaletteName, type RowDensity } from '../hooks/useUiPrefs.js';
 import styles from './Settings.module.css';
 
 const MIN_YEAR = 1900;
@@ -89,8 +89,8 @@ export function Settings() {
 
       <AppearancePanel />
 
-      <section className={styles.panel}>
-        <h2>Household</h2>
+      <section className={styles.section}>
+        <h2 className={`sectionLabel ${styles.sectionTitle}`}>Household</h2>
         <p className="dim">
           Used for age-aware planning (retirement timelines, college horizons) and account-owner assignment.
         </p>
@@ -109,7 +109,7 @@ export function Settings() {
           />
         ) : (
           <button
-            className={styles.addBtn}
+            className={`ghostBtn ${styles.addBtn}`}
             onClick={() => setProfile({ ...profile, spouse: { name: '', birthYear: 0 } })}
           >
             + Add spouse / partner
@@ -126,7 +126,7 @@ export function Settings() {
           />
         ))}
         <button
-          className={styles.addBtn}
+          className={`ghostBtn ${styles.addBtn}`}
           onClick={() => setProfile({ ...profile, children: [...profile.children, { name: '', birthYear: 0 }] })}
         >
           + Add child
@@ -134,7 +134,7 @@ export function Settings() {
 
         <div className={styles.actions}>
           {!valid && <span className="dim">Every member needs a name and a valid birth year.</span>}
-          <button className={styles.btnPrimary} onClick={() => void save()} disabled={!valid}>
+          <button className="btnPrimary" onClick={() => void save()} disabled={!valid}>
             Save profile
           </button>
         </div>
@@ -157,12 +157,17 @@ const PALETTE_OPTIONS: { value: PaletteName; label: string }[] = [
   { value: 'monochrome', label: 'Monochrome' },
 ];
 
+const DENSITY_OPTIONS: { value: RowDensity; label: string }[] = [
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'compact', label: 'Compact' },
+];
+
 function AppearancePanel() {
-  const { palette, setPalette } = useUiPrefs();
+  const { palette, setPalette, density, setDensity } = useUiPrefs();
 
   return (
-    <section className={styles.panel}>
-      <h2>Appearance</h2>
+    <section className={styles.section}>
+      <h2 className={`sectionLabel ${styles.sectionTitle}`}>Appearance</h2>
       <p className="dim">Color palette for charts and status colors. Applies immediately.</p>
 
       <div className={styles.configRow}>
@@ -174,6 +179,20 @@ function AppearancePanel() {
           {PALETTE_OPTIONS.map((p) => (
             <option key={p.value} value={p.value}>
               {p.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>
+          Row density
+          <span className={styles.configHint}>Vertical padding for every table — Transactions, Net Worth, Rules, Accounts, Tags, Canvas</span>
+        </label>
+        <select aria-label="Row density" value={density} onChange={(e) => setDensity(e.target.value as RowDensity)}>
+          {DENSITY_OPTIONS.map((d) => (
+            <option key={d.value} value={d.value}>
+              {d.label}
             </option>
           ))}
         </select>
@@ -226,8 +245,8 @@ function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
   }
 
   return (
-    <section className={styles.panel}>
-      <h2>Configuration</h2>
+    <section className={styles.section}>
+      <h2 className={`sectionLabel ${styles.sectionTitle}`}>Configuration</h2>
       <p className="dim">
         Write API keys and Plaid credentials to <span className="num">~/.fungible/.env</span>. Fields are blank by
         design — existing values aren't shown. Leave a field blank to keep its current value; fill in only what you
@@ -268,7 +287,7 @@ function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
 
       <div className={styles.actions}>
         <button
-          className={styles.btnPrimary}
+          className="btnPrimary"
           onClick={() => void save()}
           disabled={!hasInput || saving}
         >
@@ -292,8 +311,8 @@ function BackupPanel() {
   }
 
   return (
-    <section className={styles.panel}>
-      <h2>Backup</h2>
+    <section className={styles.section}>
+      <h2 className={`sectionLabel ${styles.sectionTitle}`}>Backup</h2>
       <div className={styles.configRow}>
         <label className={styles.configLabel}>
           Include encryption key

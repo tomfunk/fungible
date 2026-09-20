@@ -7,7 +7,7 @@
   border: 1px solid var(--positive);
   color: var(--positive);
   padding: 8px 18px;
-  border-radius: 20px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   z-index: 200;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);

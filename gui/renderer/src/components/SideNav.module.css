@@ -1,23 +1,27 @@
 .nav {
-  width: 200px;
+  width: 186px;
   flex-shrink: 0;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border);
-  padding: 16px 10px;
+  background: var(--bg-chrome);
+  border-right: 1px solid var(--rule);
+  padding: 18px 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .brand {
-  font-weight: 700;
-  font-size: 16px;
-  padding: 6px 12px 18px;
-  letter-spacing: 0.3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--text);
+  padding: 4px 10px 20px;
 }
 
 .brandMark {
   color: var(--accent);
+  font-size: 9px;
 }
 
 .item,
@@ -26,8 +30,8 @@
   justify-content: space-between;
   align-items: center;
   text-align: left;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-size: 13.5px;
 }
@@ -35,41 +39,35 @@
 .digit {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 5px;
-  line-height: 1.5;
+  color: var(--text-ghost);
 }
 
 .footer {
   margin-top: auto;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
 }
 
 .toggle,
 .toggleActive {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  text-align: left;
-  padding: 7px 12px;
-  border-radius: 6px;
+  flex: 1;
+  text-align: center;
+  padding: 6px 0;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 12px;
+  background: var(--bg-selected);
 }
 
 .toggle:hover,
 .toggleActive:hover {
-  background: var(--bg-hover);
   color: var(--text);
 }
 
 .toggleActive {
+  background: none;
   color: var(--accent);
 }
 
@@ -79,7 +77,11 @@
 }
 
 .itemActive {
-  background: var(--bg-raised);
-  color: var(--accent);
-  font-weight: 600;
+  background: var(--bg-selected);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.itemActive .digit {
+  color: var(--text-faint);
 }

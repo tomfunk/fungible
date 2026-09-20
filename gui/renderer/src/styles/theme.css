@@ -1,17 +1,28 @@
 :root {
   /* Palette — semantic tokens seeded from tui/ui.ts */
   --bg: #0d1117;
-  --bg-panel: #151b23;
+  --bg-chrome: #11161d; /* titlebar / sidebar / fixed chrome ground */
+  --bg-panel: #151b23; /* modal shell only — the hairline system has no
+                            page-level cards, see --rule below */
   --bg-raised: #1c2430;
+  --bg-selected: #161d26; /* resting "selected" ground — sidebar active
+                              item. Distinct from --bg-hover (a transient
+                              hover highlight) and --bg-raised (pill/bar
+                              ground) — three separate elevations. */
   --bg-hover: #222c3a;
   --border: #2d3a4a;
+  --rule: #1b222c; /* structural rule — section dividers, chrome edges */
+  --rule-soft: #151c25; /* row separator inside a list/table */
   --text: #e6edf3;
   --text-dim: #8b98a8;
+  --text-faint: #5d6b7c; /* section labels, table headers, meta */
+  --text-ghost: #42505f; /* key-hint digits, disabled */
   --positive: #3fb950; /* income, assets, good */
   --negative: #f8514f; /* expenses, debt, bad */
   --warning: #d2a022; /* caution */
   --manual: #c792ea; /* manual overrides */
-  --accent: #00d4aa; /* brand teal — selection, focus, interactive */
+  --accent: #00d4aa; /* brand teal — active state only: selection, focus,
+                         bar/progress fills, active tab/sort/pill */
   --accent-dim: #00d4aa55;
   --flex-fixed: #f8514f;
   --flex-flexible: #d2a022;
@@ -19,17 +30,37 @@
 
   --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-  --radius: 8px;
+  --radius: 8px; /* modal shell only */
+  --radius-sm: 5px; /* everywhere else — nav items, chips, bordered
+                        mini-buttons, bar fills, progress tracks, controls */
+
+  /* Row density — "Balanced" (default). Every data table's row/header
+     padding reads from these two, so Settings' density control drives all
+     of them from one place. Compact override lives in
+     :root[data-density='compact'] below. */
+  --table-row-padding: 9px;
+  --table-header-padding-bottom: 8px;
+}
+
+:root[data-density='compact'] {
+  --table-row-padding: 5px;
+  --table-header-padding-bottom: 5px;
 }
 
 :root[data-theme='light'] {
   --bg: #f6f8fa;
+  --bg-chrome: #ffffff;
   --bg-panel: #ffffff;
   --bg-raised: #eef1f4;
+  --bg-selected: #eef1f4;
   --bg-hover: #e9edf1;
   --border: #d0d7de;
+  --rule: #d8dee4;
+  --rule-soft: #eaeef2;
   --text: #1f2328;
   --text-dim: #59636e;
+  --text-faint: #6e7781;
+  --text-ghost: #8c959f;
   --positive: #1a7f37;
   --negative: #cf222e;
   --warning: #9a6700;
@@ -120,13 +151,18 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 input,
 select {
   font: inherit;
   color: var(--text);
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 10px;
   outline: none;
 }
@@ -139,6 +175,7 @@ select:focus {
 .num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 
 .pos {
@@ -165,6 +202,268 @@ select:focus {
 }
 :root[data-palette='monochrome'] .pos {
   font-weight: 600;
+}
+
+/* ── Hairline system — shared utilities ──────────────────────────────────
+   theme.css is global CSS (not a CSS module), so these combine with
+   per-screen module classes the same way .num/.dim/.pos/.neg already do:
+   className={`sectionLabel ${styles.somethingScreenSpecific}`}. Screen
+   module files own layout (grid-template-columns, widths, gaps); these own
+   the repeated hairline vocabulary — section labels, KPI strips, table
+   rows, bars, pills, chips — so it isn't redefined per screen. */
+
+.sectionLabel {
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* A section label's row — handles both "label alone" (border sits directly
+   under it) and "label + trailing control" (e.g. NetWorth's History legend,
+   Assets' "group by type") since the rule belongs to the row either way. */
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.kpiStrip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr; /* equal columns regardless of count (3 or 4) */
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.kpiCell {
+  padding: 16px 0;
+  border-right: 1px solid var(--rule);
+  text-align: left;
+}
+.kpiCell:last-child {
+  border-right: none;
+}
+.kpiCell:not(:first-child) {
+  padding-left: 22px;
+}
+
+.kpiLabel {
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 7px;
+}
+
+.kpiFigure {
+  font-size: 24px;
+  color: var(--text);
+  display: block;
+}
+
+/* Table header row: pair with a per-screen grid class carrying
+   grid-template-columns + column-gap. */
+.tableHeaderRow {
+  padding-bottom: var(--table-header-padding-bottom);
+  border-bottom: 1px solid var(--rule);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.tableHeaderRow > * {
+  color: inherit;
+}
+.tableHeaderActive {
+  color: var(--accent);
+  cursor: pointer;
+}
+.tableHeaderSortable {
+  cursor: pointer;
+  user-select: none;
+}
+.tableHeaderSortable:hover {
+  color: var(--text);
+}
+
+/* Table data row: pair with a per-screen grid class carrying
+   grid-template-columns + column-gap. Drop onto the LAST row (e.g. via
+   :last-child on the list) to lose its rule automatically. */
+.tableRow {
+  padding: var(--table-row-padding) 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 13.5px;
+  color: var(--text);
+}
+.tableRow:last-child {
+  border-bottom: none;
+}
+.tableRowHoverable:hover {
+  background: var(--bg-hover);
+}
+
+.barTrack {
+  height: 5px;
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.barFill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.pillGroup {
+  display: flex;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.pill,
+.pillActive {
+  padding: 4px 11px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+.pill:hover,
+.pillActive:hover {
+  color: var(--text);
+}
+.pillActive {
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Bordered mono chip — filter/delta/count badges. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+}
+.chip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* Bordered mini-button — bulk-action row, restore/reset actions. */
+.ghostBtn {
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+}
+.ghostBtn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* Underline-only search/filter field — no box. */
+.underline {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  border-radius: 0;
+  padding: 3px 0;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.underline::placeholder {
+  color: var(--text-faint);
+}
+.underline:focus {
+  border-color: var(--accent);
+}
+
+/* Underline tab group — Dashboard's Categories/Flexibility/Accounts, etc. */
+.tabGroup {
+  display: flex;
+  gap: 18px;
+  font-size: 13px;
+}
+.tab,
+.tabActive {
+  color: var(--text-faint);
+  padding-bottom: 5px;
+  border-bottom: 2px solid transparent;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tabActive {
+  color: var(--text);
+  font-weight: 500;
+  border-bottom-color: var(--accent);
+}
+
+/* Modal action-row footer — shared by every modal's Cancel/Save (or
+   Confirm/create) pair, previously redefined near-identically in half a
+   dozen screen module files. */
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  color: #06281f;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+}
+.btnPrimary:hover {
+  filter: brightness(1.1);
+}
+.btnPrimary:disabled {
+  filter: none;
+}
+
+.btnSecondary {
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+}
+.btnSecondary:hover {
+  color: var(--text);
+}
+
+/* Selectable list row inside a modal — filter/tag/category pickers. */
+.pickList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.pickRow,
+.pickRowOn {
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  display: flex;
+  gap: 8px;
+}
+.pickRow:hover,
+.pickRowOn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.pickRowOn {
+  color: var(--positive);
 }
 
 /* Scrollbars */
