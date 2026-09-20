@@ -13,7 +13,8 @@ import {
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtSigned, fmtCompact } from '../../../../core/fmt.js';
-import { groupAccountsByType, buildTypeToAccountIds, type NetWorthGranularity } from '../../../../core/queries.js';
+import { groupAccountsByType, buildTypeToAccountIds } from '../../../../core/account-rollup.js';
+import type { NetWorthGranularity } from '../../../../core/queries.js';
 import { isAssetAccount, isLiabilityAccount } from '../../../../core/account-class.js';
 import { useChartTheme, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
 import { useNav } from '../hooks/useNav.js';

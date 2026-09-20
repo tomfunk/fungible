@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
 import { computeSavingsRate } from '../../../../core/savings-rate.js';
-import { computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity } from '../../../../core/health.js';
+import { computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity } from '../../../../core/health-metrics.js';
 import type { SeverityLevel } from '../../../../core/severity.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { DialRow } from '../components/DialRow.js';

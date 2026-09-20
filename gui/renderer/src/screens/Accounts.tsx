@@ -15,7 +15,7 @@ import {
   describeRefreshProgress, describeRefreshResult, POLL_DELAYS_MS,
   type RefreshProgress, type RefreshResult,
 } from '../../../../core/transactions-refresh-format.js';
-import { resolveCsvAmount } from '../../../../core/accounts.js';
+import { resolveCsvAmount } from '../../../../core/csv-amount.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
