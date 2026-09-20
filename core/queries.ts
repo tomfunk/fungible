@@ -584,9 +584,11 @@ export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
   // Gates the delete affordance: a Plaid-owned row comes back on the next sync,
-  // so offering to delete it would be a lie. NULL only for rows written before
-  // the column existed, which initDb backfills on the next launch.
-  source: 'plaid' | 'csv' | null;
+  // so offering to delete it would be a lie. csv and manual rows are freely
+  // deletable — manual because Thomas typed it, csv because a re-import is
+  // the user's to redo. NULL only for rows written before the column existed,
+  // which initDb backfills on the next launch.
+  source: 'plaid' | 'csv' | 'manual' | null;
   // The bank's posting date, retained by setTransactionDate when a transaction
   // is reattributed to another period; NULL unless `date` has been overridden.
   // UI uses it to show "reattributed from X" and offer restore-to-posting-date.

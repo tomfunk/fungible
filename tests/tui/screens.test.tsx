@@ -1018,6 +1018,158 @@ describe('Transactions', () => {
     r.stdin.write('/'); // ...and list-mode keys work again rather than typing into the panel
     await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
   });
+
+  // ── Add transaction ([n]) ───────────────────────────────────────────────────
+
+  it('[n] opens the add-transaction panel with all fields', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Add transaction');
+      expect(f).toContain('Date');
+      expect(f).toContain('Name');
+      expect(f).toContain('Amount');
+      expect(f).toContain('Type');
+      expect(f).toContain('Account');
+      expect(f).toContain('Category');
+      // Account/category pickers default to the first row of each — seeded
+      // depository account and alphabetically-first category.
+      expect(f).toContain('← Test Checking');
+      expect(f).toContain('← Bills & Utilities');
+      expect(f).toContain('← Expense');
+    });
+  });
+
+  it('Esc cancels the add-transaction panel without creating a row', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    const before = (await db.execute('SELECT COUNT(*) as n FROM transactions')).rows[0] as unknown as { n: number };
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    for (const ch of 'Coffee') r.stdin.write(ch);
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Add transaction');
+      expect(f).toContain('Trader Joes');
+    });
+    const after = (await db.execute('SELECT COUNT(*) as n FROM transactions')).rows[0] as unknown as { n: number };
+    expect(after.n).toBe(before.n);
+  });
+
+  it('Enter on an empty Name shows a validation error and keeps the panel open', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    r.stdin.write('\r'); // Name is still empty — Date field is prefilled but that's not what's missing
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Name is required');
+      expect(f).toContain('Add transaction'); // panel still open
+    });
+  });
+
+  it('filling the form and Enter creates a manual, source=manual transaction with the signed amount', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    // Date field is active first, prefilled with today's real date — clear it
+    // and set one inside the May filter so the new row is visible after reload.
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f');
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD'));
+    for (const ch of '2026-05-20') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('2026-05-20'));
+    r.stdin.write('\x1b[B'); // date → name
+    await waitFor(() => expect(frame(r)).toContain('e.g. Coffee shop')); // Name field active & empty
+    for (const ch of 'Coffee Shop') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Coffee Shop'));
+    r.stdin.write('\x1b[B'); // name → amount
+    await waitFor(() => expect(frame(r)).toContain('0.00')); // Amount field active & empty
+    for (const ch of '12.50') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('12.50'));
+    // Type/Account/Category left at their defaults: Expense, Test Checking, Bills & Utilities.
+    r.stdin.write('\r'); // save
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Add transaction'); // panel closed
+      expect(f).toContain('Transaction added');
+      expect(f).toContain('Coffee Shop'); // reloaded list shows the new row
+    });
+    const row = (await db.execute(
+      "SELECT amount, source, account_id, category, date FROM transactions WHERE name = 'Coffee Shop'",
+    )).rows[0] as unknown as { amount: number; source: string; account_id: string; category: string; date: string };
+    expect(row.amount).toBe(12.5); // Expense → positive, matching fmt()'s convention
+    expect(row.source).toBe('manual');
+    expect(row.account_id).toBe('test-checking');
+    expect(row.category).toBe('Bills & Utilities');
+    expect(row.date).toBe('2026-05-20');
+  });
+
+  it('toggling Type to Income flips the stored sign to negative', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f');
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD'));
+    for (const ch of '2026-05-20') r.stdin.write(ch);
+    r.stdin.write('\x1b[B'); // date → name
+    await waitFor(() => expect(frame(r)).toContain('e.g. Coffee shop'));
+    for (const ch of 'Refund') r.stdin.write(ch);
+    r.stdin.write('\x1b[B'); // name → amount
+    await waitFor(() => expect(frame(r)).toContain('0.00'));
+    for (const ch of '20') r.stdin.write(ch);
+    r.stdin.write('\x1b[B'); // amount → type
+    await waitFor(() => expect(frame(r)).toContain('← Expense'));
+    r.stdin.write('\x1b[C'); // → toggle Expense to Income
+    await waitFor(() => expect(frame(r)).toContain('← Income'));
+    r.stdin.write('\r'); // save
+    await waitFor(() => expect(frame(r)).toContain('Transaction added'));
+    const row = (await db.execute("SELECT amount FROM transactions WHERE name = 'Refund'")).rows[0] as unknown as { amount: number };
+    expect(row.amount).toBe(-20);
+  });
+
+  it('← → on the Account field cycles to the other seeded account', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('← Test Checking'));
+    r.stdin.write('\x1b[B'); // date → name
+    r.stdin.write('\x1b[B'); // name → amount
+    r.stdin.write('\x1b[B'); // amount → type
+    r.stdin.write('\x1b[B'); // type → account
+    await waitFor(() => expect(frame(r)).toContain('← Test Checking'));
+    r.stdin.write('\x1b[C'); // → cycle to the credit account
+    await waitFor(() => expect(frame(r)).toContain('← Test Visa'));
+  });
+
+  it('a manually-added row can be deleted with [x], same as a CSV row', async () => {
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, source)
+            VALUES ('tx-manual-1', 'test-checking', '2026-05-18', 'Hand-typed refund', -5.00, 'Income', 'manual')`,
+    });
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    // Search narrows the list to just this row, so it's unambiguously under
+    // the cursor without depending on sort order or row position.
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel')); // search bar active — 'n' in the query below must not hit the list's [n] add binding
+    for (const ch of 'Hand-typed') r.stdin.write(ch);
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Hand-typed refund');
+      expect(f).toContain('1 transactions');
+    });
+    r.stdin.write('x');
+    await waitFor(() => expect(frame(r)).not.toContain('Hand-typed refund'));
+    const row = await db.execute("SELECT id FROM transactions WHERE id = 'tx-manual-1'");
+    expect(row.rows.length).toBe(0);
+  });
 });
 
 // ── Trends ────────────────────────────────────────────────────────────────────

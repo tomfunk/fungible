@@ -159,6 +159,60 @@ export async function initDb() {
     }
   }
 
+  // Widen transactions.source to allow 'manual' (hand-entered rows, e.g. a
+  // transaction Plaid's sync never reports). SQLite can't ALTER a CHECK
+  // constraint, so this is the standard rebuild: a copy of the table with the
+  // wider CHECK, every row copied over, then swapped in under the original
+  // name. Guarded by reading the live schema text back from sqlite_master
+  // rather than try/catch-on-error, since — unlike the single ADD COLUMN
+  // statements above — this isn't one idempotent statement to retry.
+  //
+  // DROP TABLE takes every index on `transactions` down with it. The two
+  // created right after the original CREATE TABLE (idx_transactions_date,
+  // idx_transactions_account) only ever get created at first bootstrap, so
+  // they're recreated here explicitly; idx_transactions_dedup and
+  // idx_transactions_import are recreated further down by their own
+  // pre-existing `CREATE ... IF NOT EXISTS` statements, unchanged.
+  const txSchema = await db.execute(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'`,
+  );
+  const txSchemaSql = (txSchema.rows[0] as unknown as { sql: string } | undefined)?.sql ?? '';
+  if (!txSchemaSql.includes("'manual'")) {
+    await db.batch([
+      `CREATE TABLE transactions_new (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        name TEXT NOT NULL,
+        merchant_name TEXT,
+        amount REAL NOT NULL,
+        category TEXT,
+        raw_category TEXT,
+        pending INTEGER NOT NULL DEFAULT 0,
+        manual_category TEXT,
+        display_name TEXT,
+        ignored INTEGER NOT NULL DEFAULT 0,
+        original_date TEXT,
+        source TEXT CHECK(source IN ('plaid','csv','manual')),
+        import_id INTEGER,
+        dedup_key TEXT,
+        FOREIGN KEY (account_id) REFERENCES accounts(id)
+      )`,
+      `INSERT INTO transactions_new (
+        id, account_id, date, name, merchant_name, amount, category, raw_category, pending,
+        manual_category, display_name, ignored, original_date, source, import_id, dedup_key
+      )
+      SELECT
+        id, account_id, date, name, merchant_name, amount, category, raw_category, pending,
+        manual_category, display_name, ignored, original_date, source, import_id, dedup_key
+      FROM transactions`,
+      `DROP TABLE transactions`,
+      `ALTER TABLE transactions_new RENAME TO transactions`,
+      `CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)`,
+      `CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)`,
+    ], 'write');
+  }
+
   // Label existing rows by provenance. Until now the only signal was the id
   // prefix the CSV importer wrote, so that prefix is what seeds the column —
   // once, after which the column is authoritative and the prefix is just a

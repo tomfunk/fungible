@@ -28,7 +28,7 @@ const SCHEMA = `
     manual_category TEXT,
     display_name TEXT,
     ignored INTEGER NOT NULL DEFAULT 0,
-    source TEXT CHECK(source IN ('plaid','csv')),
+    source TEXT CHECK(source IN ('plaid','csv','manual')),
     import_id INTEGER,
     dedup_key TEXT,
     original_date TEXT

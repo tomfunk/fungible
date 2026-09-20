@@ -185,6 +185,15 @@
   text-decoration-color: var(--border);
 }
 
+/* Whole row is manually-added (source === 'manual') — not a Plaid/CSV row.
+   Distinct from the per-cell purple below (a single field overridden on an
+   otherwise-real transaction): here the entire record is hand-entered, so
+   the whole row carries the marker. isIgnored still wins outright — see
+   Transactions.tsx row className. */
+.rowManual td {
+  color: var(--manual);
+}
+
 .tdCheck {
   vertical-align: middle;
 }
@@ -198,6 +207,13 @@
   white-space: nowrap;
   color: var(--text-dim);
   font-size: 12.5px;
+}
+
+/* Date reattributed from the bank's posting date (tx.original_date set).
+   Matches the TUI's `*` suffix (C_MANUAL) for GUI/TUI visual parity. */
+.dateManualMark {
+  color: var(--manual);
+  margin-left: 1px;
 }
 
 .tdDesc {
@@ -309,4 +325,9 @@
 .tagInput {
   width: 100%;
   margin-bottom: 10px;
+}
+
+.amountInput {
+  width: 100px;
+  margin-left: 8px;
 }

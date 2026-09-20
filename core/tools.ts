@@ -20,7 +20,7 @@ import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTop
 import { applyCategoriesToAll } from './categorize.js';
 import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
-import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate } from './transactions.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
 import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
@@ -36,7 +36,7 @@ import type { CanvasSpec } from './canvas-spec.js';
 // Keep in sync with executeTool — any tool that mutates data must be listed here
 // or TUI refresh and afterWrite callbacks will be silently skipped for that tool.
 export const WRITE_TOOLS = new Set([
-  'edit_transaction', 'clear_edit', 'ignore_transaction',
+  'edit_transaction', 'clear_edit', 'ignore_transaction', 'add_transaction',
   'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
   'tag_transaction', 'toggle_hidden_category', 'sync',
@@ -283,6 +283,22 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: 'add_transaction',
+    description: 'Hand-enter a transaction Plaid never reported (a genuine sync gap, not one this app lost). Use list_accounts for the account ID.',
+    parameters: {
+      type: 'object',
+      properties: {
+        account_id:    { type: 'string', description: 'Account ID to add the transaction to (from list_accounts)' },
+        date:          { type: 'string', description: 'Transaction date, YYYY-MM-DD' },
+        name:          { type: 'string', description: 'Transaction name/description' },
+        amount:        { type: 'number', description: 'Signed amount: positive for an outflow/expense, negative for an inflow/income' },
+        category:      { type: 'string', description: 'Category to assign' },
+        merchant_name: { type: 'string', description: 'Merchant name, if different from the transaction name (optional)' },
+      },
+      required: ['account_id', 'date', 'name', 'amount', 'category'],
+    },
+  },
+  {
     name: 'add_rule',
     description: 'Add a category rule and immediately apply it to all transactions.',
     parameters: {
@@ -429,6 +445,7 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
     case 'set_transaction_date':   return `Reattribute transaction to ${s('date')} [id: ${s('id')}]`;
     case 'clear_transaction_date': return `Restore original posting date [id: ${s('id')}]`;
     case 'ignore_transaction':     return `${input['ignore'] ? 'Ignore' : 'Un-ignore'} transaction [id: ${s('id')}]`;
+    case 'add_transaction':        return `Add transaction "${s('name')}" ${s('amount')} on ${s('date')} → ${s('category')}`;
     case 'add_rule':               return `Add category rule: "${s('pattern')}" → ${s('category')}`;
     case 'delete_rule':            return `Delete category rule #${n('id')}`;
     case 'add_name_rule':          return `Add name rule: "${s('pattern')}" → "${s('replacement')}"`;
@@ -858,6 +875,22 @@ async function executeToolImpl(
       if (!tx) return `No transaction with id ${str('id')}.`;
       await setTransactionIgnored(str('id'), bool('ignore'));
       return `"${tx.name}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
+    }
+
+    case 'add_transaction': {
+      try {
+        const id = await addTransaction({
+          accountId: str('account_id'),
+          date: str('date'),
+          name: str('name'),
+          amount: num('amount'),
+          category: str('category'),
+          merchantName: optStr('merchant_name') ?? undefined,
+        });
+        return `Added "${str('name')}" ${num('amount')} on ${str('date')} → ${str('category')} [id: ${id}]`;
+      } catch (e) {
+        return `Error: ${(e as Error).message}`;
+      }
     }
 
     case 'add_rule': {

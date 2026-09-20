@@ -173,6 +173,10 @@ describe('GUI Transactions', () => {
     await waitFor(() => {
       const row = screen.getByText('Trader Joes').closest('tr')!;
       expect(row.textContent).toContain('2026-05-20');
+      // Row-level marker: a reattributed date shows a purple "*" next to it,
+      // matching the TUI's C_MANUAL "*" suffix.
+      const dateCell = row.querySelector('td:nth-child(2)')!;
+      expect(dateCell.textContent).toContain('*');
     });
 
     // First edit stashes the bank's posting date so it can always be restored.
@@ -245,5 +249,93 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Dining' }));
     await waitFor(() => expect(screen.getByText(/Set category to "Dining" for 3 transactions/)).toBeTruthy());
+  });
+
+  it('the "+ Add" button opens the Add modal, and saving creates a whole-row-purple manual transaction', async () => {
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    await waitFor(() => expect(screen.getByText('Add transaction')).toBeTruthy());
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Corner Store'), 'Cash Tip');
+    await userEvent.type(screen.getByPlaceholderText('0.00'), '12.50');
+    const selects = screen.getAllByRole('combobox'); // [0] account, [1] category
+    await userEvent.selectOptions(selects[1], 'Dining');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(screen.getByText('Transaction added')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('10 transactions')).toBeTruthy());
+
+    const row = screen.getByText('Cash Tip').closest('tr')!;
+    expect(row.className).toContain('rowManual');
+    expect(row.getAttribute('title')).toBe('Manually added — not from Plaid or a CSV import');
+    // The category cell doesn't get its own purple — the whole row already carries it.
+    const catCell = row.querySelector('td:nth-child(4)')!;
+    expect(catCell.className).not.toContain('manual');
+
+    const res = await db.execute("SELECT amount, source, category FROM transactions WHERE name = 'Cash Tip'");
+    expect(res.rows[0]).toMatchObject({ amount: 12.5, source: 'manual', category: 'Dining' });
+  });
+
+  it('defaults to an expense and flips the sign when Income is picked', async () => {
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    await waitFor(() => expect(screen.getByText('Add transaction')).toBeTruthy());
+    await userEvent.type(screen.getByPlaceholderText('e.g. Corner Store'), 'Refund');
+    await userEvent.type(screen.getByPlaceholderText('0.00'), '20');
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByText('Transaction added')).toBeTruthy());
+    const res = await db.execute("SELECT amount FROM transactions WHERE name = 'Refund'");
+    expect(res.rows[0]).toMatchObject({ amount: -20 });
+  });
+
+  it('requires a name before saving', async () => {
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    await waitFor(() => expect(screen.getByText('Add transaction')).toBeTruthy());
+    await userEvent.type(screen.getByPlaceholderText('0.00'), '10');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(screen.getByText('Name is required')).toBeTruthy());
+  });
+
+  it('the "n" key opens the Add modal', async () => {
+    localStorage.setItem('fungible-keys', 'on');
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.keyboard('n');
+    await waitFor(() => expect(screen.getByText('Add transaction')).toBeTruthy());
+    localStorage.removeItem('fungible-keys');
+  });
+
+  it('a manually-added transaction can be deleted, like a CSV row', async () => {
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored, source)
+       VALUES ('tx-manual-1', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 0, 0, 'manual')`,
+    );
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('Cash Tip')).toBeTruthy());
+    const row = screen.getByText('Cash Tip').closest('tr')!;
+    const deleteBtn = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'delete')!;
+    await userEvent.click(deleteBtn);
+    await waitFor(() => expect(screen.queryByText('Cash Tip')).toBeNull());
+  });
+
+  it('hides "clear override" on a manually-added row even though its category counts as manual_category', async () => {
+    // addTransaction sets manual_category = category on insert (same
+    // mechanism a normal recategorize uses), so a manual row is also
+    // "isPinned" — but there's no Plaid/CSV raw_category for it to revert
+    // to, so the clear-override action must stay hidden for it regardless.
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored, source)
+       VALUES ('tx-manual-2', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 'Dining', 0, 0, 'manual')`,
+    );
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('Cash Tip')).toBeTruthy());
+    const row = screen.getByText('Cash Tip').closest('tr')!;
+    const clearBtn = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'clear');
+    expect(clearBtn).toBeUndefined();
   });
 });

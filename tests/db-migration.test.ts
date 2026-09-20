@@ -208,3 +208,60 @@ describe('initDb balance_history backfill (#200)', () => {
     expect(rows).toEqual([{ balance: 42, date: '2020-01-01' }]);
   });
 });
+
+// Widens transactions.source to allow 'manual' (hand-entered rows). SQLite
+// can't ALTER a CHECK constraint, so initDb rebuilds the table instead — this
+// covers that every plaid/csv/manual row and every transactions index
+// (idx_transactions_date, idx_transactions_account, idx_transactions_dedup,
+// idx_transactions_import) survives the swap, that the constraint is still
+// enforced (not accidentally dropped entirely), and that a repeat launch is a
+// no-op.
+describe('initDb transactions.source widened to include manual', () => {
+  it('rewrites the CHECK constraint to allow manual', async () => {
+    const row = (await db.execute(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'",
+    )).rows[0] as unknown as { sql: string };
+    expect(row.sql).toContain("'manual'");
+  });
+
+  it('recreates every transactions index the rebuild would otherwise drop', async () => {
+    const objects = (await db.execute(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transactions' AND name NOT LIKE 'sqlite_%'",
+    )).rows as unknown as { name: string }[];
+    expect(objects.map((o) => o.name).sort()).toEqual([
+      'idx_transactions_account', 'idx_transactions_date',
+      'idx_transactions_dedup', 'idx_transactions_import',
+    ]);
+  });
+
+  it('still enforces the constraint against an unrelated value', async () => {
+    await expect(db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source)
+            VALUES ('bogus-1', 'chase', '2025-01-01', 'X', 1, 0, 0, 'bogus')`,
+    })).rejects.toThrow(/CHECK/i);
+  });
+
+  it('keeps every pre-existing plaid and csv row exactly as it was, and accepts a manual row', async () => {
+    expect(await column('A1b2C3d4E5f6G7h8', 'source')).toBe('plaid');
+    expect(Number(await column('A1b2C3d4E5f6G7h8', 'amount'))).toBe(25);
+    expect(await column('csv-aaaa1111bbbb2222', 'source')).toBe('csv');
+
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored, source, manual_category)
+            VALUES ('manual-test-1', 'chase', '2025-01-15', 'HAND ENTERED', 100, 'Bills & Utilities', 0, 0, 'manual', 'Bills & Utilities')`,
+    });
+    expect(await column('manual-test-1', 'source')).toBe('manual');
+  });
+
+  it('is idempotent — a second launch does not touch the widened table again', async () => {
+    const before = (await db.execute('SELECT id, source FROM transactions ORDER BY rowid')).rows;
+    const { initDb } = await import('../core/db.js');
+    await expect(initDb()).resolves.not.toThrow();
+    const after = (await db.execute('SELECT id, source FROM transactions ORDER BY rowid')).rows;
+    expect(after).toEqual(before);
+    const leftover = await db.execute(
+      "SELECT name FROM sqlite_master WHERE name = 'transactions_new'",
+    );
+    expect(leftover.rows).toHaveLength(0);
+  });
+});
