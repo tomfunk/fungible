@@ -104,7 +104,13 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText('Transaction updated')).toBeTruthy());
     await waitFor(() => {
       const row = screen.getByText('Trader Joes').closest('tr')!;
-      expect(row.textContent).toContain('◆');
+      // The hairline reskin dropped the '◆' glyph in favor of the category
+      // cell's existing manual/dim color styling alone (matched in the TUI
+      // for the same reason — see tui/Transactions.tsx) — assert on the
+      // still-present title attribute instead, which carries the same
+      // "manually categorized" signal a glyph check used to.
+      const catCell = row.querySelector('td[title="Manually categorized"]');
+      expect(catCell).toBeTruthy();
       expect(row.textContent).toContain('Dining');
     });
 
