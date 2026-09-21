@@ -1,4 +1,4 @@
-import { dialog, ipcMain } from 'electron';
+import { app, dialog, ipcMain } from 'electron';
 import { parseCSV } from '../../core/csv.js';
 import { isPlaidConfigured } from '../../core/plaid.js';
 import { getDefaultDaysRequested } from '../../core/settings.js';
@@ -28,7 +28,11 @@ const files = {
   },
 };
 
-export const fullRegistry = { ...registry, files, plaid } as const;
+const appInfo = {
+  getVersion: async (): Promise<string> => app.getVersion(),
+};
+
+export const fullRegistry = { ...registry, files, plaid, app: appInfo } as const;
 
 export function registerBridge() {
   ipcMain.handle('bridge:call', (_e, ns: string, fn: string, args: unknown[]) => {

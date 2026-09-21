@@ -42,35 +42,6 @@
   color: var(--text-ghost);
 }
 
-.footer {
-  margin-top: auto;
-  display: flex;
-  gap: 6px;
-  padding-top: 12px;
-  border-top: 1px solid var(--rule);
-}
-
-.toggle,
-.toggleActive {
-  flex: 1;
-  text-align: center;
-  padding: 6px 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 12px;
-  background: var(--bg-selected);
-}
-
-.toggle:hover,
-.toggleActive:hover {
-  color: var(--text);
-}
-
-.toggleActive {
-  background: none;
-  color: var(--accent);
-}
-
 .item:hover {
   background: var(--bg-hover);
   color: var(--text);
@@ -84,4 +55,12 @@
 
 .itemActive .digit {
   color: var(--text-faint);
+}
+
+.version {
+  margin-top: auto;
+  padding: 10px 10px 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-ghost);
 }

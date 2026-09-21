@@ -21,6 +21,7 @@ const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
     cancelLink: async () => {},
   },
   files: { pickCsv: async () => null },
+  app: { getVersion: async () => '0.0.0-test' },
 };
 
 export type BridgeHarness = {

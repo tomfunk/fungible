@@ -359,6 +359,26 @@ select:focus {
   border-color: var(--text-dim);
 }
 
+/* Active variant of .chip — deliberately defined in this SAME stylesheet as
+   .chip rather than as a per-screen module class. A module class combined
+   alongside the global .chip (e.g. `chip ${styles.xActive}`) has identical
+   (0,1,0) specificity to .chip itself, so which one wins a shared property
+   like `color` or `border-color` depends on cross-stylesheet build/import
+   order — not something the code controls. Keeping both halves of a chip's
+   look in one file removes that tie entirely. Defaults to --accent; pass a
+   different color by setting --chip-active-color on the element (or a
+   local class that sets only that custom property, never color/border
+   directly — see FilterBar.module.css's .filterBtnActive). */
+.chipActive {
+  --chip-active-color: var(--accent);
+  color: var(--chip-active-color);
+  border-color: var(--chip-active-color);
+}
+.chipActive:hover {
+  color: var(--chip-active-color);
+  filter: brightness(1.15);
+}
+
 /* Bordered mini-button — bulk-action row, restore/reset actions. */
 .ghostBtn {
   font-size: 12px;

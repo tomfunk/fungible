@@ -36,15 +36,12 @@
   width: 180px;
 }
 
+/* Overrides the shared .chipActive (theme.css) accent color to --warning
+   for this screen's Filter chip. Sets ONLY the custom property, never
+   color/border-color directly — those stay owned by .chipActive so there's
+   no cross-stylesheet specificity tie for the browser to resolve. */
 .filterBtnActive {
-  color: var(--warning);
-  border-color: var(--warning);
-}
-
-.filterBtnActive:hover {
-  color: var(--warning);
-  border-color: var(--warning);
-  filter: brightness(1.2);
+  --chip-active-color: var(--warning);
 }
 
 .clearBtn {

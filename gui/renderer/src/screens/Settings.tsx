@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { useStatus } from '../hooks/useStatus.js';
 import type { Profile, HouseholdMember } from '../../../../core/profile.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { useUiPrefs, type PaletteName, type RowDensity } from '../hooks/useUiPrefs.js';
+import { useUiPrefs, type PaletteName, type RowDensity, type Theme } from '../hooks/useUiPrefs.js';
 import styles from './Settings.module.css';
 
 const MIN_YEAR = 1900;
@@ -165,13 +165,49 @@ const DENSITY_OPTIONS: { value: RowDensity; label: string }[] = [
   { value: 'balanced', label: 'Balanced' },
 ];
 
+const THEME_OPTIONS: { value: Theme; label: string }[] = [
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light' },
+];
+
 function AppearancePanel() {
-  const { palette, setPalette, density, setDensity } = useUiPrefs();
+  const { theme, setTheme, keys, toggleKeys, palette, setPalette, density, setDensity } = useUiPrefs();
 
   return (
     <section className={styles.section}>
       <h2 className={`sectionLabel ${styles.sectionTitle}`}>Appearance</h2>
       <p className="dim">Color palette for charts and status colors. Applies immediately.</p>
+
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>
+          Theme
+          <span className={styles.configHint}>Dark or light mode</span>
+        </label>
+        <select aria-label="Theme" value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
+          {THEME_OPTIONS.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>
+          Keyboard shortcut hints
+          <span className={styles.configHint}>TUI-style keybindings: 0-9 navigate, plus per-screen keys shown as hints</span>
+        </label>
+        <button
+          type="button"
+          className={keys ? `chip chipActive ${styles.toggleChip}` : `chip ${styles.toggleChip}`}
+          role="switch"
+          aria-checked={keys}
+          aria-label="Keyboard shortcut hints"
+          onClick={toggleKeys}
+        >
+          {keys ? 'On' : 'Off'}
+        </button>
+      </div>
 
       <div className={styles.configRow}>
         <label className={styles.configLabel}>
@@ -327,6 +363,7 @@ function BackupPanel() {
         <label className={styles.checkboxRow}>
           <input
             type="checkbox"
+            aria-label="Include encryption key"
             checked={includeKey}
             onChange={(e) => toggle(e.target.checked)}
           />

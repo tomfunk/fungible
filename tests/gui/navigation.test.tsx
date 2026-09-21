@@ -44,6 +44,11 @@ describe('GUI App navigation', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Net Worth' })).toBeTruthy());
   });
 
+  it('sidebar footer shows the app version from the bridge', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('v0.0.0-test')).toBeTruthy());
+  });
+
   it('digit keys navigate when the keys toggle is on', async () => {
     localStorage.setItem('fungible-keys', 'on');
     render(<App />);
@@ -62,21 +67,27 @@ describe('GUI App navigation', () => {
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy();
   });
 
-  it('keys toggle shows digit badges and hint lines', async () => {
+  it('keys toggle (in Settings > Appearance) shows digit badges and hint lines', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     expect(screen.queryByText(/\[1-9·0\] screens/)).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /Keys/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('switch', { name: 'Keyboard shortcut hints' }));
     await waitFor(() => expect(screen.getByText(/\[1-9·0\] screens/)).toBeTruthy());
     const transactionsNav = screen.getByRole('button', { name: /Transactions/ });
     expect(transactionsNav.textContent).toContain('2');
   });
 
-  it('theme toggle flips the document theme and persists', async () => {
+  it('theme select (in Settings > Appearance) flips the document theme and persists', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     expect(document.documentElement.dataset.theme).toBe('dark');
-    await userEvent.click(screen.getByRole('button', { name: /Dark/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+    const themeSelect = screen.getByRole('combobox', { name: 'Theme' });
+    expect((themeSelect as HTMLSelectElement).value).toBe('dark');
+    await userEvent.selectOptions(themeSelect, 'light');
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(localStorage.getItem('fungible-theme')).toBe('light');
   });

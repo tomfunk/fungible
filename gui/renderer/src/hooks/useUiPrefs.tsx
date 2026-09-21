@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-type Theme = 'dark' | 'light';
+export type Theme = 'dark' | 'light';
 
 export type PaletteName = 'default' | 'high-contrast' | 'deuteranopia' | 'protanopia' | 'monochrome';
 
@@ -13,7 +13,7 @@ export type RowDensity = 'balanced' | 'compact';
 
 type UiPrefs = {
   theme: Theme;
-  toggleTheme: () => void;
+  setTheme: (t: Theme) => void;
   keys: boolean;
   toggleKeys: () => void;
   palette: PaletteName;
@@ -24,7 +24,7 @@ type UiPrefs = {
 
 const Ctx = createContext<UiPrefs>({
   theme: 'dark',
-  toggleTheme: () => {},
+  setTheme: () => {},
   keys: false,
   toggleKeys: () => {},
   palette: 'default',
@@ -78,7 +78,7 @@ export function UiPrefsProvider({ children }: { children: React.ReactNode }) {
     <Ctx.Provider
       value={{
         theme,
-        toggleTheme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+        setTheme,
         keys,
         toggleKeys: () => setKeys((k) => !k),
         palette,

@@ -19,7 +19,7 @@ const storedValue = async (key: string) => {
   return (rows[0] as unknown as { value: string } | undefined)?.value;
 };
 
-const checkbox = () => screen.getByRole('checkbox') as HTMLInputElement;
+const checkbox = () => screen.getByRole('checkbox', { name: 'Include encryption key' }) as HTMLInputElement;
 
 beforeEach(async () => {
   for (const tbl of ['settings', 'household_members']) await db.execute(`DELETE FROM ${tbl}`);
