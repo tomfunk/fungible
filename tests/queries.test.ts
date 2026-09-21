@@ -23,6 +23,8 @@ import {
   getLinkedItems,
   groupAccountsByType,
   buildTypeToAccountIds,
+  getAllTags,
+  getTagSummary,
   type AccountBalance,
 } from '../core/queries.js';
 import { makeAccount } from './helpers/makeAccount.js';
@@ -60,6 +62,10 @@ async function insertTx(opts: {
 
 beforeEach(async () => {
   txId = 0;
+  // transaction_tags/tags first: they FK-reference transactions, and FK
+  // enforcement is on for the real sqlite3 driver this test db uses.
+  await db.execute('DELETE FROM transaction_tags');
+  await db.execute('DELETE FROM tags');
   await db.execute('DELETE FROM transactions');
   await db.execute('DELETE FROM hidden_categories');
   await db.execute('DELETE FROM categories');
@@ -455,6 +461,81 @@ describe('getSearchFilteredData merchant_name fallback', () => {
 
     expect((await getSearchFilteredData('2025-01-01', '2025-02-28', '2025-01')).summary.expenses).toBeCloseTo(30);
     expect((await getSearchFilteredData('2025-01-01', '2025-02-28', 'January 2025')).summary.expenses).toBeCloseTo(30);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getAllTags — ignored/hidden-category filtering matches getTagSummary', () => {
+  async function makeTag(name: string): Promise<number> {
+    const res = await db.execute({ sql: 'INSERT INTO tags (name) VALUES (?)', args: [name] });
+    return Number(res.lastInsertRowid);
+  }
+  async function tagTx(transactionId: string, tagId: number) {
+    await db.execute({
+      sql: 'INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)',
+      args: [transactionId, tagId],
+    });
+  }
+
+  it('excludes an ignored transaction from inflow/outflow but keeps it in count', async () => {
+    await insertTx({ amount: 50, category: 'Shopping', ignored: 0 });
+    const visibleId = 'tx1';
+    await insertTx({ amount: 999, category: 'Shopping', ignored: 1 });
+    const ignoredId = 'tx2';
+
+    const tagId = await makeTag('reimbursable');
+    await tagTx(visibleId, tagId);
+    await tagTx(ignoredId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.count).toBe(2); // both tagged transactions still counted
+    expect(tag.outflow).toBeCloseTo(50); // the ignored one's 999 must not leak in
+
+    const summary = await getTagSummary('reimbursable');
+    expect(summary.expenses).toBeCloseTo(tag.outflow); // list and detail panel now agree
+  });
+
+  it('excludes a hidden-category transaction from inflow/outflow but keeps it in count', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories (category) VALUES (?)', args: ['Transfer'] });
+    await insertTx({ amount: 50, category: 'Shopping' });
+    const visibleId = 'tx1';
+    await insertTx({ amount: 999, category: 'Transfer' });
+    const hiddenId = 'tx2';
+
+    const tagId = await makeTag('reimbursable');
+    await tagTx(visibleId, tagId);
+    await tagTx(hiddenId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.count).toBe(2);
+    expect(tag.outflow).toBeCloseTo(50);
+
+    const summary = await getTagSummary('reimbursable');
+    expect(summary.expenses).toBeCloseTo(tag.outflow);
+  });
+
+  it('a tag whose only transaction is ignored still appears, with zero financials', async () => {
+    await insertTx({ amount: 999, category: 'Shopping', ignored: 1 });
+    const ignoredId = 'tx1';
+    const tagId = await makeTag('lonely');
+    await tagTx(ignoredId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.name).toBe('lonely');
+    expect(tag.count).toBe(1); // still tagged — not silently dropped
+    expect(tag.outflow).toBe(0);
+    expect(tag.inflow).toBe(0);
+    expect(tag.earliest).toBeNull();
+    expect(tag.latest).toBeNull();
+  });
+
+  it('a tag with zero transactions still appears as a 0-count row', async () => {
+    await makeTag('untouched');
+    const [tag] = await getAllTags();
+    expect(tag.name).toBe('untouched');
+    expect(tag.count).toBe(0);
+    expect(tag.outflow).toBe(0);
+    expect(tag.inflow).toBe(0);
   });
 });
 

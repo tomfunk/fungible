@@ -552,6 +552,21 @@ export type Tag = {
 };
 
 export async function getAllTags(): Promise<Tag[]> {
+  // Financial totals (inflow/outflow/earliest/latest) apply the same
+  // ignored/hidden-category filtering as getTagSummary/getRangeSummary, so
+  // the tag list and the tag detail panel agree on dollar amounts. The
+  // filter lives in the transactions JOIN's ON clause, not a WHERE clause,
+  // for two reasons: (1) a WHERE clause would drop tags with zero
+  // transactions entirely (this LEFT JOIN exists specifically so they still
+  // show up as a 0-count row), and (2) it must not touch `count`, which
+  // stays COUNT(tt.transaction_id) against the tags↔transaction_tags join —
+  // deliberately inclusive of ignored/hidden transactions, since it answers
+  // "how many transactions carry this tag" (a tag-management question, e.g.
+  // "can I safely delete/rename this tag"), not "how much visible spending
+  // does this tag represent" (what inflow/outflow answer). A transaction you
+  // ignored or whose category you hid is still tagged; excluding it from
+  // count would make an existing tag assignment silently disappear from the
+  // count on that basis alone.
   const result = await db.execute(`
     SELECT t.id, t.name, COUNT(tt.transaction_id) as count,
       COALESCE(SUM(CASE WHEN tx.amount < 0 THEN ABS(tx.amount) ELSE 0 END), 0) as inflow,
@@ -560,6 +575,8 @@ export async function getAllTags(): Promise<Tag[]> {
     FROM tags t
     LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
     LEFT JOIN transactions tx ON tx.id = tt.transaction_id
+      AND tx.ignored = 0
+      AND tx.category NOT IN (SELECT category FROM hidden_categories)
     GROUP BY t.id ORDER BY t.name
   `);
   return (result.rows as unknown as Tag[]).map((r) => ({
