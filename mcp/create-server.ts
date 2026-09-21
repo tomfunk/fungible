@@ -118,6 +118,22 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('ignore_transaction', input),
   );
 
+  // ── add_transaction ─────────────────────────────────────────────────────────
+
+  server.tool(
+    'add_transaction',
+    'Hand-enter a transaction Plaid never reported — a genuine gap in the bank sync, not something this app lost. Use list_accounts to get the account ID.',
+    {
+      account_id:    z.string().describe('Account ID to add the transaction to (from list_accounts)'),
+      date:          z.string().describe('Transaction date, YYYY-MM-DD'),
+      name:          z.string().describe('Transaction name/description'),
+      amount:        z.number().describe('Signed amount: positive for an outflow/expense, negative for an inflow/income'),
+      category:      z.string().describe('Category to assign'),
+      merchant_name: z.string().optional().describe('Merchant name, if different from the transaction name'),
+    },
+    (input) => run('add_transaction', input),
+  );
+
   // ── list_rules ──────────────────────────────────────────────────────────────
 
   server.tool(

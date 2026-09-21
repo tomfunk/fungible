@@ -32,6 +32,19 @@ const OLD_SCHEMA = [
     manual_category TEXT, display_name TEXT, ignored INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (account_id) REFERENCES accounts(id)
   )`,
+  // Pre-created here (rather than left to initDb's own CREATE TABLE IF NOT
+  // EXISTS) so a tag row can reference a transaction *before* initDb ever
+  // runs — reproducing a real production database, which already has tagged
+  // transactions by the time this migration first runs against it.
+  `CREATE TABLE tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE
+  )`,
+  `CREATE TABLE transaction_tags (
+    transaction_id TEXT NOT NULL, tag_id INTEGER NOT NULL,
+    PRIMARY KEY (transaction_id, tag_id),
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id),
+    FOREIGN KEY (tag_id) REFERENCES tags(id)
+  )`,
 ];
 
 // Old-style rows. The CSV ids are the hash form the retired generateTxId
@@ -93,6 +106,15 @@ beforeAll(async () => {
       args: [id, date, name, amount],
     });
   }
+
+  // A tagged transaction, exactly like a real database has by the time this
+  // migration first runs against it. transaction_tags.transaction_id has an
+  // FK to transactions(id); dropping the parent table during the source-CHECK
+  // rebuild while this child row still references it is what tripped
+  // SQLITE_CONSTRAINT_FOREIGNKEY against Thomas's real database (the earlier
+  // version of this migration wrongly assumed FK enforcement was off).
+  await db.execute("INSERT INTO tags (name) VALUES ('recurring')");
+  await db.execute("INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('csv-aaaa1111bbbb2222', 1)");
 
   await mod.initDb();
 });
@@ -206,5 +228,84 @@ describe('initDb balance_history backfill (#200)', () => {
       sql: 'SELECT balance, date FROM balance_history WHERE account_id = ?', args: ['seeded'],
     })).rows as unknown as { balance: number; date: string }[];
     expect(rows).toEqual([{ balance: 42, date: '2020-01-01' }]);
+  });
+});
+
+// Widens transactions.source to allow 'manual' (hand-entered rows). SQLite
+// can't ALTER a CHECK constraint, so initDb rebuilds the table instead — this
+// covers that every plaid/csv/manual row and every transactions index
+// (idx_transactions_date, idx_transactions_account, idx_transactions_dedup,
+// idx_transactions_import) survives the swap, that the constraint is still
+// enforced (not accidentally dropped entirely), and that a repeat launch is a
+// no-op.
+describe('initDb transactions.source widened to include manual', () => {
+  it('rewrites the CHECK constraint to allow manual', async () => {
+    const row = (await db.execute(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'transactions'",
+    )).rows[0] as unknown as { sql: string };
+    expect(row.sql).toContain("'manual'");
+  });
+
+  it('recreates every transactions index the rebuild would otherwise drop', async () => {
+    const objects = (await db.execute(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transactions' AND name NOT LIKE 'sqlite_%'",
+    )).rows as unknown as { name: string }[];
+    expect(objects.map((o) => o.name).sort()).toEqual([
+      'idx_transactions_account', 'idx_transactions_date',
+      'idx_transactions_dedup', 'idx_transactions_import',
+    ]);
+  });
+
+  it('still enforces the constraint against an unrelated value', async () => {
+    await expect(db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source)
+            VALUES ('bogus-1', 'chase', '2025-01-01', 'X', 1, 0, 0, 'bogus')`,
+    })).rejects.toThrow(/CHECK/i);
+  });
+
+  // The regression test for the real-database bug: beforeAll seeds a
+  // transaction_tags row referencing a pre-existing transaction *before*
+  // initDb runs. If the rebuild dropped the parent table with FK enforcement
+  // still on, beforeAll itself would have thrown
+  // SQLITE_CONSTRAINT_FOREIGNKEY and every test in this file would have
+  // failed to even start — so the fact that any of them ran at all is part
+  // of the proof. This asserts the tag link specifically survived, correctly
+  // still pointing at the same transaction id.
+  it('preserves a tag row that referenced a transaction before the rebuild', async () => {
+    const links = (await db.execute(
+      "SELECT transaction_id, tag_id FROM transaction_tags WHERE tag_id = 1",
+    )).rows as unknown as { transaction_id: string; tag_id: number }[];
+    expect(links).toEqual([{ transaction_id: 'csv-aaaa1111bbbb2222', tag_id: 1 }]);
+
+    // FK enforcement is restored to ON after the rebuild, so a dangling
+    // reference is rejected exactly as it would have been before the rebuild.
+    await expect(db.execute({
+      sql: 'INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)',
+      args: ['does-not-exist', 1],
+    })).rejects.toThrow(/FOREIGN KEY/i);
+  });
+
+  it('keeps every pre-existing plaid and csv row exactly as it was, and accepts a manual row', async () => {
+    expect(await column('A1b2C3d4E5f6G7h8', 'source')).toBe('plaid');
+    expect(Number(await column('A1b2C3d4E5f6G7h8', 'amount'))).toBe(25);
+    expect(await column('csv-aaaa1111bbbb2222', 'source')).toBe('csv');
+
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored, source, manual_category)
+            VALUES ('manual-test-1', 'chase', '2025-01-15', 'HAND ENTERED', 100, 'Bills & Utilities', 0, 0, 'manual', 'Bills & Utilities')`,
+    });
+    expect(await column('manual-test-1', 'source')).toBe('manual');
+  });
+
+  it('is idempotent — a second launch does not touch the widened table again', async () => {
+    const before = (await db.execute('SELECT id, source FROM transactions ORDER BY rowid')).rows;
+    const { initDb } = await import('../core/db.js');
+    await expect(initDb()).resolves.not.toThrow();
+    const after = (await db.execute('SELECT id, source FROM transactions ORDER BY rowid')).rows;
+    expect(after).toEqual(before);
+    const leftover = await db.execute(
+      "SELECT name FROM sqlite_master WHERE name = 'transactions_new'",
+    );
+    expect(leftover.rows).toHaveLength(0);
   });
 });

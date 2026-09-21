@@ -42,6 +42,7 @@ import {
   setTransactionCategoryBulk,
   clearOverridesBulk,
   setIgnoredBulk,
+  addTransaction,
 } from '../../core/transactions.js';
 import {
   getTagOptions,
@@ -154,6 +155,7 @@ export const registry = {
     setTransactionCategoryBulk,
     clearOverridesBulk,
     setIgnoredBulk,
+    addTransaction,
   },
   tags: {
     getTagOptions,

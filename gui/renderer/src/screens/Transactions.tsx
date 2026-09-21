@@ -7,7 +7,7 @@ import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { Modal } from '../components/Modal.js';
 import { MONTHS } from '../../../../core/dateUtils.js';
-import type { SortMode, TxRow } from '../../../../core/queries.js';
+import type { SortMode, TxRow, FilterOptionAccount } from '../../../../core/queries.js';
 import type { RuleSuggestion } from '../../../../core/rules.js';
 import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
@@ -79,6 +79,7 @@ export function Transactions() {
   const [tagTx, setTagTx] = useState<TxRow | null>(null);
   const [bulkTag, setBulkTag] = useState(false);
   const [bulkCat, setBulkCat] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   async function forceSync() {
     if (syncing) return;
@@ -150,6 +151,7 @@ export function Transactions() {
   ];
   useScreenKeys({
     '/': () => searchRef.current?.focus(),
+    n: () => setAddOpen(true),
     s: () => setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]),
     u: () => {
       setSearch('');
@@ -213,7 +215,7 @@ export function Transactions() {
 
   return (
     <div className={styles.screen}>
-      <KeyHints hints="[1-9·0] screens   [/] search   [s] sort   [u] uncategorized   [a] all   [← →] month   [esc] clear" />
+      <KeyHints hints="[1-9·0] screens   [/] search   [n] add   [s] sort   [u] uncategorized   [a] all   [← →] month   [esc] clear" />
       <div className={styles.topBar}>
         <div className={styles.titleRow}>
           <h1 className={styles.title}>Transactions</h1>
@@ -252,6 +254,9 @@ export function Transactions() {
           </button>
         </div>
         <div className={styles.syncRow}>
+          <button className="ghostBtn" onClick={() => setAddOpen(true)}>
+            + Add
+          </button>
           <button className="ghostBtn" onClick={() => void forceSync()} disabled={syncing}>
             {syncing ? 'Syncing…' : '⟳ Sync'}
           </button>
@@ -360,20 +365,30 @@ export function Transactions() {
           {txs.map((tx) => {
             const isPinned = !!tx.manual_category;
             const isIgnored = !!tx.ignored;
+            const isDateManual = !!tx.original_date;
+            const isManualRow = tx.source === 'manual';
             return (
               <tr
                 key={tx.id}
-                className={`${styles.row} ${isIgnored ? styles.rowIgnored : ''}`}
+                className={`${styles.row} ${isIgnored ? styles.rowIgnored : isManualRow ? styles.rowManual : ''}`}
                 onClick={() => setEditTx(tx)}
+                title={isManualRow ? 'Manually added — not from Plaid or a CSV import' : undefined}
               >
                 <td className={styles.tdCheck} onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggleSelected(tx.id)} />
                 </td>
-                <td className={`num ${styles.tdDate}`}>{dl ? tx.date.slice(5) : tx.date}</td>
+                <td className={`num ${styles.tdDate}`}>
+                  {dl ? tx.date.slice(5) : tx.date}
+                  {isDateManual && (
+                    <span className={styles.dateManualMark} title="Date reattributed from the posting date">
+                      *
+                    </span>
+                  )}
+                </td>
                 <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
                 <td
                   className={`${styles.tdCat} ${
-                    isIgnored ? '' : tx.category === 'Uncategorized' ? 'warn' : isPinned ? 'manual' : 'dim'
+                    isIgnored || isManualRow ? '' : tx.category === 'Uncategorized' ? 'warn' : isPinned ? 'manual' : 'dim'
                   }`}
                   title={isPinned ? 'Manually categorized' : undefined}
                 >
@@ -399,18 +414,20 @@ export function Transactions() {
                   >
                     tag
                   </button>
-                  <button
-                    className={styles.rowBtn}
-                    title={isIgnored ? 'Un-ignore' : 'Ignore (exclude from totals)'}
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      await api.transactions.setTransactionIgnored(tx.id, !isIgnored);
-                      reload();
-                    }}
-                  >
-                    {isIgnored ? 'unignore' : 'ignore'}
-                  </button>
-                  {isPinned && (
+                  {!isManualRow && (
+                    <button
+                      className={styles.rowBtn}
+                      title={isIgnored ? 'Un-ignore' : 'Ignore (exclude from totals)'}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await api.transactions.setTransactionIgnored(tx.id, !isIgnored);
+                        reload();
+                      }}
+                    >
+                      {isIgnored ? 'unignore' : 'ignore'}
+                    </button>
+                  )}
+                  {isPinned && !isManualRow && (
                     <button
                       className={styles.rowBtn}
                       title="Clear manual category override"
@@ -424,10 +441,10 @@ export function Transactions() {
                       clear
                     </button>
                   )}
-                  {tx.source === 'csv' && (
+                  {(tx.source === 'csv' || tx.source === 'manual') && (
                     <button
                       className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
-                      title="Delete (CSV-imported only)"
+                      title="Delete (CSV-imported or manually-added only)"
                       onClick={async (e) => {
                         e.stopPropagation();
                         await api.transactions.deleteTransaction(tx.id);
@@ -453,6 +470,19 @@ export function Transactions() {
           onClose={() => setEditTx(null)}
           onSaved={(msg) => {
             setEditTx(null);
+            showStatus(msg, 3000);
+            reload();
+          }}
+        />
+      )}
+
+      {addOpen && (
+        <AddModal
+          categories={categories}
+          accounts={filterOptions?.accounts ?? []}
+          onClose={() => setAddOpen(false)}
+          onSaved={(msg) => {
+            setAddOpen(false);
             showStatus(msg, 3000);
             reload();
           }}
@@ -713,6 +743,137 @@ function EditModal({
         </button>
         <button className="btnPrimary" onClick={() => void save()}>
           {isRule ? 'Save as rule' : 'Save'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Add modal ───────────────────────────────────────────────────────────────
+
+function todayIso(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function AddModal({
+  categories,
+  accounts,
+  onClose,
+  onSaved,
+}: {
+  categories: string[];
+  accounts: FilterOptionAccount[];
+  onClose: () => void;
+  onSaved: (msg: string) => void;
+}) {
+  const [date, setDate] = useState(todayIso());
+  const [name, setName] = useState('');
+  const [amountStr, setAmountStr] = useState('');
+  const [kind, setKind] = useState<'expense' | 'income'>('expense');
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
+  const [category, setCategory] = useState(categories[0] ?? '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Name is required');
+      return;
+    }
+    const magnitude = Number(amountStr);
+    if (!Number.isFinite(magnitude) || magnitude <= 0) {
+      setError('Enter an amount greater than 0');
+      return;
+    }
+    if (!accountId) {
+      setError('Choose an account');
+      return;
+    }
+    if (!category) {
+      setError('Choose a category');
+      return;
+    }
+    if (!date) {
+      setError('Choose a date');
+      return;
+    }
+    const amount = kind === 'income' ? -magnitude : magnitude;
+    setSaving(true);
+    try {
+      await api.transactions.addTransaction({ accountId, date, name: trimmedName, amount, category });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add transaction');
+      setSaving(false);
+      return;
+    }
+    onSaved('Transaction added');
+  }
+
+  return (
+    <Modal title="Add transaction" onClose={onClose} accent="var(--manual)">
+      <div className={styles.formGrid}>
+        <label>Date</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} autoFocus />
+        <label>Name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Corner Store" />
+        <label>Amount</label>
+        <div className="pillGroup">
+          <button
+            type="button"
+            className={kind === 'expense' ? 'pillActive' : 'pill'}
+            onClick={() => setKind('expense')}
+          >
+            Expense
+          </button>
+          <button
+            type="button"
+            className={kind === 'income' ? 'pillActive' : 'pill'}
+            onClick={() => setKind('income')}
+          >
+            Income
+          </button>
+          <input
+            className={styles.amountInput}
+            type="number"
+            min="0"
+            step="0.01"
+            value={amountStr}
+            onChange={(e) => setAmountStr(e.target.value)}
+            placeholder="0.00"
+          />
+        </div>
+        <label>Account</label>
+        <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        <label>Category</label>
+        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className={styles.ruleHint}>
+        <span className="dim">
+          Won&apos;t change the account&apos;s displayed balance — that comes from the bank separately.
+        </span>
+      </p>
+      {error && <p className="neg">{error}</p>}
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btnPrimary" onClick={() => void save()} disabled={saving}>
+          {saving ? 'Adding…' : 'Add'}
         </button>
       </div>
     </Modal>
