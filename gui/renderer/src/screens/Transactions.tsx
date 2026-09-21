@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
@@ -13,7 +13,7 @@ import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useLoadGuard } from '../hooks/useLoadGuard.js';
 import type { TagOption } from '../../../../core/tags.js';
-import { fmtTimeAgo, fmtTxAmount } from '../../../../core/fmt.js';
+import { fmtTxAmount } from '../../../../core/fmt.js';
 import styles from './Transactions.module.css';
 
 type SortCol = 'date' | 'name' | 'amount' | 'category';
@@ -33,18 +33,26 @@ export function Transactions() {
   const [to, setTo] = useState<string | null>(txFilter.to ?? null);
   const [txType, setTxType] = useState<'income' | 'expenses' | null>(txFilter.txType ?? null);
   const [flex, setFlex] = useState<'fixed' | 'flexible' | 'discretionary' | null>(txFilter.flex ?? null);
-  const [search, setSearch] = useState(txFilter.search ?? '');
   const [sort, setSort] = useState<SortMode>('date-desc');
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
-  const [syncing, setSyncing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const bounds = useQuery(() => api.queries.getDataBounds(), []);
   const categories = useQuery(() => api.queries.getAllCategories(), [reloadKey]) ?? [];
-  const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
   const filterOptions = useQuery(() => api.queries.getFilterOptions(), [reloadKey]);
-  const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
+  const {
+    filter: sharedFilter, setFilter, popFilter, canPop,
+    search, setSearch, focusSearch, setFilterPanelOpen,
+  } = useFilter();
+
+  // Seed the shared search box from a nav param once per mount — see the
+  // matching comment in Dashboard.tsx.
+  useEffect(() => {
+    if (txFilter.search) setSearch(txFilter.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const txs =
     useQuery(
       () => api.queries.getTransactions({ filter: sharedFilter, from, to, search, sort, txType, flex }),
@@ -58,7 +66,10 @@ export function Transactions() {
     setSelected(new Set());
   }, [from, to, search, sort, txType, flex, sharedFilter, reloadKey]);
 
-  const selectedTxs = selected.size > 0 ? txs.filter((t) => selected.has(t.id)) : txs;
+  // Bulk actions now require an explicit selection (see the disabled buttons
+  // below) — no more "nothing checked means act on everything visible"
+  // fallback, so this is just the checked subset.
+  const selectedTxs = txs.filter((t) => selected.has(t.id));
   const allVisibleSelected = txs.length > 0 && txs.every((t) => selected.has(t.id));
 
   function toggleSelected(id: string) {
@@ -80,21 +91,6 @@ export function Transactions() {
   const [bulkTag, setBulkTag] = useState(false);
   const [bulkCat, setBulkCat] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-
-  async function forceSync() {
-    if (syncing) return;
-    setSyncing(true);
-    try {
-      const results = await api.sync.syncAll(true);
-      const added = results.reduce((s, r) => s + r.added, 0);
-      showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
-      reload();
-    } catch {
-      showStatus('Sync failed', 3000);
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   function sortHeader(col: SortCol, label: string, alignRight = false) {
     const active = sort.startsWith(col);
@@ -135,31 +131,20 @@ export function Transactions() {
     return `${from} – ${to ?? ''}`;
   }
 
-  function clearAll() {
-    setSearch('');
-    setFrom(null);
-    setTo(null);
-    setTxType(null);
-    setFlex(null);
-    setFilter({});
-  }
-
-  const searchRef = useRef<HTMLInputElement>(null);
   const SORT_CYCLE: SortMode[] = [
     'date-desc', 'date-asc', 'name-asc', 'name-desc',
     'amount-desc', 'amount-asc', 'category-asc', 'category-desc',
   ];
   useScreenKeys({
-    '/': () => searchRef.current?.focus(),
+    '/': () => focusSearch(),
     n: () => setAddOpen(true),
     s: () => setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]),
-    u: () => {
-      setSearch('');
-      setFrom(null);
-      setTo(null);
-      setFilter({ ...sharedFilter, categories: ['Uncategorized'] });
-    },
-    a: () => clearAll(),
+    // Uncategorized/All are no longer dedicated buttons — Uncategorized is
+    // now a normal checkbox in the Filter panel's Categories section, and
+    // "All" (clear filters) is covered by the panel and per-chip removal.
+    // Both shortcuts now just open that panel rather than going dead.
+    u: () => setFilterPanelOpen(true),
+    a: () => setFilterPanelOpen(true),
     ArrowLeft: () => navMonth(-1),
     ArrowRight: () => navMonth(1),
     Escape: () => {
@@ -215,7 +200,7 @@ export function Transactions() {
 
   return (
     <div className={styles.screen}>
-      <KeyHints hints="[1-9·0] screens   [/] search   [n] add   [s] sort   [u] uncategorized   [a] all   [← →] month   [esc] clear" />
+      <KeyHints hints="[1-9·0] screens   [/] search   [n] add   [s] sort   [u·a] filter   [← →] month   [esc] clear" />
       <div className={styles.topBar}>
         <div className={styles.titleRow}>
           <h1 className={styles.title}>Transactions</h1>
@@ -224,45 +209,10 @@ export function Transactions() {
             {txs.length === 200 ? ' (limit 200)' : ''}
           </span>
         </div>
-        <input
-          ref={searchRef}
-          className={`underline ${styles.search}`}
-          placeholder="Search…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              setSearch('');
-              searchRef.current?.blur();
-            }
-          }}
-        />
-        <div className="pillGroup">
-          <button
-            className={sharedFilter.categories?.length === 1 && sharedFilter.categories[0] === 'Uncategorized' ? 'pillActive' : 'pill'}
-            onClick={() => {
-              setSearch('');
-              setFrom(null);
-              setTo(null);
-              setFilter({ ...sharedFilter, categories: ['Uncategorized'] });
-            }}
-          >
-            Uncategorized
-          </button>
-          <button className="pill" onClick={clearAll}>
-            All
-          </button>
-        </div>
-        <div className={styles.syncRow}>
+        <div className={styles.actionsRow}>
           <button className="ghostBtn" onClick={() => setAddOpen(true)}>
             + Add
           </button>
-          <button className="ghostBtn" onClick={() => void forceSync()} disabled={syncing}>
-            {syncing ? 'Syncing…' : '⟳ Sync'}
-          </button>
-          {lastSynced !== undefined && (
-            <span className={styles.syncedAt}>Last synced {fmtTimeAgo(lastSynced ?? null)}</span>
-          )}
         </div>
       </div>
 
@@ -299,14 +249,26 @@ export function Transactions() {
         </span>
         {txs.length > 0 && (
           <div className={styles.bulkBtns}>
-            <button className="ghostBtn" onClick={() => setBulkCat(true)}>
+            <button
+              className="ghostBtn"
+              disabled={selected.size === 0}
+              title={selected.size === 0 ? 'Select one or more transactions first' : undefined}
+              onClick={() => setBulkCat(true)}
+            >
               Categorize
             </button>
-            <button className="ghostBtn" onClick={() => setBulkTag(true)}>
+            <button
+              className="ghostBtn"
+              disabled={selected.size === 0}
+              title={selected.size === 0 ? 'Select one or more transactions first' : undefined}
+              onClick={() => setBulkTag(true)}
+            >
               Tag
             </button>
             <button
               className="ghostBtn"
+              disabled={selected.size === 0}
+              title={selected.size === 0 ? 'Select one or more transactions first' : undefined}
               onClick={async () => {
                 const count = selectedTxs.filter((t) => t.manual_category).length;
                 await api.transactions.clearOverridesBulk(selectedTxs.map((t) => t.id));
@@ -319,6 +281,8 @@ export function Transactions() {
             </button>
             <button
               className="ghostBtn"
+              disabled={selected.size === 0}
+              title={selected.size === 0 ? 'Select one or more transactions first' : undefined}
               onClick={async () => {
                 const target = !selectedTxs[0]?.ignored;
                 await api.transactions.setIgnoredBulk(selectedTxs.map((t) => t.id), target);

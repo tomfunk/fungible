@@ -35,9 +35,19 @@
   margin-left: auto;
 }
 
+/* The tag list's columns (name + 4 narrow numeric ones) need far less width
+   than the detail panel, which nests a full-width-style kpiStrip (Income/
+   Expenses/Net/Txns) plus a $-amount + bar-chart category table — components
+   built assuming the full page width, the way every other screen uses them.
+   An even 1fr/1fr split gave the detail panel only half that, squeezing its
+   KPI figures and bars into roughly half the room they get everywhere else
+   and forcing avoidable wrapping (hence "squished" and needing more scroll
+   than the content actually requires). A fluid (not fixed-px) ratio still
+   gives the list enough room to grow with the window, while the detail panel
+   gets the larger share at every width. */
 .columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1.6fr;
   gap: 32px;
   align-items: start;
 }
@@ -46,9 +56,24 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Grid items default to min-width:auto (their content's min-content size),
+     which would otherwise force the whole .columns grid — and the page —
+     wider than the window rather than letting either column shrink. This
+     lets .tableScroll's own overflow-x:auto (left) and normal wrapping
+     (right) absorb tight widths instead of blowing out page layout. */
+  min-width: 0;
 }
 
 /* ── Table (left column) ── */
+
+/* Horizontal scroll is a safety net, not the fix: at the app's minimum
+   window width (900px) the list's own columns (txns/span/inflow/outflow +
+   the always-space-reserving rename/delete actions) need ~420px on their
+   own, which the 1fr side of the grid above can dip below. Scoped to just
+   this table (not the whole .panel) so it never fights the detail column. */
+.tableScroll {
+  overflow-x: auto;
+}
 
 .table {
   width: 100%;

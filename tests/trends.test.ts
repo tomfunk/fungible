@@ -6,7 +6,7 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
-import { getPeriodTotals, type View } from '../core/trends.js';
+import { getPeriodTotals, getSearchPeriodTotals, getSearchMatchingPeriods, type View } from '../core/trends.js';
 
 let seq = 0;
 /** Sign convention: positive amount = money out, negative = money in. */
@@ -130,5 +130,77 @@ describe('getPeriodTotals — netting edge cases', () => {
     await tx({ date: '2026-06-10', amount: 50, category: 'Grocery' });
 
     expect(await monthTotal(view({ mode: 'expenses' }), '2026-05-01')).toBe(0);
+  });
+});
+
+describe('search matching — amount and date (getSearchMatchingPeriods / getSearchPeriodTotals)', () => {
+  it('an unsigned amount search matches by displayed magnitude, either direction', async () => {
+    await tx({ date: '2026-04-03', amount: 42.50, category: 'Shopping' });  // outflow, displays -$42.50
+    await tx({ date: '2026-05-10', amount: -42.50, category: 'Shopping' }); // inflow, displays +$42.50
+    await tx({ date: '2026-04-04', amount: 100, category: 'Shopping' });   // distractor
+
+    const { count, periods } = await getSearchMatchingPeriods('42.50', 'month');
+    expect(count).toBe(2);
+    expect(periods.has('2026-04-01')).toBe(true);
+    expect(periods.has('2026-05-01')).toBe(true);
+  });
+
+  it('a signed amount search matches only the matching direction', async () => {
+    await tx({ date: '2026-04-03', amount: 42.50, category: 'Shopping' });  // outflow, displays -$42.50
+    await tx({ date: '2026-04-10', amount: -42.50, category: 'Refund' });   // inflow, displays +$42.50
+
+    expect((await getSearchMatchingPeriods('-42.50', 'month')).count).toBe(1);
+    expect((await getSearchMatchingPeriods('+42.50', 'month')).count).toBe(1);
+  });
+
+  it('amount search is exact to the cent, not a prefix match', async () => {
+    await tx({ date: '2026-04-03', amount: 42.37, category: 'Shopping' });
+    expect((await getSearchMatchingPeriods('42', 'month')).count).toBe(0);
+  });
+
+  it('a bare M/D date search matches that day across every year', async () => {
+    await tx({ date: '2024-03-15', amount: 15, category: 'A' });
+    await tx({ date: '2026-03-15', amount: 25, category: 'B' });
+    await tx({ date: '2026-03-16', amount: 999, category: 'C' }); // distractor
+
+    const { count, periods } = await getSearchMatchingPeriods('3/15', 'month');
+    expect(count).toBe(2);
+    expect(periods.has('2024-03-01')).toBe(true);
+    expect(periods.has('2026-03-01')).toBe(true);
+  });
+
+  it('exact date forms (YYYY-MM-DD, M/D/YYYY) match a single day, not the whole month', async () => {
+    await tx({ date: '2026-03-15', amount: 30, category: 'Travel' });
+    await tx({ date: '2026-03-16', amount: 99, category: 'Travel' });
+
+    expect((await getSearchMatchingPeriods('2026-03-15', 'month')).count).toBe(1);
+    expect((await getSearchMatchingPeriods('3/15/2026', 'month')).count).toBe(1);
+  });
+
+  it('whole-month forms (YYYY-MM, "Month YYYY") match every day in that month', async () => {
+    await tx({ date: '2026-03-01', amount: 10, category: 'A' });
+    await tx({ date: '2026-03-31', amount: 20, category: 'B' });
+    await tx({ date: '2026-04-01', amount: 999, category: 'C' }); // distractor
+
+    expect((await getSearchMatchingPeriods('2026-03', 'month')).count).toBe(2);
+    expect((await getSearchMatchingPeriods('March 2026', 'month')).count).toBe(2);
+  });
+
+  it('getSearchPeriodTotals sums only the matched transactions into their period', async () => {
+    await tx({ date: '2026-04-03', amount: 42.50, category: 'Shopping' });
+    await tx({ date: '2026-04-10', amount: 100, category: 'Shopping' }); // distractor, must not be summed in
+
+    const rows = await getSearchPeriodTotals('42.50', 'month');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].from).toBe('2026-04-01');
+    expect(rows[0].expenses).toBeCloseTo(42.50);
+  });
+
+  it('a plain-text search still falls back to name matching, unaffected by amount/date parsing', async () => {
+    await tx({ date: '2026-04-03', amount: 20, category: 'Shopping', name: 'Trader Joes' });
+    await tx({ date: '2026-04-04', amount: 20, category: 'Shopping', name: 'Target' });
+
+    const { count } = await getSearchMatchingPeriods('trader', 'month');
+    expect(count).toBe(1);
   });
 });

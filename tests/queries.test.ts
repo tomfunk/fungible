@@ -397,6 +397,65 @@ describe('getSearchFilteredData merchant_name fallback', () => {
     const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'Lyft');
     expect(summary.expenses).toBeCloseTo(30);
   });
+
+  it('an unsigned amount search matches by displayed magnitude, either direction', async () => {
+    await insertTx({ amount: 42.50, category: 'Shopping' });   // outflow, displays -$42.50
+    await insertTx({ amount: -42.50, category: 'Refund' });    // inflow, displays +$42.50
+    await insertTx({ amount: 100, category: 'Shopping' });     // distractor
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', '42.50');
+    expect(summary.expenses).toBeCloseTo(42.50);
+    expect(summary.income).toBeCloseTo(42.50);
+  });
+
+  it('a signed amount search matches only the matching direction', async () => {
+    await insertTx({ amount: 42.50, category: 'Shopping' }); // outflow, displays -$42.50
+    await insertTx({ amount: -42.50, category: 'Refund' });  // inflow, displays +$42.50
+
+    const negative = await getSearchFilteredData('2025-01-01', '2025-01-31', '-42.50');
+    expect(negative.summary.expenses).toBeCloseTo(42.50);
+    expect(negative.summary.income).toBe(0);
+
+    const positive = await getSearchFilteredData('2025-01-01', '2025-01-31', '+42.50');
+    expect(positive.summary.expenses).toBe(0);
+    expect(positive.summary.income).toBeCloseTo(42.50);
+  });
+
+  it('amount search is exact to the cent, not a prefix match', async () => {
+    await insertTx({ amount: 42.37, category: 'Shopping' });
+    await insertTx({ amount: 42, category: 'Grocery' });
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', '42');
+    expect(summary.expenses).toBeCloseTo(42);
+    expect(summary.byCategory.map((c) => c.category)).toEqual(['Grocery']);
+  });
+
+  it('exact date forms (YYYY-MM-DD, M/D/YYYY) match a single day', async () => {
+    await insertTx({ date: '2025-01-15', amount: 30, category: 'Travel' });
+    await insertTx({ date: '2025-01-16', amount: 99, category: 'Travel' });
+
+    expect((await getSearchFilteredData('2025-01-01', '2025-01-31', '2025-01-15')).summary.expenses).toBeCloseTo(30);
+    expect((await getSearchFilteredData('2025-01-01', '2025-01-31', '1/15/2025')).summary.expenses).toBeCloseTo(30);
+  });
+
+  it('a bare M/D date search matches that day across every year', async () => {
+    await insertTx({ date: '2024-01-15', amount: 15, category: 'A' });
+    await insertTx({ date: '2025-01-15', amount: 25, category: 'B' });
+    await insertTx({ date: '2025-01-16', amount: 999, category: 'C' }); // distractor
+
+    const { summary } = await getSearchFilteredData('2024-01-01', '2025-12-31', '1/15');
+    expect(summary.expenses).toBeCloseTo(40);
+    expect(summary.byCategory.map((c) => c.category).sort()).toEqual(['A', 'B']);
+  });
+
+  it('whole-month forms (YYYY-MM, "Month YYYY") match every day in that month', async () => {
+    await insertTx({ date: '2025-01-01', amount: 10, category: 'A' });
+    await insertTx({ date: '2025-01-31', amount: 20, category: 'B' });
+    await insertTx({ date: '2025-02-01', amount: 999, category: 'C' }); // distractor
+
+    expect((await getSearchFilteredData('2025-01-01', '2025-02-28', '2025-01')).summary.expenses).toBeCloseTo(30);
+    expect((await getSearchFilteredData('2025-01-01', '2025-02-28', 'January 2025')).summary.expenses).toBeCloseTo(30);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────

@@ -47,31 +47,16 @@
   pointer-events: none;
 }
 
-.searchWrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-}
-
-.search {
-  width: 220px;
-}
-
 .matchCount {
   font-size: 12px;
   color: var(--text-faint);
   white-space: nowrap;
 }
 
-.clearSearch {
-  color: var(--text-dim);
-  font-size: 12.5px;
-  text-decoration: underline;
-}
-
-.clearSearch:hover {
-  color: var(--text);
+/* Pushed to the right edge of the topBar — same placement as Dashboard's
+   own range pills (.rangePills there), now that search has moved out. */
+.rangePills {
+  margin-left: auto;
 }
 
 .chartSection {

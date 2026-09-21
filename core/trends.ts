@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { MONTHS, addDays, weekLabel, type TrendsRange } from './dateUtils.js';
-import { buildSearchRe, UNCATEGORIZED } from './queries.js';
+import { buildSearchMatcher, UNCATEGORIZED } from './queries.js';
 import { buildFilterClause, type Filter } from './filters.js';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -254,10 +254,10 @@ export async function getSearchPeriodTotals(search: string, range: TrendsRange, 
     args: f.args,
   });
   const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string; amount: number }[];
-  const re = buildSearchRe(search);
+  const matcher = buildSearchMatcher(search);
   const periodMap = new Map<string, { income: number; expenses: number }>();
   for (const row of rows) {
-    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    if (!matcher.test([row.display, row.merchant_name], Number(row.amount), row.date)) continue;
     const from = periodFrom(row.date, range);
     const existing = periodMap.get(from) ?? { income: 0, expenses: 0 };
     const amt = Number(row.amount);
@@ -282,17 +282,17 @@ export async function getSearchMatchingPeriods(
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
     sql: `
-    SELECT COALESCE(display_name, name) as display, merchant_name, date
+    SELECT COALESCE(display_name, name) as display, merchant_name, date, amount
     FROM transactions WHERE pending = 0 AND ignored = 0${f.clause}
   `,
     args: f.args,
   });
-  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string }[];
-  const re = buildSearchRe(search);
+  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string; amount: number }[];
+  const matcher = buildSearchMatcher(search);
   const periods = new Set<string>();
   let count = 0;
   for (const row of rows) {
-    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    if (!matcher.test([row.display, row.merchant_name], Number(row.amount), row.date)) continue;
     count++;
     periods.add(periodFrom(row.date, range));
   }

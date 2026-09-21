@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useNav } from '../hooks/useNav.js';
@@ -98,14 +98,23 @@ export function Dashboard() {
   const [view, setView] = useState<DashView>('categories');
   const [scorecardMode, setScorecardMode] = useState(txFilter.scorecard ?? false);
   const [detailMode, setDetailMode] = useState(false); // sortable per-baseline delta columns
-  const [searchInput, setSearchInput] = useState(txFilter.search ?? '');
-  const [search, setSearch] = useState(txFilter.search ?? '');
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
   const [merchantDrill, setMerchantDrill] = useState<string | null>(null); // category name
   const [driftSort, setDriftSort] = useState<{ col: DriftSortCol; desc: boolean }>({ col: 'current', desc: true });
 
   const { from, to } = getPeriodDates(range, anchor);
-  const { filter: sharedFilter, setFilter } = useFilter();
+  const { filter: sharedFilter, setFilter, search, setSearch, focusSearch } = useFilter();
+
+  // Seed the shared search box from a nav param (e.g. a merchant drill-in
+  // from Trends/this screen's own merchant rows) once per mount — this
+  // screen remounts (key={navKey} in App.tsx) on every navigate() call, so a
+  // plain mount-time effect re-seeds correctly on each fresh arrival without
+  // clobbering the shared value on every render.
+  useEffect(() => {
+    if (txFilter.search) setSearch(txFilter.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const acctId = selectedAccount?.id;
   const filter: Filter = mergeFilters(sharedFilter, acctId ? { accounts: [acctId] } : undefined);
 
@@ -151,8 +160,8 @@ export function Dashboard() {
   );
 
   const searchStats = useQuery(
-    () => (searchInput ? api.queries.countSearchMatches(from, to, searchInput, filter) : Promise.resolve(null)),
-    [searchInput, from, to, acctId, sharedFilter],
+    () => (search ? api.queries.countSearchMatches(from, to, search, filter) : Promise.resolve(null)),
+    [search, from, to, acctId, sharedFilter],
   );
   const filtered = useQuery(
     () => (search ? api.queries.getSearchFilteredData(from, to, search, filter) : Promise.resolve(null)),
@@ -229,7 +238,6 @@ export function Dashboard() {
     owner: 'Owners',
   };
 
-  const searchRef = useRef<HTMLInputElement>(null);
   useScreenKeys({
     r: () => {
       const idx = RANGES.indexOf(range);
@@ -243,19 +251,16 @@ export function Dashboard() {
     },
     ArrowLeft: () => goPeriod(-1),
     ArrowRight: () => goPeriod(1),
-    '/': () => searchRef.current?.focus(),
+    '/': () => focusSearch(),
     Escape: () => {
       if (merchantDrill) setMerchantDrill(null);
-      else {
-        setSearch('');
-        setSearchInput('');
-      }
+      else setSearch('');
     },
   });
 
   return (
     <div className={styles.screen}>
-      <KeyHints hints={`[1-9·0] screens   [r] range   [s] scorecard${scorecardMode ? '   [x] columns' : ''}   [tab] view   [← →] period   [/] search   [esc] back`} />
+      <KeyHints hints={`[1-9·0] screens   [r] range   [s] scorecard${scorecardMode ? '   [x] baselines' : ''}   [tab] view   [← →] period   [/] search   [esc] back`} />
       <div className={styles.topBar}>
         <h1 className={styles.title}>Dashboard</h1>
         <div className={styles.periodNav}>
@@ -288,62 +293,36 @@ export function Dashboard() {
             </button>
           ))}
         </div>
-        <button
-          className={scorecardMode ? styles.driftBtnActive : styles.driftBtn}
-          onClick={() => setScorecardMode((m) => !m)}
-          title="Which categories drifted from your typical month, and does it matter"
-        >
-          Δ scorecard
-        </button>
-        {scorecardMode && (
-          <button
-            className={detailMode ? styles.driftBtnActive : styles.driftBtn}
-            onClick={() => setDetailMode((t) => !t)}
-            title="Sortable per-baseline delta columns (vs prev / yr ago / 12m avg)"
-          >
-            columns
-          </button>
-        )}
-        <div className={styles.searchWrap}>
-          <input
-            ref={searchRef}
-            className={`underline ${styles.search}`}
-            placeholder="Search transactions…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') setSearch(searchInput);
-              if (e.key === 'Escape') {
-                setSearch('');
-                setSearchInput('');
-                e.currentTarget.blur();
-              }
-            }}
-          />
-          {searchStats && searchInput && (
-            <span className={`dim ${styles.searchStats}`}>
-              {searchStats.count} txn{searchStats.count === 1 ? '' : 's'}
-              {searchStats.expenses > 0 ? ` · ${fmt(searchStats.expenses)}` : ''}
-            </span>
-          )}
-          {search && (
-            <button
-              className={styles.clearSearch}
-              onClick={() => {
-                setSearch('');
-                setSearchInput('');
-              }}
-            >
-              clear
-            </button>
-          )}
-        </div>
-        {selectedAccount && (
-          <span className={styles.acctFilter}>
-            {selectedAccount.name}
-            <button onClick={() => setSelectedAccount(null)}>✕</button>
+        {search && searchStats && (
+          <span className={`dim ${styles.searchStats}`}>
+            {searchStats.count} txn{searchStats.count === 1 ? '' : 's'}
+            {searchStats.expenses > 0 ? ` · ${fmt(searchStats.expenses)}` : ''}
           </span>
         )}
+        <div className={styles.controlsRight}>
+          <button
+            className={scorecardMode ? `chip ${styles.toggleActive}` : 'chip'}
+            onClick={() => setScorecardMode((m) => !m)}
+            title="Which categories drifted from your typical month, and does it matter"
+          >
+            Scorecard
+          </button>
+          {scorecardMode && (
+            <button
+              className={detailMode ? `chip ${styles.toggleActive}` : 'chip'}
+              onClick={() => setDetailMode((t) => !t)}
+              title="Sortable per-baseline delta columns (vs prev / yr ago / 12m avg)"
+            >
+              Baselines
+            </button>
+          )}
+          {selectedAccount && (
+            <span className={styles.acctFilter}>
+              {selectedAccount.name}
+              <button onClick={() => setSelectedAccount(null)}>✕</button>
+            </span>
+          )}
+        </div>
       </div>
 
       {displaySummary && (
@@ -459,7 +438,7 @@ export function Dashboard() {
                   <tr>
                     <th className={styles.th}>Category</th>
                     <th className={styles.th}>Amount</th>
-                    <th className={styles.th}>Δ typical</th>
+                    <th className={styles.th}>typical</th>
                     <th className={styles.th}></th>
                     <th className={styles.th} title={DRIFT_BASIS_TOOLTIP}>× med</th>
                   </tr>
@@ -597,7 +576,7 @@ export function Dashboard() {
                 <tr>
                   <th className={styles.th}>Tier</th>
                   <th className={styles.th}>Amount</th>
-                  <th className={styles.th}>Δ typical</th>
+                  <th className={styles.th}>typical</th>
                   <th className={styles.th} title={DRIFT_BASIS_TOOLTIP}>× med</th>
                 </tr>
               </thead>
@@ -678,7 +657,7 @@ export function Dashboard() {
               <thead>
                 <tr>
                   <th className={styles.th}>Account</th>
-                  <th className={styles.th}>{scorecardMode ? 'Δ typical' : 'Income'}</th>
+                  <th className={styles.th}>{scorecardMode ? 'typical' : 'Income'}</th>
                   <th className={styles.th}>Expenses</th>
                   <th className={styles.th}>Filter</th>
                 </tr>

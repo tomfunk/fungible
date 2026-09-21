@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { buildFilterClause, buildFilterConditions, type Filter } from './filters.js';
-import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
+import { BASIS_LABEL, type MetricBasis, parseSearchDate, isSearchDateAnyYear, type ParsedSearchDate } from './dateUtils.js';
 
 export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
@@ -416,7 +416,7 @@ export async function getSearchFilteredData(
 ): Promise<{ summary: MonthlySummary; flexData: FlexSummary }> {
   const f = buildFilterClause(filter, 't');
   const result = await db.execute({
-    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.amount, t.category,
+    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.amount, t.date, t.category,
             COALESCE(c.flexibility, 'untagged') as flex
           FROM transactions t
           LEFT JOIN categories c ON c.name = t.category
@@ -425,10 +425,10 @@ export async function getSearchFilteredData(
             AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; amount: number; category: string; flex: string }[];
+  const rows = result.rows as unknown as { display: string; amount: number; date: string; category: string; flex: string }[];
 
-  const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display));
+  const matcher = buildSearchMatcher(search);
+  const matches = rows.filter((r) => matcher.test([r.display], Number(r.amount), r.date));
 
   // Accumulate per-category outflow/inflow, then apply the hybrid rule: real
   // categories net (refunds reduce them), Uncategorized splits by flow (outflow =
@@ -595,9 +595,70 @@ export type TxRow = {
   original_date: string | null;
 };
 
-export function buildSearchRe(search: string): RegExp {
+function buildSearchRe(search: string): RegExp {
   try { return new RegExp(search, 'i'); }
   catch { return new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
+}
+
+// Parses "$42.50", "-42.5", "+42", "42" etc. Deliberately strict ("parses
+// cleanly") so free text like "42 Main St" or "4/2" never gets treated as an
+// amount search. Kept separate from the date grammar so "4/2" (a date) can
+// never also look like an amount.
+const AMOUNT_TOKEN = /^([+-])?\$?(\d+(?:\.\d{1,2})?)$/;
+type ParsedSearchAmount = { value: number; sign: 1 | -1 | null };
+
+function parseSearchAmount(search: string): ParsedSearchAmount | null {
+  const m = AMOUNT_TOKEN.exec(search.trim());
+  if (!m) return null;
+  return { value: Number(m[2]), sign: m[1] === '-' ? -1 : m[1] === '+' ? 1 : null };
+}
+
+// To-the-cent equality, in integer cents, to dodge float noise (42.1 - 42 etc).
+const toCents = (n: number) => Math.round(n * 100);
+
+// amount is stored in the Plaid sign convention (positive = outflow); fmtTxAmount
+// (fmt.ts) displays -amount so spending reads as "-$X" and income as "+$X". A
+// signed search term ("-42.50") is matched against that displayed, signed value
+// so the user never needs to know the storage convention. An unsigned term
+// ("42.50") matches either direction -- magnitude alone, sign ignored -- since
+// fmtTxAmount's *magnitude* is just Math.abs(amount) regardless of stored sign.
+function amountMatches(parsed: ParsedSearchAmount, amount: number): boolean {
+  if (parsed.sign === null) return toCents(Math.abs(amount)) === toCents(parsed.value);
+  const displayed = -amount;
+  return toCents(displayed) === toCents(parsed.sign * parsed.value);
+}
+
+function dateMatches(parsed: ParsedSearchDate, date: string): boolean {
+  if (isSearchDateAnyYear(parsed)) {
+    const month = Number(date.slice(5, 7));
+    const day = Number(date.slice(8, 10));
+    return month === parsed.month && day === parsed.day;
+  }
+  return date >= parsed.from && date <= parsed.to;
+}
+
+// Shared search predicate for getTransactions/countSearchMatches/
+// getSearchFilteredData (here) and getSearchPeriodTotals/getSearchMatchingPeriods
+// (trends.ts). Precedence: a search string that parses cleanly as an amount or
+// a date is matched ONLY on that (not OR'd with name text — "42" should not
+// also match a transaction merely named "42nd Street Deli"); anything else
+// falls back to the existing case-insensitive name/merchant regex, unchanged.
+// `candidates` lets each call site keep its own text-fallback nuance (e.g.
+// getTransactions also tries the raw `name` when display_name is absent)
+// instead of forcing one shape on every row.
+export type SearchMatcher = {
+  test(candidates: (string | null)[], amount: number, date: string): boolean;
+};
+
+export function buildSearchMatcher(search: string): SearchMatcher {
+  const amountToken = parseSearchAmount(search);
+  if (amountToken) return { test: (_candidates, amount) => amountMatches(amountToken, amount) };
+
+  const dateToken = parseSearchDate(search);
+  if (dateToken) return { test: (_candidates, _amount, date) => dateMatches(dateToken, date) };
+
+  const re = buildSearchRe(search);
+  return { test: (candidates) => candidates.some((c) => c !== null && re.test(c)) };
 }
 
 export async function getTransactions(filters: {
@@ -629,10 +690,13 @@ export async function getTransactions(filters: {
   });
   const rows = result.rows as unknown as TxRow[];
   if (!search) return rows.slice(0, 200);
-  const re = buildSearchRe(search);
+  const matcher = buildSearchMatcher(search);
   return rows.filter((r) =>
-    re.test(r.display_name ?? r.merchant_name ?? r.name) ||
-    (!r.display_name && r.merchant_name !== null && re.test(r.name)),
+    matcher.test(
+      [r.display_name ?? r.merchant_name ?? r.name, !r.display_name && r.merchant_name !== null ? r.name : null],
+      Number(r.amount),
+      r.date,
+    ),
   ).slice(0, 200);
 }
 
@@ -642,13 +706,13 @@ export async function countSearchMatches(
   if (!search) return { count: 0, expenses: 0 };
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
-    sql: `SELECT COALESCE(display_name, merchant_name, name) as display, amount
+    sql: `SELECT COALESCE(display_name, merchant_name, name) as display, amount, date
           FROM transactions WHERE date >= ? AND date <= ?${f.clause} AND pending = 0 AND ignored = 0`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; amount: number }[];
-  const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display));
+  const rows = result.rows as unknown as { display: string; amount: number; date: string }[];
+  const matcher = buildSearchMatcher(search);
+  const matches = rows.filter((r) => matcher.test([r.display], Number(r.amount), r.date));
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
