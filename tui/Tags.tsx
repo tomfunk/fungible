@@ -195,8 +195,8 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
           <Divider />
 
           <Box gap={6} marginY={1}>
-            <StatCard label="Inflow" value={fmt(tagSummary.income)} color={C_POSITIVE} />
-            <StatCard label="Outflow" value={fmt(tagSummary.expenses)} color={C_NEGATIVE} />
+            <StatCard label="Inflow" value={fmt(tag.inflow)} color={C_POSITIVE} />
+            <StatCard label="Outflow" value={fmt(tag.outflow)} color={C_NEGATIVE} />
             <StatCard label="Net" value={fmtSigned(tagSummary.net)} color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
             <StatCard label="Transactions" value={String(tag.count)} />
           </Box>

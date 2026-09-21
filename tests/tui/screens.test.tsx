@@ -1875,6 +1875,31 @@ describe('Tags', () => {
       expect(f).toContain('Outflow');
     });
   });
+
+  // Regression: the category breakdown intentionally NETS a refund against its
+  // category's spending (e.g. Amtrak $300 charge + $100 refund shows as $200
+  // Travel spend), but the headline Inflow/Outflow KPIs must stay gross — a
+  // reimbursement should show up as Inflow, not silently reduce Outflow.
+  it('Inflow/Outflow KPIs are gross, not netted within a category', async () => {
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-amtrak-charge', 'test-credit', '2026-05-05', 'Amtrak',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-amtrak-refund', 'test-credit', '2026-05-06', 'Amtrak Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-amtrak-charge', 1)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-amtrak-refund', 1)`,
+    ], 'write');
+
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Inflow'));
+
+    const f = frame(r);
+    // Gross: Outflow $300.00 (not netted down to $200.00), Inflow $100.00.
+    expect(f).toContain('300.00');
+    expect(f).toContain('100.00');
+  });
 });
 
 // ── Rules ─────────────────────────────────────────────────────────────────────
