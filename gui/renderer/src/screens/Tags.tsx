@@ -96,58 +96,28 @@ export function Tags() {
           {visibleTags.length === 0 ? (
             <p className="dim">{search ? `No tags matching "${search}".` : 'No tags yet — create one, or tag transactions directly.'}</p>
           ) : (
-            <div className={styles.tableScroll}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th className={styles.th}>Tag</th>
-                    <th className={styles.th}>Txns</th>
-                    <th className={styles.th}>Span</th>
-                    <th className={styles.th}>Inflow</th>
-                    <th className={styles.th}>Outflow</th>
-                    <th className={styles.th} />
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Tag</th>
+                  <th className={styles.th}>Txns</th>
+                  <th className={styles.th}>Span</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleTags.map((t) => (
+                  <tr
+                    key={t.id}
+                    className={selected?.id === t.id ? styles.rowActive : styles.row}
+                    onClick={() => setSelectedName(t.name)}
+                  >
+                    <td className={styles.tdName}>{t.name}</td>
+                    <td className="num dim">{t.count}</td>
+                    <td className="dim">{fmtSpan(t.earliest, t.latest)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {visibleTags.map((t) => (
-                    <tr
-                      key={t.id}
-                      className={selected?.id === t.id ? styles.rowActive : styles.row}
-                      onClick={() => setSelectedName(t.name)}
-                    >
-                      <td className={styles.tdName}>{t.name}</td>
-                      <td className="num dim">{t.count}</td>
-                      <td className="dim">{fmtSpan(t.earliest, t.latest)}</td>
-                      <td className="num pos">{fmt(t.inflow)}</td>
-                      <td className="num neg">{fmt(t.outflow)}</td>
-                      <td className={styles.tdActions}>
-                        <button
-                          className={styles.rowBtn}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setRenameTag(t);
-                          }}
-                        >
-                          rename
-                        </button>
-                        <button
-                          className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            await api.tags.deleteTag(t.id);
-                            if (selected?.id === t.id) setSelectedName(null);
-                            showStatus(`Deleted "${t.name}"`);
-                            reload();
-                          }}
-                        >
-                          delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           )}
         </section>
 
@@ -160,9 +130,25 @@ export function Tags() {
                 <h2 className={styles.tagHeading}>
                   <span className="accent"># {selected.name}</span>
                 </h2>
-                <button className="ghostBtn" onClick={() => drillToTransactions(selected.name)}>
-                  all transactions →
-                </button>
+                <div className={styles.detailActions}>
+                  <button className="ghostBtn" onClick={() => setRenameTag(selected)}>
+                    rename
+                  </button>
+                  <button
+                    className={`ghostBtn ${styles.dangerBtn}`}
+                    onClick={async () => {
+                      await api.tags.deleteTag(selected.id);
+                      setSelectedName(null);
+                      showStatus(`Deleted "${selected.name}"`);
+                      reload();
+                    }}
+                  >
+                    delete
+                  </button>
+                  <button className="ghostBtn" onClick={() => drillToTransactions(selected.name)}>
+                    all transactions →
+                  </button>
+                </div>
               </div>
               {summary && (
                 <>

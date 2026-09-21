@@ -50,26 +50,34 @@ describe('GUI Tags', () => {
     await waitFor(() => expect(screen.getByText('vacation')).toBeTruthy());
   });
 
-  it('renames a tag', async () => {
+  // Rename/delete now live in the detail panel (act on the selected tag),
+  // not as per-row list buttons — select the tag first to reach them.
+  it('renames a tag via the detail panel', async () => {
     renderScreen(<Tags />);
     await waitFor(() => expect(screen.getByText('work')).toBeTruthy());
-    const row = screen.getByText('work').closest('tr')!;
-    await userEvent.click(Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'rename')!);
+    await userEvent.click(screen.getByText('work'));
+    await waitFor(() => expect(screen.getByText('# work')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'rename' }));
     const input = screen.getByPlaceholderText('Tag name');
     await userEvent.clear(input);
     await userEvent.type(input, 'office');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.getByText('office')).toBeTruthy());
     expect(screen.queryByText('work')).toBeNull();
+    // Detail panel follows the rename rather than losing its selection.
+    expect(screen.getByText('# office')).toBeTruthy();
   });
 
-  it('deletes a tag', async () => {
+  it('deletes a tag via the detail panel', async () => {
     renderScreen(<Tags />);
     await waitFor(() => expect(screen.getByText('work')).toBeTruthy());
-    const row = screen.getByText('work').closest('tr')!;
-    await userEvent.click(Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'delete')!);
+    await userEvent.click(screen.getByText('work'));
+    await waitFor(() => expect(screen.getByText('# work')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'delete' }));
     await waitFor(() => expect(screen.queryByText('work')).toBeNull());
     expect(screen.getByText('Deleted "work"')).toBeTruthy();
+    // Selection clears along with the deleted tag.
+    expect(screen.getByText('Select a tag to see its breakdown.')).toBeTruthy();
   });
 
   it('detail panel shows breakdown and navigates to transactions', async () => {

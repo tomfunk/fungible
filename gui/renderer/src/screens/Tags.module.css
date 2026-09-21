@@ -58,23 +58,20 @@
   gap: 14px;
   /* Grid items default to min-width:auto (their content's min-content size),
      which would otherwise force the whole .columns grid — and the page —
-     wider than the window rather than letting either column shrink. This
-     lets .tableScroll's own overflow-x:auto (left) and normal wrapping
-     (right) absorb tight widths instead of blowing out page layout. */
+     wider than the window rather than letting either column shrink. The
+     left table no longer needs its own overflow escape hatch (see .table
+     below), but the right panel's kpiStrip still has its own min-content
+     floor, so this stays needed to let that side shrink/wrap instead of
+     blowing out the grid at the app's smallest window width. */
   min-width: 0;
 }
 
 /* ── Table (left column) ── */
 
-/* Horizontal scroll is a safety net, not the fix: at the app's minimum
-   window width (900px) the list's own columns (txns/span/inflow/outflow +
-   the always-space-reserving rename/delete actions) need ~420px on their
-   own, which the 1fr side of the grid above can dip below. Scoped to just
-   this table (not the whole .panel) so it never fights the detail column. */
-.tableScroll {
-  overflow-x: auto;
-}
-
+/* No .tableScroll overflow-x wrapper needed here anymore: with Inflow,
+   Outflow, and the actions column gone (down to Tag/Txns/Span), this
+   table's min-content width is comfortably under the .columns grid's 1fr
+   share at every width down to the app's 900px minimum — verified live. */
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -147,41 +144,25 @@
   width: 40%;
 }
 
-.tdActions {
-  width: 1%;
-}
-
-.rowBtn {
-  font-size: 11.5px;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 2px 7px;
-  margin-left: 4px;
-  visibility: hidden;
-}
-
-.row:hover .rowBtn,
-.rowActive:hover .rowBtn {
-  visibility: visible;
-}
-
-.rowBtn:hover {
-  color: var(--text);
-  border-color: var(--text-dim);
-}
-
-.rowBtnDanger:hover {
-  color: var(--negative);
-  border-color: var(--negative);
-}
-
 /* ── Detail panel (right column) ── */
 
 .tagHeading {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+/* Rename/delete moved here from per-row list buttons — they now act on the
+   selected tag, so they only need to exist once a tag is selected. */
+.detailActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dangerBtn:hover {
+  color: var(--negative);
+  border-color: var(--negative);
 }
 
 .blockLabel {
