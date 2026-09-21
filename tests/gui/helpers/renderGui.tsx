@@ -4,6 +4,7 @@ import { render } from '@testing-library/react';
 import { registry } from '../../../gui/main/registry.js';
 import { RefreshProvider } from '../../../gui/renderer/src/hooks/useRefresh.js';
 import { FilterProvider } from '../../../gui/renderer/src/hooks/useFilter.js';
+import { FilterBar } from '../../../gui/renderer/src/components/FilterBar.js';
 import { UiPrefsProvider } from '../../../gui/renderer/src/hooks/useUiPrefs.js';
 import { NavContext } from '../../../gui/renderer/src/hooks/useNav.js';
 import type { Screen, TxFilter } from '../../../gui/shared/nav.js';
@@ -69,18 +70,27 @@ export function Providers({
   txFilter = {},
   initialFilter,
   navigate = vi.fn(),
+  filterBar = false,
 }: {
   children: React.ReactNode;
   screen?: Screen;
   txFilter?: TxFilter;
   initialFilter?: Filter;
   navigate?: (s: Screen, f?: TxFilter) => void;
+  // Mount the shared <FilterBar /> above the screen, matching how App.tsx
+  // composes Dashboard/Transactions/Trends with it in the real app — needed
+  // by any test that drives search or sync, since both now live only in
+  // FilterBar's own DOM, not in the individual screens'.
+  filterBar?: boolean;
 }) {
   return (
     <RefreshProvider>
       <FilterProvider initial={initialFilter}>
         <UiPrefsProvider>
-          <NavContext.Provider value={{ screen, txFilter, navigate }}>{children}</NavContext.Provider>
+          <NavContext.Provider value={{ screen, txFilter, navigate }}>
+            {filterBar && <FilterBar />}
+            {children}
+          </NavContext.Provider>
         </UiPrefsProvider>
       </FilterProvider>
     </RefreshProvider>
@@ -89,7 +99,8 @@ export function Providers({
 
 /** Render a single screen inside all app providers, with a controllable
  *  txFilter (nav payload), an optional initial shared filter, and a spyable
- *  navigate. */
+ *  navigate. Pass `filterBar: true` to also mount the shared FilterBar above
+ *  it (needed for search/sync interactions — see Providers). */
 export function renderScreen(
   ui: React.ReactElement,
   opts: {
@@ -97,10 +108,17 @@ export function renderScreen(
     txFilter?: TxFilter;
     initialFilter?: Filter;
     navigate?: (s: Screen, f?: TxFilter) => void;
+    filterBar?: boolean;
   } = {},
 ) {
   return render(
-    <Providers screen={opts.screen} txFilter={opts.txFilter} initialFilter={opts.initialFilter} navigate={opts.navigate}>
+    <Providers
+      screen={opts.screen}
+      txFilter={opts.txFilter}
+      initialFilter={opts.initialFilter}
+      navigate={opts.navigate}
+      filterBar={opts.filterBar}
+    >
       {ui}
     </Providers>,
   );

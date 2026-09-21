@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
   getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
+  getLastSyncedAt,
   type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow,
   type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow, type DriftSlice,
 } from '../core/queries.js';
@@ -12,11 +13,14 @@ import {
   getDriftWindows, BASIS_LABEL,
   RANGES, RANGE_LABELS, type Range,
 } from '../core/dateUtils.js';
+import { syncAll } from '../core/sync.js';
+import { notifyChange } from '../core/refresh.js';
+import { fmtTimeAgo } from '../core/fmt.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, severityColor } from './ui.js';
-import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader } from './components/index.js';
+import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader, useStatusMessage } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
@@ -81,6 +85,10 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [view, setView] = useState<DashView>('categories');
   const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
   useEffect(() => { void getDataBounds().then(setBounds); }, []);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
+  const { statusMsg, showStatus } = useStatusMessage();
+  useEffect(() => { void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
   const [scorecardMode, setScorecardMode] = useState(false);
   const [detailMode, setDetailMode] = useState(false); // 'x': per-baseline delta columns
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
@@ -411,6 +419,24 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (input === 's') { setScorecardMode((m) => !m); setCatCursor(0); return; }
     if (input === 'x' && scorecardMode) { setDetailMode((t) => !t); setCatCursor(0); return; }
 
+    if (input === 'S' && !syncing) {
+      setSyncing(true);
+      syncAll(true)
+        .then((results) => {
+          const added = results.reduce((s, r) => s + r.added, 0);
+          showStatus(`Synced — ${added} new`, 3000);
+          // Bumps the shared refreshKey, which every summary/drift/account-row
+          // effect on this screen already lists as a dependency (the same
+          // signal a startup sync or an MCP write fires) — reloads what's on
+          // screen, not just the last-synced timestamp. That effect also
+          // re-fetches getLastSyncedAt, so no separate call is needed here.
+          notifyChange();
+        })
+        .catch(() => showStatus('Sync failed', 3000))
+        .finally(() => setSyncing(false));
+      return;
+    }
+
     if (input === '/') {
       setSearchInput(search); // pre-fill with current search
       setSearchMode(true);
@@ -450,21 +476,27 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="dashboard" showHints={showHints} />
 
-      <Box marginTop={1}><Text bold>Dashboard</Text></Box>
+      <Box marginTop={1}>
+        <Text bold>
+          Dashboard
+          <Text dimColor>{'  · '}{syncing ? 'syncing…' : `last synced ${fmtTimeAgo(lastSynced)}`}</Text>
+        </Text>
+      </Box>
       {merchantDrill
-        ? showHints && <Text dimColor>← → period  ·  [r] range  ·  ↑↓ merchant  ·  Enter txns  ·  Esc back</Text>
+        ? showHints && <Text dimColor>← → period  ·  [r] range  ·  ↑↓ merchant  ·  Enter txns  ·  Esc back  ·  [S] sync</Text>
         : <Text dimColor>
             {showHints
               ? (view === 'account'
-                  ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [s] scorecard`
+                  ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [s] scorecard  ·  [S] sync`
                   : view === 'categories'
-                    ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : '  ·  [m] merchants'}  ·  [Tab] view  ·  [s] scorecard`
+                    ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : '  ·  [m] merchants'}  ·  [Tab] view  ·  [s] scorecard  ·  [S] sync`
                     : view === 'owner'
-                      ? '← → period  ·  [r] range  ·  [Tab] view'
-                      : `[/] search  ·  ← → period  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : ''}  ·  [Tab] view  ·  [s] scorecard`)
+                      ? '← → period  ·  [r] range  ·  [Tab] view  ·  [S] sync'
+                      : `[/] search  ·  ← → period  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : ''}  ·  [Tab] view  ·  [s] scorecard  ·  [S] sync`)
               : '[/] search'}
           </Text>
       }
+      {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>

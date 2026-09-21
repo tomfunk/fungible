@@ -113,6 +113,8 @@ afterEach(() => cleanup());
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 describe('Dashboard', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   function dash(overrides?: Parameters<typeof Dashboard>[0]) {
     return render(
       <W>
@@ -436,6 +438,44 @@ describe('Dashboard', () => {
       const f = frame(r);
       expect(f).toMatch(/May 2026/);
     });
+  });
+
+  it('S key syncs and shows a toast with the added count', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+      { itemId: 'item-a', added: 3, modified: 0, removed: 0, dupes: 0, skipped: false },
+    ]);
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('S');
+    expect(syncApi.syncAll).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(frame(r)).toContain('Synced — 3 new'));
+  });
+
+  it('S key shows a failure toast when sync rejects', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockRejectedValue(new Error('boom'));
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('Sync failed'));
+  });
+
+  // A successful sync must reload what's on screen, not just show a toast —
+  // simulate syncAll actually writing a new transaction, the way a real Plaid
+  // sync would, and confirm the category breakdown picks it up without any
+  // other user action (period/view change).
+  it('S key reloads the displayed category summary after sync adds data', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockImplementation(async () => {
+      await db.execute(
+        `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+         VALUES ('tx-synced', 'test-credit', '2026-05-12', 'New From Sync', 77.00, 'Synced Category', 0, 0)`,
+      );
+      return [{ itemId: 'item-a', added: 1, modified: 0, removed: 0, dupes: 0, skipped: false }];
+    });
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    expect(frame(r)).not.toContain('Synced Category');
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('Synced Category'));
   });
 });
 
@@ -1214,6 +1254,8 @@ describe('Transactions', () => {
 // ── Trends ────────────────────────────────────────────────────────────────────
 
 describe('Trends', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   function trends(overrides?: Partial<Parameters<typeof Trends>[0]>) {
     return render(
       <W>
@@ -1379,6 +1421,46 @@ describe('Trends', () => {
       const f = frame(r);
       expect(f).toContain('No periods match');
     });
+  });
+
+  it('S key syncs and shows a toast with the added count', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+      { itemId: 'item-a', added: 5, modified: 0, removed: 0, dupes: 0, skipped: false },
+    ]);
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    r.stdin.write('S');
+    expect(syncApi.syncAll).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(frame(r)).toContain('Synced — 5 new'));
+  });
+
+  it('S key shows a failure toast when sync rejects', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockRejectedValue(new Error('boom'));
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('Sync failed'));
+  });
+
+  // A successful sync must reload what's on screen, not just show a toast —
+  // simulate syncAll actually writing a new transaction, the way a real Plaid
+  // sync would, and confirm the May period's expense total picks it up
+  // without any other user action (period/view change).
+  it('S key reloads displayed period totals after sync adds data', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockImplementation(async () => {
+      await db.execute(
+        `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+         VALUES ('tx-synced', 'test-credit', '2026-05-12', 'New From Sync', 12345.67, 'Shopping', 0, 0)`,
+      );
+      return [{ itemId: 'item-a', added: 1, modified: 0, removed: 0, dupes: 0, skipped: false }];
+    });
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('May 2026'));
+    // Baseline May expenses (120 + 85 + 45 + 95 + 43.99) is 388.99; adding the
+    // synced 12,345.67 makes the period total 12,734.66.
+    expect(frame(r)).not.toContain('12,734.66');
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('12,734.66'));
   });
 });
 
@@ -1778,6 +1860,45 @@ describe('Tags', () => {
     await waitFor(() => expect(frame(r)).toContain('Tags'));
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
+  });
+
+  // A tag rarely represents actual income (e.g. a reimbursement is inflow,
+  // not income), so the detail view's KPI labels read as Inflow/Outflow
+  // rather than Income/Expenses.
+  it('Enter on a tag opens its detail view with Inflow/Outflow KPI labels', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Inflow');
+      expect(f).toContain('Outflow');
+    });
+  });
+
+  // Regression: the category breakdown intentionally NETS a refund against its
+  // category's spending (e.g. Amtrak $300 charge + $100 refund shows as $200
+  // Travel spend), but the headline Inflow/Outflow KPIs must stay gross — a
+  // reimbursement should show up as Inflow, not silently reduce Outflow.
+  it('Inflow/Outflow KPIs are gross, not netted within a category', async () => {
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-amtrak-charge', 'test-credit', '2026-05-05', 'Amtrak',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-amtrak-refund', 'test-credit', '2026-05-06', 'Amtrak Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-amtrak-charge', 1)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-amtrak-refund', 1)`,
+    ], 'write');
+
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Inflow'));
+
+    const f = frame(r);
+    // Gross: Outflow $300.00 (not netted down to $200.00), Inflow $100.00.
+    expect(f).toContain('300.00');
+    expect(f).toContain('100.00');
   });
 });
 

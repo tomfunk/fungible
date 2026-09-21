@@ -35,9 +35,19 @@
   margin-left: auto;
 }
 
+/* The tag list's columns (name + 4 narrow numeric ones) need far less width
+   than the detail panel, which nests a full-width-style kpiStrip (Income/
+   Expenses/Net/Txns) plus a $-amount + bar-chart category table — components
+   built assuming the full page width, the way every other screen uses them.
+   An even 1fr/1fr split gave the detail panel only half that, squeezing its
+   KPI figures and bars into roughly half the room they get everywhere else
+   and forcing avoidable wrapping (hence "squished" and needing more scroll
+   than the content actually requires). A fluid (not fixed-px) ratio still
+   gives the list enough room to grow with the window, while the detail panel
+   gets the larger share at every width. */
 .columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1.6fr;
   gap: 32px;
   align-items: start;
 }
@@ -46,10 +56,22 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* Grid items default to min-width:auto (their content's min-content size),
+     which would otherwise force the whole .columns grid — and the page —
+     wider than the window rather than letting either column shrink. The
+     left table no longer needs its own overflow escape hatch (see .table
+     below), but the right panel's kpiStrip still has its own min-content
+     floor, so this stays needed to let that side shrink/wrap instead of
+     blowing out the grid at the app's smallest window width. */
+  min-width: 0;
 }
 
 /* ── Table (left column) ── */
 
+/* No .tableScroll overflow-x wrapper needed here anymore: with Inflow,
+   Outflow, and the actions column gone (down to Tag/Txns/Span), this
+   table's min-content width is comfortably under the .columns grid's 1fr
+   share at every width down to the app's 900px minimum — verified live. */
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -122,41 +144,25 @@
   width: 40%;
 }
 
-.tdActions {
-  width: 1%;
-}
-
-.rowBtn {
-  font-size: 11.5px;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 2px 7px;
-  margin-left: 4px;
-  visibility: hidden;
-}
-
-.row:hover .rowBtn,
-.rowActive:hover .rowBtn {
-  visibility: visible;
-}
-
-.rowBtn:hover {
-  color: var(--text);
-  border-color: var(--text-dim);
-}
-
-.rowBtnDanger:hover {
-  color: var(--negative);
-  border-color: var(--negative);
-}
-
 /* ── Detail panel (right column) ── */
 
 .tagHeading {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+/* Rename/delete moved here from per-row list buttons — they now act on the
+   selected tag, so they only need to exist once a tag is selected. */
+.detailActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dangerBtn:hover {
+  color: var(--negative);
+  border-color: var(--negative);
 }
 
 .blockLabel {

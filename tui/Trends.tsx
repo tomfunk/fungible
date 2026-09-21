@@ -2,12 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, generateAllPeriods, getPeriodTotals, getSearchMatchingPeriods, getSearchPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
+import { getLastSyncedAt } from '../core/queries.js';
+import { syncAll } from '../core/sync.js';
+import { notifyChange } from '../core/refresh.js';
+import { fmtTimeAgo } from '../core/fmt.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
-import { StatCard, usePagination, SelectableRow, PageHeader, TextInput } from './components/index.js';
+import { StatCard, usePagination, SelectableRow, PageHeader, TextInput, useStatusMessage } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
@@ -57,6 +61,10 @@ export function Trends({
   const [searchInput, setSearchInput] = useState(initialFilter?.search ?? '');
   const [searchMode, setSearchMode] = useState(false);
   const [matchCount, setMatchCount] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
+  const { statusMsg, showStatus } = useStatusMessage();
+  useEffect(() => { void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(searchMode); }, [searchMode, setTyping]);
 
@@ -152,6 +160,22 @@ export function Trends({
       setRange((r) => TRENDS_RANGES[(TRENDS_RANGES.indexOf(r) + 1) % TRENDS_RANGES.length]);
       return;
     }
+    if (input === 'S' && !syncing) {
+      setSyncing(true);
+      syncAll(true)
+        .then((results) => {
+          const added = results.reduce((s, r) => s + r.added, 0);
+          showStatus(`Synced — ${added} new`, 3000);
+          // Bumps the shared refreshKey, already a dependency of the rows-loading
+          // effect above (the same signal a startup sync or an MCP write fires) —
+          // reloads what's on screen, not just the last-synced timestamp. That
+          // effect also re-fetches getLastSyncedAt, so no separate call is needed.
+          notifyChange();
+        })
+        .catch(() => showStatus('Sync failed', 3000))
+        .finally(() => setSyncing(false));
+      return;
+    }
     if (key.return) {
       const row = activeRows[clampedCursor];
       if (row) {
@@ -211,11 +235,17 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="trends" showHints={showHints} />
 
-      <Box marginTop={1}><Text bold>Trends</Text></Box>
+      <Box marginTop={1}>
+        <Text bold>
+          Trends
+          <Text dimColor>{'  · '}{syncing ? 'syncing…' : `last synced ${fmtTimeAgo(lastSynced)}`}</Text>
+        </Text>
+      </Box>
       <Text dimColor>{showHints
-        ? (searchMode ? '' : search ? '↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns')
+        ? (searchMode ? '' : search ? '↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns  ·  [S] sync' : '←→ view  ·  ↑↓ navigate  ·  [r] range  ·  [/] search  ·  Enter txns  ·  [S] sync')
         : '[/] search'}
       </Text>
+      {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>

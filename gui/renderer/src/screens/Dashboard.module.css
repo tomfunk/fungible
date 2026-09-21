@@ -53,33 +53,17 @@
   flex-wrap: wrap;
 }
 
-.driftBtn,
-.driftBtnActive {
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-dim);
+/* Scorecard / Baselines toggles — built on the shared .chip control (same
+   bordered-mono-badge language as FilterBar's Filter chip), just with an
+   accent-colored "on" state instead of chip's own hover-only emphasis. */
+.toggleActive {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
-.driftBtn:hover {
-  color: var(--text);
-  border-color: var(--text-dim);
-}
-
-.driftBtnActive {
-  border-color: var(--manual);
-  color: var(--manual);
-}
-
-.searchWrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.search {
-  width: 180px;
+.toggleActive:hover {
+  color: var(--accent);
+  filter: brightness(1.15);
 }
 
 .searchStats {
@@ -88,14 +72,11 @@
   white-space: nowrap;
 }
 
-.clearSearch {
-  color: var(--text-dim);
-  font-size: 12.5px;
-  text-decoration: underline;
-}
-
-.clearSearch:hover {
-  color: var(--text);
+.controlsRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .acctFilter {
@@ -107,7 +88,6 @@
   border-radius: var(--radius-sm);
   padding: 3px 10px;
   font-size: 12.5px;
-  margin-left: auto;
 }
 
 .acctFilter button {

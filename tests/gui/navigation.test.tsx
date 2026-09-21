@@ -143,7 +143,10 @@ describe('GUI App navigation', () => {
     await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Grocery' })).toBeTruthy());
     await userEvent.click(screen.getByRole('checkbox', { name: 'Grocery' }));
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    await waitFor(() => expect(screen.getByText(/filter: 4 categories/)).toBeTruthy());
+    // 5 seeded real categories + the Uncategorized sentinel now folded into
+    // this same checklist (was a dedicated Transactions quick-filter button)
+    // = 6 in the universe; unchecking just Grocery leaves 5 selected.
+    await waitFor(() => expect(screen.getByText(/filter: 5 categories/)).toBeTruthy());
     // carries to Transactions: Grocery rows excluded
     await userEvent.click(screen.getByRole('button', { name: 'Transactions' }));
     await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());

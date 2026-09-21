@@ -15,6 +15,25 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.searchWrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.search {
+  width: 180px;
 }
 
 .filterBtnActive {

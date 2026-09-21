@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -49,8 +49,7 @@ export function Trends() {
     const r = txFilter.range;
     return r && (TRENDS_RANGES as string[]).includes(r) ? (r as TrendsRange) : 'month';
   });
-  const [searchInput, setSearchInput] = useState(txFilter.search ?? '');
-  const [search, setSearch] = useState(txFilter.search ?? '');
+  const { filter: sharedFilter, setFilter, search, setSearch, focusSearch } = useFilter();
 
   useEffect(() => {
     void api.trends.buildTrendViews().then((loaded) => {
@@ -63,9 +62,15 @@ export function Trends() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Seed the shared search box from a nav param once per mount — see the
+  // matching comment in Dashboard.tsx.
+  useEffect(() => {
+    if (txFilter.search) setSearch(txFilter.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const view = views[viewIdx] as View | undefined;
 
-  const { filter: sharedFilter, setFilter } = useFilter();
   const rows = useQuery(
     () => (view ? api.trends.getPeriodTotals(view, range, sharedFilter) : Promise.resolve([])),
     [viewIdx, range, views, sharedFilter],
@@ -74,10 +79,9 @@ export function Trends() {
     () => (search ? api.trends.getSearchPeriodTotals(search, range, sharedFilter) : Promise.resolve(null)),
     [search, range, sharedFilter],
   );
-  const liveSearch = searchInput;
   const matchInfo = useQuery(
-    () => (liveSearch ? api.trends.getSearchMatchingPeriods(liveSearch, range, sharedFilter) : Promise.resolve(null)),
-    [liveSearch, range, sharedFilter],
+    () => (search ? api.trends.getSearchMatchingPeriods(search, range, sharedFilter) : Promise.resolve(null)),
+    [search, range, sharedFilter],
   );
 
   const activeRows: PeriodRow[] = (search ? searchRows : rows) ?? [];
@@ -115,7 +119,6 @@ export function Trends() {
     if (row) navToPeriod(row);
   }
 
-  const searchRef = useRef<HTMLInputElement>(null);
   useScreenKeys({
     r: () => setRange((r) => TRENDS_RANGES[(TRENDS_RANGES.indexOf(r) + 1) % TRENDS_RANGES.length]),
     ArrowLeft: () => {
@@ -124,12 +127,10 @@ export function Trends() {
     ArrowRight: () => {
       if (!search && views.length) setViewIdx((i) => (i + 1) % views.length);
     },
-    '/': () => searchRef.current?.focus(),
+    '/': () => focusSearch(),
     Escape: () => {
-      if (search) {
-        setSearch('');
-        setSearchInput('');
-      } else navigate('dashboard');
+      if (search) setSearch('');
+      else navigate('dashboard');
     },
   });
 
@@ -148,6 +149,12 @@ export function Trends() {
       <KeyHints hints="[1-9·0] screens   [r] range   [← →] view   [/] search   [esc] back" />
       <div className={styles.topBar}>
         <h1 className={styles.title}>Trends</h1>
+        {search && matchInfo && (
+          <span className={`num ${styles.matchCount}`}>
+            {matchInfo.count} txn{matchInfo.count === 1 ? '' : 's'}
+            {activeRows.length > 0 ? ` · ${activeRows.length} periods` : ''}
+          </span>
+        )}
         {!search && views.length > 0 && (
           <div className={styles.viewSelectWrap}>
             <select
@@ -163,13 +170,6 @@ export function Trends() {
             </select>
           </div>
         )}
-        <div className="pillGroup">
-          {TRENDS_RANGES.map((r) => (
-            <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
-              {RANGE_LABELS[r]}
-            </button>
-          ))}
-        </div>
         {!chartTypeLocked && (
           <div className="pillGroup" title="Chart type">
             <button className={chartType === 'bar' ? 'pillActive' : 'pill'} onClick={() => setChartType('bar')}>
@@ -180,39 +180,12 @@ export function Trends() {
             </button>
           </div>
         )}
-        <div className={styles.searchWrap}>
-          <input
-            ref={searchRef}
-            className={`underline ${styles.search}`}
-            placeholder="Search transactions…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') setSearch(searchInput);
-              if (e.key === 'Escape') {
-                setSearch('');
-                setSearchInput('');
-                searchRef.current?.blur();
-              }
-            }}
-          />
-          {matchInfo && searchInput && (
-            <span className={`num ${styles.matchCount}`}>
-              {matchInfo.count} txn{matchInfo.count === 1 ? '' : 's'}
-              {search && activeRows.length > 0 ? ` · ${activeRows.length} periods` : ''}
-            </span>
-          )}
-          {search && (
-            <button
-              className={styles.clearSearch}
-              onClick={() => {
-                setSearch('');
-                setSearchInput('');
-              }}
-            >
-              clear
+        <div className={`pillGroup ${styles.rangePills}`}>
+          {TRENDS_RANGES.map((r) => (
+            <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
+              {RANGE_LABELS[r]}
             </button>
-          )}
+          ))}
         </div>
       </div>
 

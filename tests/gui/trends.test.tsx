@@ -48,18 +48,21 @@ describe('GUI Trends', () => {
     expect(screen.getByText('Avg / month')).toBeTruthy();
   });
 
+  // Search now lives in the shared FilterBar (mounted once above
+  // Dashboard/Transactions/Trends in the real app), not in Trends itself —
+  // renderScreen's filterBar:true mounts it here too so these can drive it.
   it('search shows live transaction match count', async () => {
-    renderScreen(<Trends />);
+    renderScreen(<Trends />, { filterBar: true });
     await screen.findByRole('combobox');
     await userEvent.type(screen.getByPlaceholderText('Search transactions…'), 'Whole');
     await waitFor(() => expect(screen.getByText(/2 txns/)).toBeTruthy());
   });
 
-  it('committed search switches to matching periods', async () => {
-    renderScreen(<Trends />);
+  it('search switches to matching periods', async () => {
+    renderScreen(<Trends />, { filterBar: true });
     await screen.findByRole('combobox');
     const input = screen.getByPlaceholderText('Search transactions…');
-    await userEvent.type(input, 'Whole{Enter}');
+    await userEvent.type(input, 'Whole');
     await waitFor(() => expect(screen.getByText(/2 periods/)).toBeTruthy());
     await userEvent.click(screen.getByText('clear'));
     await waitFor(() => expect(screen.queryByText(/2 periods/)).toBeNull());

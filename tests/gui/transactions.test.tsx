@@ -72,10 +72,12 @@ describe('GUI Transactions', () => {
     localStorage.removeItem('fungible-keys');
   });
 
+  // Search now lives in the shared FilterBar, not on Transactions itself —
+  // filterBar:true mounts it here too, matching how App.tsx composes them.
   it('search filters rows live', async () => {
-    renderScreen(<Transactions />);
+    renderScreen(<Transactions />, { filterBar: true });
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
-    await userEvent.type(screen.getByPlaceholderText('Search…'), 'Whole');
+    await userEvent.type(screen.getByPlaceholderText('Search transactions…'), 'Whole');
     await waitFor(() => expect(screen.getByText('2 transactions')).toBeTruthy());
   });
 
@@ -242,9 +244,12 @@ describe('GUI Transactions', () => {
     });
   });
 
-  it('bulk categorize-all applies to every visible transaction', async () => {
+  it('bulk categorize is disabled until a row is selected, then applies to the selection', async () => {
     renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
     await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
+    expect((screen.getByRole('button', { name: 'Categorize' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all visible' }));
+    expect((screen.getByRole('button', { name: 'Categorize' }) as HTMLButtonElement).disabled).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Categorize' }));
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Dining' }));

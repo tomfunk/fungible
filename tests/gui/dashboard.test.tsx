@@ -79,7 +79,7 @@ describe('GUI Dashboard', () => {
   it('scorecard mode buckets categories vs the typical-month baseline', async () => {
     renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
     await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Scorecard' }));
 
     const section = await waitFor(() => {
       const s = screen.getByText(/Spending by category · vs typical/).closest('section')!;
@@ -104,7 +104,7 @@ describe('GUI Dashboard', () => {
     const navigate = vi.fn();
     renderScreen(<Dashboard />, { txFilter: MAY_FILTER, navigate });
     await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Scorecard' }));
     await waitFor(() => expect(screen.getByText('Over')).toBeTruthy());
     await userEvent.click(screen.getByText('Grocery'));
     expect(navigate).toHaveBeenCalledWith(
@@ -113,12 +113,12 @@ describe('GUI Dashboard', () => {
     );
   });
 
-  it('columns toggle switches to the sortable per-baseline delta table', async () => {
+  it('Baselines toggle switches to the sortable per-baseline delta table', async () => {
     renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
     await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'columns' })).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'columns' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Scorecard' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Baselines' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Baselines' }));
     // The diagnostic table has the three baseline columns; the scorecard doesn't.
     await waitFor(() => expect(screen.getByText(/vs prev/)).toBeTruthy());
     expect(screen.getByText(/yr ago/)).toBeTruthy();

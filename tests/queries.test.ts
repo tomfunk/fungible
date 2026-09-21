@@ -23,6 +23,8 @@ import {
   getLinkedItems,
   groupAccountsByType,
   buildTypeToAccountIds,
+  getAllTags,
+  getTagSummary,
   type AccountBalance,
 } from '../core/queries.js';
 import { makeAccount } from './helpers/makeAccount.js';
@@ -60,6 +62,10 @@ async function insertTx(opts: {
 
 beforeEach(async () => {
   txId = 0;
+  // transaction_tags/tags first: they FK-reference transactions, and FK
+  // enforcement is on for the real sqlite3 driver this test db uses.
+  await db.execute('DELETE FROM transaction_tags');
+  await db.execute('DELETE FROM tags');
   await db.execute('DELETE FROM transactions');
   await db.execute('DELETE FROM hidden_categories');
   await db.execute('DELETE FROM categories');
@@ -396,6 +402,140 @@ describe('getSearchFilteredData merchant_name fallback', () => {
 
     const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'Lyft');
     expect(summary.expenses).toBeCloseTo(30);
+  });
+
+  it('an unsigned amount search matches by displayed magnitude, either direction', async () => {
+    await insertTx({ amount: 42.50, category: 'Shopping' });   // outflow, displays -$42.50
+    await insertTx({ amount: -42.50, category: 'Refund' });    // inflow, displays +$42.50
+    await insertTx({ amount: 100, category: 'Shopping' });     // distractor
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', '42.50');
+    expect(summary.expenses).toBeCloseTo(42.50);
+    expect(summary.income).toBeCloseTo(42.50);
+  });
+
+  it('a signed amount search matches only the matching direction', async () => {
+    await insertTx({ amount: 42.50, category: 'Shopping' }); // outflow, displays -$42.50
+    await insertTx({ amount: -42.50, category: 'Refund' });  // inflow, displays +$42.50
+
+    const negative = await getSearchFilteredData('2025-01-01', '2025-01-31', '-42.50');
+    expect(negative.summary.expenses).toBeCloseTo(42.50);
+    expect(negative.summary.income).toBe(0);
+
+    const positive = await getSearchFilteredData('2025-01-01', '2025-01-31', '+42.50');
+    expect(positive.summary.expenses).toBe(0);
+    expect(positive.summary.income).toBeCloseTo(42.50);
+  });
+
+  it('amount search is exact to the cent, not a prefix match', async () => {
+    await insertTx({ amount: 42.37, category: 'Shopping' });
+    await insertTx({ amount: 42, category: 'Grocery' });
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', '42');
+    expect(summary.expenses).toBeCloseTo(42);
+    expect(summary.byCategory.map((c) => c.category)).toEqual(['Grocery']);
+  });
+
+  it('exact date forms (YYYY-MM-DD, M/D/YYYY) match a single day', async () => {
+    await insertTx({ date: '2025-01-15', amount: 30, category: 'Travel' });
+    await insertTx({ date: '2025-01-16', amount: 99, category: 'Travel' });
+
+    expect((await getSearchFilteredData('2025-01-01', '2025-01-31', '2025-01-15')).summary.expenses).toBeCloseTo(30);
+    expect((await getSearchFilteredData('2025-01-01', '2025-01-31', '1/15/2025')).summary.expenses).toBeCloseTo(30);
+  });
+
+  it('a bare M/D date search matches that day across every year', async () => {
+    await insertTx({ date: '2024-01-15', amount: 15, category: 'A' });
+    await insertTx({ date: '2025-01-15', amount: 25, category: 'B' });
+    await insertTx({ date: '2025-01-16', amount: 999, category: 'C' }); // distractor
+
+    const { summary } = await getSearchFilteredData('2024-01-01', '2025-12-31', '1/15');
+    expect(summary.expenses).toBeCloseTo(40);
+    expect(summary.byCategory.map((c) => c.category).sort()).toEqual(['A', 'B']);
+  });
+
+  it('whole-month forms (YYYY-MM, "Month YYYY") match every day in that month', async () => {
+    await insertTx({ date: '2025-01-01', amount: 10, category: 'A' });
+    await insertTx({ date: '2025-01-31', amount: 20, category: 'B' });
+    await insertTx({ date: '2025-02-01', amount: 999, category: 'C' }); // distractor
+
+    expect((await getSearchFilteredData('2025-01-01', '2025-02-28', '2025-01')).summary.expenses).toBeCloseTo(30);
+    expect((await getSearchFilteredData('2025-01-01', '2025-02-28', 'January 2025')).summary.expenses).toBeCloseTo(30);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getAllTags — ignored/hidden-category filtering matches getTagSummary', () => {
+  async function makeTag(name: string): Promise<number> {
+    const res = await db.execute({ sql: 'INSERT INTO tags (name) VALUES (?)', args: [name] });
+    return Number(res.lastInsertRowid);
+  }
+  async function tagTx(transactionId: string, tagId: number) {
+    await db.execute({
+      sql: 'INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)',
+      args: [transactionId, tagId],
+    });
+  }
+
+  it('excludes an ignored transaction from inflow/outflow but keeps it in count', async () => {
+    await insertTx({ amount: 50, category: 'Shopping', ignored: 0 });
+    const visibleId = 'tx1';
+    await insertTx({ amount: 999, category: 'Shopping', ignored: 1 });
+    const ignoredId = 'tx2';
+
+    const tagId = await makeTag('reimbursable');
+    await tagTx(visibleId, tagId);
+    await tagTx(ignoredId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.count).toBe(2); // both tagged transactions still counted
+    expect(tag.outflow).toBeCloseTo(50); // the ignored one's 999 must not leak in
+
+    const summary = await getTagSummary('reimbursable');
+    expect(summary.expenses).toBeCloseTo(tag.outflow); // list and detail panel now agree
+  });
+
+  it('excludes a hidden-category transaction from inflow/outflow but keeps it in count', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories (category) VALUES (?)', args: ['Transfer'] });
+    await insertTx({ amount: 50, category: 'Shopping' });
+    const visibleId = 'tx1';
+    await insertTx({ amount: 999, category: 'Transfer' });
+    const hiddenId = 'tx2';
+
+    const tagId = await makeTag('reimbursable');
+    await tagTx(visibleId, tagId);
+    await tagTx(hiddenId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.count).toBe(2);
+    expect(tag.outflow).toBeCloseTo(50);
+
+    const summary = await getTagSummary('reimbursable');
+    expect(summary.expenses).toBeCloseTo(tag.outflow);
+  });
+
+  it('a tag whose only transaction is ignored still appears, with zero financials', async () => {
+    await insertTx({ amount: 999, category: 'Shopping', ignored: 1 });
+    const ignoredId = 'tx1';
+    const tagId = await makeTag('lonely');
+    await tagTx(ignoredId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.name).toBe('lonely');
+    expect(tag.count).toBe(1); // still tagged — not silently dropped
+    expect(tag.outflow).toBe(0);
+    expect(tag.inflow).toBe(0);
+    expect(tag.earliest).toBeNull();
+    expect(tag.latest).toBeNull();
+  });
+
+  it('a tag with zero transactions still appears as a 0-count row', async () => {
+    await makeTag('untouched');
+    const [tag] = await getAllTags();
+    expect(tag.name).toBe('untouched');
+    expect(tag.count).toBe(0);
+    expect(tag.outflow).toBe(0);
+    expect(tag.inflow).toBe(0);
   });
 });
 

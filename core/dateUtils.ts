@@ -226,3 +226,106 @@ export function formatPeriodLabel(range: Range, anchor: Date): string {
     case 'alltime': return 'All Time';
   }
 }
+
+// Search-box date parsing (buildSearchMatcher in queries.ts). Two shapes come
+// back because a bare "M/D" with no year means "this day in any year" -- that
+// can't be expressed as a single from/to string range, so it's kept as its
+// own month/day variant instead of forcing a fake wide range that would
+// silently match unrelated dates too. Every other form resolves to a
+// day-in-range pair, usable with the from <= date <= to idiom already used
+// everywhere else in this file.
+export type SearchDateRange = { from: string; to: string };
+export type SearchDateAnyYear = { month: number; day: number }; // month is 1-12
+export type ParsedSearchDate = SearchDateRange | SearchDateAnyYear;
+
+export function isSearchDateAnyYear(d: ParsedSearchDate): d is SearchDateAnyYear {
+  return 'month' in d && 'day' in d;
+}
+
+const FULL_MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+// Accepts a full name ("March") or the existing 3-letter MONTHS abbreviation
+// ("Mar"), case-insensitively. Returns a 1-12 month number, or null.
+function monthNumberFromName(token: string): number | null {
+  const lower = token.toLowerCase();
+  const full = FULL_MONTH_NAMES.indexOf(lower);
+  if (full !== -1) return full + 1;
+  const abbr = MONTHS.findIndex((m) => m.toLowerCase() === lower);
+  return abbr !== -1 ? abbr + 1 : null;
+}
+
+function isValidMonthDay(month: number, day: number): boolean {
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+const ISO_DATE  = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_MONTH = /^(\d{4})-(\d{2})$/;
+const MDY       = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+const MD        = /^(\d{1,2})\/(\d{1,2})$/;
+const MONTH_YEAR = /^([A-Za-z]+)\s+(\d{4})$/;
+const MONTH_ONLY = /^([A-Za-z]+)$/;
+
+/**
+ * Parses a free-text search token into a date match. Recognizes:
+ *   - YYYY-MM-DD              exact day
+ *   - YYYY-MM                 whole month, that year
+ *   - M/D/YYYY                exact day
+ *   - M/D                     that month/day in ANY year (no year given)
+ *   - "March 2026" / "Mar 2026"  whole month, that year
+ *   - "March" / "Mar"         whole month, defaulting to `today`'s year
+ * Returns null when the input doesn't look like a date at all, so callers
+ * can fall back to plain-text search.
+ */
+export function parseSearchDate(input: string, today: Date = new Date()): ParsedSearchDate | null {
+  const s = input.trim();
+
+  let m = ISO_DATE.exec(s);
+  if (m) {
+    const [, y, mo, d] = m;
+    if (!isValidMonthDay(Number(mo), Number(d))) return null;
+    return { from: `${y}-${mo}-${d}`, to: `${y}-${mo}-${d}` };
+  }
+
+  m = ISO_MONTH.exec(s);
+  if (m) {
+    const [, y, mo] = m;
+    if (Number(mo) < 1 || Number(mo) > 12) return null;
+    return { from: `${y}-${mo}-01`, to: `${y}-${mo}-31` };
+  }
+
+  m = MDY.exec(s);
+  if (m) {
+    const [, mo, d, y] = m;
+    const month = Number(mo), day = Number(d);
+    if (!isValidMonthDay(month, day)) return null;
+    return { from: `${y}-${pad(month)}-${pad(day)}`, to: `${y}-${pad(month)}-${pad(day)}` };
+  }
+
+  m = MD.exec(s);
+  if (m) {
+    const month = Number(m[1]), day = Number(m[2]);
+    if (!isValidMonthDay(month, day)) return null;
+    return { month, day };
+  }
+
+  m = MONTH_YEAR.exec(s);
+  if (m) {
+    const month = monthNumberFromName(m[1]);
+    if (month === null) return null;
+    const y = m[2];
+    return { from: `${y}-${pad(month)}-01`, to: `${y}-${pad(month)}-31` };
+  }
+
+  m = MONTH_ONLY.exec(s);
+  if (m) {
+    const month = monthNumberFromName(m[1]);
+    if (month === null) return null;
+    const y = today.getFullYear();
+    return { from: `${y}-${pad(month)}-01`, to: `${y}-${pad(month)}-31` };
+  }
+
+  return null;
+}
