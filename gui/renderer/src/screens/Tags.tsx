@@ -154,11 +154,11 @@ export function Tags() {
                 <>
                   <div className="kpiStrip">
                     <div className="kpiCell">
-                      <div className="kpiLabel">Income</div>
+                      <div className="kpiLabel">Inflow</div>
                       <div className="num pos kpiFigure">{fmt(summary.income)}</div>
                     </div>
                     <div className="kpiCell">
-                      <div className="kpiLabel">Expenses</div>
+                      <div className="kpiLabel">Outflow</div>
                       <div className="num neg kpiFigure">{fmt(summary.expenses)}</div>
                     </div>
                     <div className="kpiCell">
