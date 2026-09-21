@@ -98,4 +98,36 @@ describe('GUI Tags', () => {
     renderScreen(<Tags />, { txFilter: { focusTag: 'travel' } });
     await waitFor(() => expect(screen.getByText('# travel')).toBeTruthy());
   });
+
+  it('headline Inflow/Outflow are gross (not netted by category like the breakdown below)', async () => {
+    // A $300 spend + a $100 refund in the same real category (Travel) nets to
+    // $200 in getTagSummary's byCategory bucket (correct for that section) —
+    // but the headline KPIs must show the true gross $100 inflow / $300
+    // outflow (selected.inflow/outflow from getAllTags), not summary's netted
+    // income/expenses, or a reimbursement silently vanishes into Outflow.
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-spend',  'test-credit', '2026-05-04', 'Amtrak',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-refund', 'test-credit', '2026-05-05', 'Amtrak Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-travel-spend', 1)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-travel-refund', 1)`,
+    ], 'write');
+
+    renderScreen(<Tags />);
+    await waitFor(() => expect(screen.getByText('travel')).toBeTruthy());
+    await userEvent.click(screen.getByText('travel'));
+    await waitFor(() => expect(screen.getByText('# travel')).toBeTruthy());
+
+    // Headline: gross, unnetted.
+    await waitFor(() => expect(screen.getByText('$100.00')).toBeTruthy()); // Inflow
+    expect(screen.getByText('$300.00')).toBeTruthy(); // Outflow
+    // Net (income - expenses) is the same either way: spent $300, got $100
+    // back, net cash flow is -$200 whether or not the category nets first.
+    expect(screen.getByText('-$200.00')).toBeTruthy();
+    // The category breakdown below still nets, on purpose.
+    await waitFor(() => expect(screen.getByText('Travel')).toBeTruthy());
+    const categoryRow = screen.getByText('Travel').closest('tr')!;
+    expect(categoryRow.textContent).toContain('$200.00');
+  });
 });

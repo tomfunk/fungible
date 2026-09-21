@@ -155,11 +155,15 @@ export function Tags() {
                   <div className="kpiStrip">
                     <div className="kpiCell">
                       <div className="kpiLabel">Inflow</div>
-                      <div className="num pos kpiFigure">{fmt(summary.income)}</div>
+                      {/* Gross, from getAllTags (selected), not summary.income:
+                          getTagSummary nets refunds against spend within each
+                          real category (correct for the breakdown below, but
+                          it would hide a reimbursement inside Outflow here). */}
+                      <div className="num pos kpiFigure">{fmt(selected.inflow)}</div>
                     </div>
                     <div className="kpiCell">
                       <div className="kpiLabel">Outflow</div>
-                      <div className="num neg kpiFigure">{fmt(summary.expenses)}</div>
+                      <div className="num neg kpiFigure">{fmt(selected.outflow)}</div>
                     </div>
                     <div className="kpiCell">
                       <div className="kpiLabel">Net</div>
