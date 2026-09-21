@@ -1,107 +1,92 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
   max-width: 1100px;
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
-/* ── Stat cards ──────────────────────────────── */
-.cards {
-  display: flex;
-  gap: 14px;
-}
-
-.card {
-  flex: 1;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 20px;
-}
-
-.cardLabel {
-  font-size: 12px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 8px;
-}
-
-.cardValue {
-  font-size: 22px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── Two-panel row ───────────────────────────── */
+/* ── Two-panel rows (Cash Flow/Retirement, Assumptions) ── */
 .twoCol {
-  display: flex;
-  gap: 14px;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 34px;
+  align-items: start;
 }
 
 .panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 20px;
-}
-
-.panelFlex {
-  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel h2 {
-  font-size: 13px;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--text-dim);
-  margin: 0 0 12px;
+  color: var(--text-faint);
+  font-weight: 400;
+  margin: 0 0 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
 }
 
-/* ── Metric rows — grid aligns values across rows ── */
+/* ── Metric rows — label, inline dim qualifier, mono figure right.
+   Reordered via flex `order` rather than DOM order, so the qualifier can
+   stay a separate JSX sibling (existing convention) while still rendering
+   between the label and the value. */
 .metric {
-  display: grid;
-  grid-template-columns: 130px minmax(90px, auto) 1fr;
+  display: flex;
   align-items: baseline;
-  column-gap: 14px;
-  padding: 5px 0;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.metric:last-child {
+  border-bottom: none;
 }
 
 .metricLabel {
-  color: var(--text-dim);
-  font-size: 13px;
+  order: 1;
+  flex: none;
 }
 
 .metricValue {
-  font-size: 16px;
-  font-weight: 600;
-  text-align: right;
+  order: 3;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+  margin-left: auto;
 }
 
 .metricHint {
+  order: 2;
   font-size: 12.5px;
 }
 
-/* ── Full-width progress bar ─────────────────── */
+/* ── Full-width progress bar (Retirement · FIRE number) ── */
 .progressRow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0 8px;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .progressTrack {
   flex: 1;
-  height: 8px;
+  height: 5px;
   background: var(--bg-raised);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -109,12 +94,11 @@
   display: block;
   height: 100%;
   background: var(--accent);
-  border-radius: 4px;
 }
 
 /* ── Assumptions dials ───────────────────────── */
 .dials {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px 32px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px 34px;
 }

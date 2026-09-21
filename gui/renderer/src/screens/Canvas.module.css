@@ -1,44 +1,31 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   max-width: 760px;
 }
 
 .topBar {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
-.historyBtn {
-  font-size: 13px;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 14px;
-}
-
-.historyBtn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 .panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 .search {
   width: 100%;
-  margin-bottom: 10px;
 }
 
 .historyTable {
@@ -48,9 +35,13 @@
 }
 
 .historyTable td {
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: var(--table-row-padding) 10px;
+  border-bottom: 1px solid var(--rule-soft);
   white-space: nowrap;
+}
+
+.historyTable td:first-child {
+  padding-left: 0;
 }
 
 .historyTable tr:last-child td {
@@ -79,7 +70,7 @@
   font-size: 11.5px;
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   padding: 2px 7px;
   visibility: hidden;
 }
@@ -88,6 +79,8 @@
   visibility: visible;
 }
 
+/* Destructive action — the one deliberate exception to the "hover = text,
+   border-color: text-dim" rule, matching Transactions' .rowBtnDanger. */
 .deleteBtn:hover {
   color: var(--negative);
   border-color: var(--negative);
@@ -96,25 +89,27 @@
 .canvas {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
 }
 
 .canvasTitle {
   font-size: 17px;
+  font-weight: 600;
   margin: 0 0 4px;
 }
 
-.sectionLabel {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--text-dim);
-  margin: 12px 0 2px;
+/* Block section label — same `sectionLabel` text vocabulary as every other
+   screen (combine with it in TSX), plus the structural rule underneath
+   since these render as standalone headings with no companion row. */
+.blockLabel {
+  padding-bottom: 8px;
+  margin: 0;
+  border-bottom: 1px solid var(--rule);
 }
 
 .text {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
 .dial {
@@ -136,7 +131,9 @@
 }
 
 .dialValue {
-  font-weight: 600;
+  font-weight: 600; /* deliberately bolder than .num's default 500 — a
+                        compact inline readout benefits from the extra
+                        weight at this size */
   font-size: 14.5px;
 }
 
@@ -178,7 +175,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   pointer-events: none;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.12s, border-color 0.12s;
 }
 
 .toggleThumb {
@@ -190,7 +187,7 @@
   border-radius: 50%;
   background: var(--text-dim);
   pointer-events: none;
-  transition: transform 0.15s, background 0.15s;
+  transition: transform 0.12s, background 0.12s;
 }
 
 .toggle input:checked ~ .toggleTrack {
@@ -212,13 +209,13 @@
   padding: 0 8px;
   font-size: 13px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   flex: 1;
   max-width: 220px;
 }
 
 .selectInput:hover {
-  border-color: var(--accent);
+  border-color: var(--text-dim);
 }
 
 .resetBtn {
@@ -239,7 +236,8 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding: 4px 0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .outputLabel {
@@ -249,7 +247,7 @@
 
 .outputValue {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* ── List / timeline element ─────────────────── */
@@ -273,7 +271,7 @@
   border: 1px solid transparent;
   background: transparent;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
 
@@ -324,8 +322,8 @@
 }
 
 .yearStepBtn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 
 .listYearSep {
@@ -338,14 +336,14 @@
   margin-top: 4px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-size: 12.5px;
 }
 
 .addRowBtn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 
 /* Reuses .deleteBtn's `visibility: hidden` base (defined above for the history
@@ -373,28 +371,35 @@
 .projectionTable {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
 .projectionTable th {
   text-align: right;
-  padding: 6px 10px;
-  color: var(--text-dim);
-  font-weight: 600;
-  font-size: 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 0 10px var(--table-header-padding-bottom);
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--rule);
   white-space: nowrap;
 }
 
 .projectionTable th:first-child {
   text-align: left;
+  padding-left: 0;
 }
 
 .projectionTable td {
-  padding: 6px 10px;
+  padding: var(--table-row-padding) 10px;
   text-align: right;
   white-space: nowrap;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.projectionTable td:first-child {
+  padding-left: 0;
 }
 
 .projectionTable tr:last-child td {

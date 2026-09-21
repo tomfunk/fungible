@@ -35,14 +35,14 @@ export function SideNav({
           onClick={toggleTheme}
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
-          {theme === 'dark' ? '☾' : '☀'} <span>{theme === 'dark' ? 'Dark' : 'Light'}</span>
+          {theme === 'dark' ? 'Dark' : 'Light'}
         </button>
         <button
           className={keys ? styles.toggleActive : styles.toggle}
           onClick={toggleKeys}
           title="TUI-style keybindings: 0-9 navigate, plus per-screen keys shown as hints"
         >
-          ⌨ <span>Keys {keys ? 'on' : 'off'}</span>
+          Keys
         </button>
       </div>
     </nav>

@@ -70,7 +70,7 @@ export function Tags() {
         <h1 className={styles.title}>Tags</h1>
         <input
           ref={searchRef}
-          className={styles.search}
+          className={`underline ${styles.search}`}
           placeholder="Filter tags…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -86,7 +86,7 @@ export function Tags() {
           <option value="recent">Sort: most recent</option>
           <option value="oldest">Sort: oldest</option>
         </select>
-        <button className={styles.addBtn} onClick={() => setAddOpen(true)}>
+        <button className={`ghostBtn ${styles.addBtn}`} onClick={() => setAddOpen(true)}>
           + New tag
         </button>
       </div>
@@ -154,35 +154,35 @@ export function Tags() {
             <p className="dim">Select a tag to see its breakdown.</p>
           ) : (
             <>
-              <div className={styles.detailHeader}>
-                <h2>
+              <div className="sectionHead">
+                <h2 className={styles.tagHeading}>
                   <span className="accent"># {selected.name}</span>
                 </h2>
-                <button className={styles.rowBtnVisible} onClick={() => drillToTransactions(selected.name)}>
+                <button className="ghostBtn" onClick={() => drillToTransactions(selected.name)}>
                   all transactions →
                 </button>
               </div>
               {summary && (
                 <>
-                  <div className={styles.statRow}>
-                    <div>
-                      <div className={styles.statLabel}>Income</div>
-                      <div className="num pos">{fmt(summary.income)}</div>
+                  <div className="kpiStrip">
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Income</div>
+                      <div className="num pos kpiFigure">{fmt(summary.income)}</div>
                     </div>
-                    <div>
-                      <div className={styles.statLabel}>Expenses</div>
-                      <div className="num neg">{fmt(summary.expenses)}</div>
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Expenses</div>
+                      <div className="num neg kpiFigure">{fmt(summary.expenses)}</div>
                     </div>
-                    <div>
-                      <div className={styles.statLabel}>Net</div>
-                      <div className={`num ${summary.net >= 0 ? 'pos' : 'neg'}`}>{fmtSigned(summary.net)}</div>
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Net</div>
+                      <div className={`num kpiFigure ${summary.net >= 0 ? 'pos' : 'neg'}`}>{fmtSigned(summary.net)}</div>
                     </div>
-                    <div>
-                      <div className={styles.statLabel}>Txns</div>
-                      <div className="num">{selected.count}</div>
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Txns</div>
+                      <div className="num kpiFigure">{selected.count}</div>
                     </div>
                   </div>
-                  <h3 className={styles.sectionLabel}>Spending by category</h3>
+                  <h3 className={`sectionLabel ${styles.blockLabel}`}>Spending by category</h3>
                   {summary.byCategory.length === 0 ? (
                     <p className="dim">No expense data for this tag.</p>
                   ) : (
@@ -197,9 +197,9 @@ export function Tags() {
                             <td className={styles.tdName}>{row.category}</td>
                             <td className="num warn">{fmt(row.total)}</td>
                             <td className={styles.tdBar}>
-                              <div className={styles.barTrack}>
+                              <div className="barTrack">
                                 <div
-                                  className={styles.barFill}
+                                  className="barFill"
                                   style={{ width: `${Math.min(100, (row.total / maxCategorySpend) * 100)}%` }}
                                 />
                               </div>
@@ -274,11 +274,11 @@ function NameModal({
         autoFocus
         className={styles.modalInput}
       />
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
+        <button className="btnPrimary" onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
           Save
         </button>
       </div>

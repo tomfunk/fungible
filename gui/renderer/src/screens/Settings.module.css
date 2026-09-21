@@ -1,31 +1,29 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 28px;
   max-width: 640px;
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
-.panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 22px;
+.section {
+  display: flex;
+  flex-direction: column;
 }
 
-.panel h2 {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--text-dim);
-  margin: 0 0 8px;
+.sectionTitle {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
 }
 
-.panel p {
+.section p {
   margin: 0 0 14px;
   font-size: 13px;
   line-height: 1.5;
@@ -36,7 +34,8 @@
   grid-template-columns: 80px 1fr 110px 70px;
   gap: 10px;
   align-items: center;
-  margin-bottom: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .memberLabel {
@@ -63,14 +62,8 @@
 }
 
 .addBtn {
-  font-size: 13px;
-  color: var(--accent);
-  padding: 6px 0;
-  text-align: left;
-}
-
-.addBtn:hover {
-  text-decoration: underline;
+  align-self: flex-start;
+  margin-top: 10px;
 }
 
 .actions {
@@ -82,29 +75,13 @@
   font-size: 12.5px;
 }
 
-.btnPrimary {
-  background: var(--accent);
-  color: #06281f;
-  font-weight: 600;
-  padding: 7px 16px;
-  border-radius: 6px;
-}
-
-.btnPrimary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.btnPrimary:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .configRow {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 12px;
   align-items: center;
-  margin-bottom: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .configLabel {
@@ -128,4 +105,3 @@
 .checkboxRow input {
   width: auto;
 }
-

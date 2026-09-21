@@ -228,9 +228,9 @@ export function Accounts() {
       )}
       <div className={styles.topBar}>
         <h1 className={styles.title}>Accounts</h1>
-        <div className={styles.tabs}>
+        <div className="tabGroup">
           {TABS.map((t) => (
-            <button key={t} className={t === tab ? styles.tabActive : styles.tab} onClick={() => setTab(t)}>
+            <button key={t} className={t === tab ? 'tabActive' : 'tab'} onClick={() => setTab(t)}>
               {TAB_LABELS[t]}
               {t === 'dupes' && dupes.length > 0 ? ` (${dupes.length})` : ''}
               {t === 'links' && failingItems.size > 0 ? <span className="neg"> ⚠</span> : ''}
@@ -238,7 +238,7 @@ export function Accounts() {
           ))}
         </div>
         <div className={styles.syncRow}>
-          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
+          <button className="ghostBtn" onClick={() => void forceSync()} disabled={syncing}>
             {syncing ? 'Syncing…' : '⟳ Sync'}
           </button>
           {lastSynced !== undefined && (
@@ -446,15 +446,15 @@ export function Accounts() {
 
       {tab === 'add-data' && (
         <section className={styles.panel}>
-          <h3 className={styles.panelTitle}>Import history</h3>
+          <h3 className={`sectionLabel ${styles.blockLabel}`}>Import history</h3>
           {imports.length === 0 ? (
             <p className="dim">No CSV files imported yet.</p>
           ) : (
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>File</th><th>Account</th><th>Imported</th>
-                  <th className={styles.num}>Rows</th><th>Covering</th><th />
+                  <th className={styles.th}>File</th><th className={styles.th}>Account</th><th className={styles.th}>Imported</th>
+                  <th className={`${styles.th} ${styles.numCol}`}>Rows</th><th className={styles.th}>Covering</th><th className={styles.th} />
                 </tr>
               </thead>
               <tbody>
@@ -463,7 +463,7 @@ export function Accounts() {
                     <td>{imp.file_name}</td>
                     <td>{imp.account_name || <span className="dim">(account deleted)</span>}</td>
                     <td>{fmtTimeAgo(imp.imported_at)}</td>
-                    <td className={styles.num}>
+                    <td className={`num ${styles.numCol}`}>
                       {imp.present}
                       {/* Sync folds CSV rows into their Plaid counterparts, so
                           "present" drifts below "imported" over time. Showing
@@ -597,8 +597,8 @@ export function Accounts() {
               ? 'Removes this asset and its balance history.'
               : 'Removes this account, all its transactions, and balance history.'}
           </p>
-          <div className={styles.modalActions}>
-            <button className={styles.btnSecondary} onClick={() => setDeleteAcct(null)}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={() => setDeleteAcct(null)}>
               Cancel
             </button>
             <button
@@ -676,12 +676,12 @@ export function Accounts() {
             <strong>Transactions you deleted by hand will come back.</strong>{' '}
             Transactions Plaid no longer has will not.
           </p>
-          <div className={styles.modalActions}>
-            <button className={styles.btnSecondary} onClick={() => setCursorItem(null)}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={() => setCursorItem(null)}>
               Cancel
             </button>
             <button
-              className={styles.btnPrimary}
+              className="btnPrimary"
               disabled={syncing}
               onClick={() => void deleteCursorAndResync(cursorItem)}
             >
@@ -757,17 +757,17 @@ export function Accounts() {
           {refreshProgress && (
             <p className="warn" style={{ marginTop: '1em' }}>{describeRefreshProgress(refreshProgress)}</p>
           )}
-          <div className={styles.modalActions}>
+          <div className="modalActions">
             {refreshing ? (
-              <button className={styles.btnSecondary} onClick={() => stopRefresh(refreshItem)}>
+              <button className="btnSecondary" onClick={() => stopRefresh(refreshItem)}>
                 Stop checking
               </button>
             ) : (
               <>
-                <button className={styles.btnSecondary} onClick={() => setRefreshItem(null)}>
+                <button className="btnSecondary" onClick={() => setRefreshItem(null)}>
                   Cancel
                 </button>
-                <button className={styles.btnPrimary} onClick={() => void startRefresh(refreshItem)}>
+                <button className="btnPrimary" onClick={() => void startRefresh(refreshItem)}>
                   Yes, refresh
                 </button>
               </>
@@ -858,11 +858,11 @@ function LinkBankModal({
             created — the history window stays at {updateItem.days_requested ? `${updateItem.days_requested} days` : 'its default'}.
           </p>
           {error && <p className="neg">{error}</p>}
-          <div className={styles.modalActions}>
-            <button className={styles.btnSecondary} onClick={onClose}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={onClose}>
               Cancel
             </button>
-            <button className={styles.btnPrimary} onClick={() => void start()}>
+            <button className="btnPrimary" onClick={() => void start()}>
               Open Plaid in browser
             </button>
           </div>
@@ -884,11 +884,11 @@ function LinkBankModal({
             linked.
           </p>
           {error && <p className="neg">{error}</p>}
-          <div className={styles.modalActions}>
-            <button className={styles.btnSecondary} onClick={onClose}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={onClose}>
               Cancel
             </button>
-            <button className={styles.btnPrimary} onClick={() => void start()}>
+            <button className="btnPrimary" onClick={() => void start()}>
               Open Plaid in browser
             </button>
           </div>
@@ -997,11 +997,11 @@ function EditAccountModal({
           <span>Exclude from net worth</span>
         </label>
       </div>
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => void save()}>
+        <button className="btnPrimary" onClick={() => void save()}>
           Save
         </button>
       </div>
@@ -1042,11 +1042,11 @@ function ValueModal({ acct, onClose, onSaved }: { acct: LinkedAccount; onClose: 
         />
       </div>
       {error && <p className="neg">{error}</p>}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => void save()}>
+        <button className="btnPrimary" onClick={() => void save()}>
           Save
         </button>
       </div>
@@ -1093,11 +1093,11 @@ function ManualAssetModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
         />
       </div>
       {error && <p className="neg">{error}</p>}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>
           Cancel
         </button>
-        <button className={styles.btnPrimary} onClick={() => void save()}>
+        <button className="btnPrimary" onClick={() => void save()}>
           Add asset
         </button>
       </div>
@@ -1143,10 +1143,10 @@ function UndoImportModal({ imp, onClose, onDone }: {
           <strong>This throws away your own edits:</strong> {authored.join(', ')}.
         </p>
       )}
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>Cancel</button>
         <button
-          className={styles.btnPrimary}
+          className="btnPrimary"
           disabled={busy}
           onClick={async () => {
             setBusy(true);
@@ -1210,10 +1210,10 @@ function MoveImportModal({ imp, onClose, onDone }: {
         Any row the destination already holds is dropped rather than moved, keeping the copy that is
         already there along with its categories and tags.
       </p>
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
+      <div className="modalActions">
+        <button className="btnSecondary" onClick={onClose}>Cancel</button>
         <button
-          className={styles.btnPrimary}
+          className="btnPrimary"
           disabled={!target || busy}
           onClick={async () => {
             if (!target) return;
@@ -1349,11 +1349,11 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
         <div>
           <p className="dim">Choose a CSV file to import.</p>
           {error && <p className="neg">{error}</p>}
-          <div className={styles.modalActions}>
-            <button className={styles.btnSecondary} onClick={onClose}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={onClose}>
               Cancel
             </button>
-            <button className={styles.btnPrimary} onClick={() => void pick()}>
+            <button className="btnPrimary" onClick={() => void pick()}>
               Choose file…
             </button>
           </div>
@@ -1420,10 +1420,10 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
                   </select>
                 )}
                 <div className={styles.inlineRow}>
-                  <button className={styles.btnSecondary} onClick={() => setCreatingAcct(false)}>
+                  <button className="btnSecondary" onClick={() => setCreatingAcct(false)}>
                     Back
                   </button>
-                  <button className={styles.btnPrimary} onClick={() => void createAccount()} disabled={!newName.trim()}>
+                  <button className="btnPrimary" onClick={() => void createAccount()} disabled={!newName.trim()}>
                     Create
                   </button>
                 </div>
@@ -1447,7 +1447,7 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
                     );
                   })}
                 </select>
-                <button className={styles.btnSecondary} onClick={() => setCreatingAcct(true)}>
+                <button className="btnSecondary" onClick={() => setCreatingAcct(true)}>
                   + New
                 </button>
               </div>
@@ -1502,11 +1502,11 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
           )}
 
           {error && <p className="neg">{error}</p>}
-          <div className={styles.modalActions}>
-            <button className={styles.btnSecondary} onClick={onClose}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={onClose}>
               Cancel
             </button>
-            <button className={styles.btnPrimary} onClick={() => void doImport()} disabled={!valid || importing}>
+            <button className="btnPrimary" onClick={() => void doImport()} disabled={!valid || importing}>
               {importing ? 'Importing…' : `Import ${csv.rows.length} rows`}
             </button>
           </div>

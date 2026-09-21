@@ -1,11 +1,15 @@
 .collapsed {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
+  height: 40px;
+  flex: none;
   text-align: left;
-  padding: 8px 16px;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
-  font-size: 13px;
+  padding: 0 26px;
+  background: var(--bg-chrome);
+  border-top: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
   color: var(--text-dim);
 }
 
@@ -19,6 +23,10 @@
   font-size: 10px;
 }
 
+.keyHint {
+  color: var(--text-ghost);
+}
+
 .thinking {
   color: var(--accent);
 }
@@ -26,7 +34,7 @@
 .drawer {
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
+  background: var(--bg-chrome);
   border-top: 1px solid var(--accent);
   max-height: 45vh;
 }
@@ -38,7 +46,7 @@
   padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--rule);
 }
 
 .headerBtns {
@@ -121,7 +129,7 @@
   justify-content: space-between;
   gap: 12px;
   border: 1px solid var(--warning);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
 }
 
@@ -135,7 +143,7 @@
   color: var(--bg);
   font-weight: 600;
   padding: 4px 12px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   font-size: 12.5px;
 }
 
@@ -143,7 +151,7 @@
   border: 1px solid var(--border);
   color: var(--text-dim);
   padding: 4px 12px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   font-size: 12.5px;
 }
 
@@ -152,7 +160,7 @@
   align-items: center;
   gap: 10px;
   padding: 10px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
 }
 
 .input {

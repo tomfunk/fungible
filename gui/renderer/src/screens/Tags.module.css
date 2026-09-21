@@ -1,7 +1,7 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   max-width: 1100px;
 }
 
@@ -12,18 +12,20 @@
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
 .search {
-  width: 220px;
+  width: 200px;
 }
 
 .select {
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--text-dim);
   background: transparent;
@@ -31,31 +33,22 @@
 
 .addBtn {
   margin-left: auto;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.addBtn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 .columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 32px;
   align-items: start;
 }
 
 .panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
+
+/* ── Table (left column) ── */
 
 .table {
   width: 100%;
@@ -65,22 +58,34 @@
 
 .table td,
 .table th {
-  padding: 7px 10px;
+  padding: var(--table-row-padding) 10px;
   text-align: right;
   white-space: nowrap;
-  border-bottom: 1px solid var(--border);
 }
 
-.table tr:last-child td {
+.table td:first-child,
+.table th:first-child {
+  padding-left: 0;
+}
+.table td:last-child,
+.table th:last-child {
+  padding-right: 0;
+}
+
+.table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.table tbody tr:last-child {
   border-bottom: none;
 }
 
 .th {
-  font-size: 11.5px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 600;
-  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 400;
+  border-bottom: 1px solid var(--rule);
 }
 
 .th:first-child {
@@ -92,8 +97,15 @@
   cursor: pointer;
 }
 
-.row:hover,
+.row:hover {
+  background: var(--bg-hover);
+}
+
+/* Resting selected state — distinct ground from the transient hover above. */
 .rowActive {
+  background: var(--bg-selected);
+}
+.rowActive:hover {
   background: var(--bg-hover);
 }
 
@@ -114,17 +126,13 @@
   width: 1%;
 }
 
-.rowBtn,
-.rowBtnVisible {
+.rowBtn {
   font-size: 11.5px;
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   padding: 2px 7px;
   margin-left: 4px;
-}
-
-.rowBtn {
   visibility: hidden;
 }
 
@@ -133,10 +141,9 @@
   visibility: visible;
 }
 
-.rowBtn:hover,
-.rowBtnVisible:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+.rowBtn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 
 .rowBtnDanger:hover {
@@ -144,88 +151,20 @@
   border-color: var(--negative);
 }
 
-.detailHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
+/* ── Detail panel (right column) ── */
 
-.detailHeader h2 {
+.tagHeading {
   margin: 0;
   font-size: 16px;
+  font-weight: 600;
 }
 
-.statRow {
-  display: flex;
-  gap: 28px;
-  margin-bottom: 18px;
-}
-
-.statLabel {
-  font-size: 11.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-  margin-bottom: 4px;
-}
-
-.sectionLabel {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--text-dim);
-  margin: 0 0 8px;
-}
-
-.barTrack {
-  height: 13px;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.barFill {
-  height: 100%;
-  border-radius: 4px;
-  background: var(--accent);
-  opacity: 0.85;
+.blockLabel {
+  padding-bottom: 8px;
+  margin: 0;
+  border-bottom: 1px solid var(--rule);
 }
 
 .modalInput {
   width: 100%;
-}
-
-.modalActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 18px;
-}
-
-.btnPrimary {
-  background: var(--accent);
-  color: #06281f;
-  font-weight: 600;
-  padding: 7px 16px;
-  border-radius: 6px;
-}
-
-.btnPrimary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.btnPrimary:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.btnSecondary {
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  padding: 7px 16px;
-  border-radius: 6px;
-}
-
-.btnSecondary:hover {
-  color: var(--text);
 }

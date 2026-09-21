@@ -669,7 +669,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
                 color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : isPinned ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
               >
-                {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
+                {truncate('  ' + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
               </Text>
             </SelectableRow>
             {hasTags && isSelected && (

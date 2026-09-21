@@ -104,7 +104,13 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText('Transaction updated')).toBeTruthy());
     await waitFor(() => {
       const row = screen.getByText('Trader Joes').closest('tr')!;
-      expect(row.textContent).toContain('◆');
+      // The hairline reskin dropped the '◆' glyph in favor of the category
+      // cell's existing manual/dim color styling alone (matched in the TUI
+      // for the same reason — see tui/Transactions.tsx) — assert on the
+      // still-present title attribute instead, which carries the same
+      // "manually categorized" signal a glyph check used to.
+      const catCell = row.querySelector('td[title="Manually categorized"]');
+      expect(catCell).toBeTruthy();
       expect(row.textContent).toContain('Dining');
     });
 
@@ -235,7 +241,7 @@ describe('GUI Transactions', () => {
   it('bulk categorize-all applies to every visible transaction', async () => {
     renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
     await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Categorize all' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Categorize' }));
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Dining' }));
     await waitFor(() => expect(screen.getByText(/Set category to "Dining" for 3 transactions/)).toBeTruthy());

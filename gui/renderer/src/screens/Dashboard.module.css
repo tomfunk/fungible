@@ -1,140 +1,90 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 22px;
   max-width: 1100px;
 }
 
 .topBar {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 24px;
   flex-wrap: wrap;
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
 .periodNav {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
 .navBtn {
-  font-size: 18px;
   color: var(--text-dim);
-  padding: 0 10px;
-  border-radius: 6px;
-  line-height: 1.4;
+  padding: 0 2px;
 }
 
 .navBtn:hover {
-  background: var(--bg-hover);
-  color: var(--accent);
-}
-
-.periodLabel {
-  font-weight: 600;
-  min-width: 110px;
-  text-align: center;
-}
-
-.rangePills {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.pill,
-.pillActive {
-  padding: 5px 12px;
-  border-radius: 14px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-}
-
-.pill:hover {
-  background: var(--bg-hover);
   color: var(--text);
 }
 
-.pillActive {
-  background: var(--bg-raised);
-  color: var(--accent);
-  font-weight: 600;
+.periodLabel {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.rangePills {
+  margin-left: auto;
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   flex-wrap: wrap;
-}
-
-.tabs {
-  display: flex;
-  gap: 2px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 3px;
-}
-
-.tab,
-.tabActive {
-  padding: 5px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.tab:hover {
-  color: var(--text);
-}
-
-.tabActive {
-  background: var(--bg-raised);
-  color: var(--text);
-  font-weight: 600;
 }
 
 .driftBtn,
 .driftBtnActive {
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-dim);
 }
 
 .driftBtn:hover {
   color: var(--text);
-  background: var(--bg-hover);
+  border-color: var(--text-dim);
 }
 
 .driftBtnActive {
   border-color: var(--manual);
   color: var(--manual);
-  font-weight: 600;
 }
 
 .searchWrap {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1;
-  min-width: 220px;
 }
 
 .search {
-  width: 240px;
+  width: 180px;
 }
 
 .searchStats {
   font-size: 12.5px;
+  color: var(--text-faint);
   white-space: nowrap;
 }
 
@@ -154,9 +104,10 @@
   gap: 6px;
   color: var(--warning);
   border: 1px solid var(--warning);
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   padding: 3px 10px;
   font-size: 12.5px;
+  margin-left: auto;
 }
 
 .acctFilter button {
@@ -164,71 +115,56 @@
   font-size: 11px;
 }
 
-.cards {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 20px;
-  min-width: 150px;
-  text-align: left;
-}
+/* ── KPI strip ── */
 
 .cardClickable {
   cursor: pointer;
+  display: block;
+  width: 100%;
 }
 
 .cardClickable:hover {
-  border-color: var(--warning);
+  background: var(--bg-hover);
 }
 
-.cardLabel {
-  font-size: 12px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 6px;
-}
-
-.cardValue {
-  font-size: 20px;
-  font-weight: 600;
-}
+/* ── Section (h2 + table) ── */
 
 .panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .panel h2 {
-  font-size: 13px;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--text-dim);
-  margin: 0 0 12px;
+  color: var(--text-faint);
+  font-weight: 400;
+  margin: 0 0 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .panelHeader {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 12px;
 }
 
 .panelHeader h2 {
-  margin: 0 0 12px;
+  flex: 1;
+  margin: 0 0 8px;
 }
 
 .backBtn {
-  color: var(--accent);
+  color: var(--text-dim);
   font-size: 13px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.backBtn:hover {
+  color: var(--text);
 }
 
 .table {
@@ -239,20 +175,37 @@
 
 .table td,
 .table th {
-  padding: 7px 10px;
+  padding: var(--table-row-padding) 10px;
   text-align: right;
   white-space: nowrap;
 }
 
+.table td:first-child,
+.table th:first-child {
+  padding-left: 0;
+}
+.table td:last-child,
+.table th:last-child {
+  padding-right: 0;
+}
+
+.table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.table tbody tr:last-child {
+  border-bottom: none;
+}
+
 .th,
 .thActive {
-  font-size: 11.5px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 400;
   cursor: pointer;
   user-select: none;
+  border-bottom: 1px solid var(--rule);
 }
 
 .th:hover {
@@ -291,35 +244,24 @@
 
 .bucketRow td {
   text-align: left !important;
-  font-size: 11.5px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.8px;
-  font-weight: 600;
-  padding-top: 12px;
-  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.08em;
+  font-weight: 500;
+  padding-top: 14px;
+  border-bottom: 1px solid var(--rule) !important;
 }
 
 .netRow td {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--rule);
+  border-bottom: none !important;
   font-weight: 600;
-  padding-top: 10px;
+  padding-top: 11px;
 }
 
 .netRow td:last-child {
   text-align: left;
   font-weight: 400;
-}
-
-.barTrack {
-  height: 14px;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.barFill {
-  height: 100%;
-  border-radius: 4px;
-  opacity: 0.85;
 }
 
 .merchantBtn,
@@ -328,7 +270,7 @@
   font-size: 12px;
   color: var(--text-dim);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   padding: 3px 8px;
   visibility: hidden;
 }
@@ -346,6 +288,13 @@
 
 .merchantBtn:hover,
 .filterBtn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* + N more under $X roll-up row */
+.moreRow td {
+  color: var(--text-faint);
+  font-size: 13px;
+  padding-top: 9px;
 }
