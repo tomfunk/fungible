@@ -301,7 +301,7 @@ export function Dashboard() {
         )}
         <div className={styles.controlsRight}>
           <button
-            className={scorecardMode ? `chip ${styles.toggleActive}` : 'chip'}
+            className={scorecardMode ? 'chip chipActive' : 'chip'}
             onClick={() => setScorecardMode((m) => !m)}
             title="Which categories drifted from your typical month, and does it matter"
           >
@@ -309,7 +309,7 @@ export function Dashboard() {
           </button>
           {scorecardMode && (
             <button
-              className={detailMode ? `chip ${styles.toggleActive}` : 'chip'}
+              className={detailMode ? 'chip chipActive' : 'chip'}
               onClick={() => setDetailMode((t) => !t)}
               title="Sortable per-baseline delta columns (vs prev / yr ago / 12m avg)"
             >

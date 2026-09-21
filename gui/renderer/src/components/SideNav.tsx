@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Screen } from '../../../shared/nav.js';
 import { SCREEN_LABELS, SCREEN_ORDER, SCREEN_DIGITS } from '../../../shared/nav.js';
 import { useUiPrefs } from '../hooks/useUiPrefs.js';
+import { api } from '../api.js';
 import styles from './SideNav.module.css';
 
 export function SideNav({
@@ -11,7 +12,12 @@ export function SideNav({
   active: Screen;
   onSelect: (s: Screen) => void;
 }) {
-  const { theme, toggleTheme, keys, toggleKeys } = useUiPrefs();
+  const { keys } = useUiPrefs();
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    void api.app.getVersion().then(setVersion);
+  }, []);
 
   return (
     <nav className={styles.nav}>
@@ -28,23 +34,7 @@ export function SideNav({
           {keys && <span className={styles.digit}>{SCREEN_DIGITS[s]}</span>}
         </button>
       ))}
-
-      <div className={styles.footer}>
-        <button
-          className={styles.toggle}
-          onClick={toggleTheme}
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-        >
-          {theme === 'dark' ? 'Dark' : 'Light'}
-        </button>
-        <button
-          className={keys ? styles.toggleActive : styles.toggle}
-          onClick={toggleKeys}
-          title="TUI-style keybindings: 0-9 navigate, plus per-screen keys shown as hints"
-        >
-          Keys
-        </button>
-      </div>
+      {version && <div className={styles.version}>v{version}</div>}
     </nav>
   );
 }

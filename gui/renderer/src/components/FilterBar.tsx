@@ -60,7 +60,7 @@ export function FilterBar() {
     <div className={styles.bar}>
       <div className={styles.left}>
         <button
-          className={active ? `chip ${styles.filterBtnActive}` : `chip ${styles.filterBtn}`}
+          className={active ? `chip chipActive ${styles.filterBtnActive}` : `chip ${styles.filterBtn}`}
           onClick={() => setFilterPanelOpen(true)}
         >
           ⌕ filter{active ? `: ${filterSummary(filter)}` : ''}

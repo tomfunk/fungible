@@ -96,6 +96,16 @@
   margin-top: 2px;
 }
 
+/* Chip-style toggle in a .configRow — the row's grid stretches plain
+   block children (selects, inputs) to fill the 1fr column, which reads
+   fine for those but turns a chip-sized button into a text-input-sized
+   box. Keep it compact like Dashboard's Scorecard/Baselines chips. */
+.toggleChip {
+  justify-self: start;
+  min-width: 52px;
+  justify-content: center;
+}
+
 .checkboxRow {
   display: flex;
   gap: 8px;

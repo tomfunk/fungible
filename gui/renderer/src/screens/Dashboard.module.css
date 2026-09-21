@@ -53,18 +53,9 @@
   flex-wrap: wrap;
 }
 
-/* Scorecard / Baselines toggles — built on the shared .chip control (same
-   bordered-mono-badge language as FilterBar's Filter chip), just with an
-   accent-colored "on" state instead of chip's own hover-only emphasis. */
-.toggleActive {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.toggleActive:hover {
-  color: var(--accent);
-  filter: brightness(1.15);
-}
+/* Scorecard / Baselines toggles use the shared `chip`/`chipActive` pair
+   from theme.css directly (see theme.css for why the active look lives
+   there instead of as a module class here). */
 
 .searchStats {
   font-size: 12.5px;
