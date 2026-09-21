@@ -25,6 +25,7 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   householdMembers: 'exposed as profile.getHouseholdMembers',
   spawn: 'node builtin used by TUI Plaid flow; GUI will use gui/main/plaid-link.ts',
   onRefresh: 'main process subscribes and pushes refresh events over IPC (gui/main/refresh-ipc.ts)',
+  notifyChange: 'GUI achieves the same post-sync refresh via its own renderer-side useBumpRefresh()/useRefresh.tsx rather than the main-process notifyChange signal',
   generateAllPeriods: 'imported but unused by tui/Trends.tsx; GUI uses getPeriodTotals',
 
   // Agent chat is wired through dedicated IPC channels (gui/main/agent-ipc.ts)
