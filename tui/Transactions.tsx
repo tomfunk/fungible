@@ -653,7 +653,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search, true);
         return;
       }
-      if (input === 'i' && selected) toggleIgnored();
+      // A hand-typed row has nothing else feeding its totals to hide from —
+      // "ignore" only makes sense for a row that would otherwise show up from
+      // a sync/import. Delete it outright instead (already scoped to
+      // csv|manual below).
+      if (input === 'i' && selected && selected.source !== 'manual') toggleIgnored();
       if (input === 'I' && txs.length > 0) {
         const target = !selected?.ignored;
         setIgnoredBulk(txs.map((t) => t.id), target);
@@ -743,7 +747,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  [i] ignore  ${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  ${selected?.source !== 'manual' ? '[i] ignore  ' : ''}${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
           : '[/] search'}
       </Text>
 

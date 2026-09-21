@@ -1170,6 +1170,45 @@ describe('Transactions', () => {
     const row = await db.execute("SELECT id FROM transactions WHERE id = 'tx-manual-1'");
     expect(row.rows.length).toBe(0);
   });
+
+  it('[i] ignores/un-ignores a synced (non-manual) transaction', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row, source=null (seeded)
+    r.stdin.write('i');
+    await waitFor(() => expect(frame(r)).toContain('~Grocery')); // ignored marker on the category cell
+    r.stdin.write('i');
+    await waitFor(() => expect(frame(r)).not.toContain('~Grocery'));
+  });
+
+  it('[i] is a no-op on a manually-added row, and the hint line drops [i] ignore for it', async () => {
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, source)
+            VALUES ('tx-manual-1', 'test-checking', '2026-05-18', 'Hand-typed refund', -5.00, 'Income', 'manual')`,
+    });
+    // Ignoring a hand-typed row doesn't make sense — if it shouldn't count,
+    // delete it outright (issue: gate [i] off for source='manual', matching
+    // how GUI drops its ignore button for the same rows).
+    const r = txns({ showHints: true });
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
+    for (const ch of 'Hand-typed') r.stdin.write(ch);
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Hand-typed refund');
+      expect(f).toContain('1 transactions');
+    });
+    // Hint line no longer advertises [i] ignore once the selected row is manual.
+    expect(frame(r)).not.toContain('[i] ignore');
+    r.stdin.write('i');
+    await new Promise((res) => setTimeout(res, 50)); // nothing to waitFor — proving absence of a change
+    expect(frame(r)).not.toContain('~Hand-typed');
+    const row = (await db.execute(
+      "SELECT ignored FROM transactions WHERE id = 'tx-manual-1'",
+    )).rows[0] as unknown as { ignored: number };
+    expect(row.ignored).toBe(0);
+  });
 });
 
 // ── Trends ────────────────────────────────────────────────────────────────────

@@ -414,17 +414,19 @@ export function Transactions() {
                   >
                     tag
                   </button>
-                  <button
-                    className={styles.rowBtn}
-                    title={isIgnored ? 'Un-ignore' : 'Ignore (exclude from totals)'}
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      await api.transactions.setTransactionIgnored(tx.id, !isIgnored);
-                      reload();
-                    }}
-                  >
-                    {isIgnored ? 'unignore' : 'ignore'}
-                  </button>
+                  {!isManualRow && (
+                    <button
+                      className={styles.rowBtn}
+                      title={isIgnored ? 'Un-ignore' : 'Ignore (exclude from totals)'}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await api.transactions.setTransactionIgnored(tx.id, !isIgnored);
+                        reload();
+                      }}
+                    >
+                      {isIgnored ? 'unignore' : 'ignore'}
+                    </button>
+                  )}
                   {isPinned && !isManualRow && (
                     <button
                       className={styles.rowBtn}

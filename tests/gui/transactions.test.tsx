@@ -323,11 +323,13 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.queryByText('Cash Tip')).toBeNull());
   });
 
-  it('hides "clear override" on a manually-added row even though its category counts as manual_category', async () => {
+  it('a manually-added row only offers tag + delete — no clear-override, no ignore/unignore', async () => {
     // addTransaction sets manual_category = category on insert (same
     // mechanism a normal recategorize uses), so a manual row is also
     // "isPinned" — but there's no Plaid/CSV raw_category for it to revert
     // to, so the clear-override action must stay hidden for it regardless.
+    // Ignoring is hidden too: hand-typed rows that shouldn't count belong
+    // deleted outright, not hidden from totals while still sitting in the DB.
     await db.execute(
       `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored, source)
        VALUES ('tx-manual-2', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 'Dining', 0, 0, 'manual')`,
@@ -335,7 +337,7 @@ describe('GUI Transactions', () => {
     renderScreen(<Transactions />);
     await waitFor(() => expect(screen.getByText('Cash Tip')).toBeTruthy());
     const row = screen.getByText('Cash Tip').closest('tr')!;
-    const clearBtn = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'clear');
-    expect(clearBtn).toBeUndefined();
+    const labels = Array.from(row.querySelectorAll('button')).map((b) => b.textContent);
+    expect(labels).toEqual(['tag', 'delete']);
   });
 });
