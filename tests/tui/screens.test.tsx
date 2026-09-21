@@ -1861,6 +1861,20 @@ describe('Tags', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  // A tag rarely represents actual income (e.g. a reimbursement is inflow,
+  // not income), so the detail view's KPI labels read as Inflow/Outflow
+  // rather than Income/Expenses.
+  it('Enter on a tag opens its detail view with Inflow/Outflow KPI labels', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Inflow');
+      expect(f).toContain('Outflow');
+    });
+  });
 });
 
 // ── Rules ─────────────────────────────────────────────────────────────────────
