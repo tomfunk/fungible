@@ -45,7 +45,7 @@ export function detectProvider(): ProviderName {
   if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
   if (process.env.OPENAI_API_KEY)    return 'openai';
   throw new Error(
-    'No LLM API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your .env file.'
+    'No LLM API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in ~/.fungible/.env.'
   );
 }
 
