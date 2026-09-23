@@ -4,6 +4,7 @@ import { useFilter } from '../hooks/useFilter.js';
 import { useSync } from '../hooks/useSync.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { Modal } from './Modal.js';
+import { SyncControl } from './SyncControl.js';
 import {
   EMPTY_FILTER,
   isFilterActive,
@@ -27,7 +28,6 @@ import type { FilterOptions } from '../../../../core/queries.js';
 // outright). Dashboard.tsx already hardcodes this same literal for its
 // KPI-tile drill-in; mirrored here for the same reason.
 const UNCATEGORIZED = 'Uncategorized';
-import { fmtTimeAgo } from '../../../../core/fmt.js';
 import styles from './FilterBar.module.css';
 
 // Debounce window for publishing the live preview. Toggling many checkboxes in
@@ -95,12 +95,12 @@ export function FilterBar() {
         </span>
       </div>
       <div className={styles.right}>
-        <button className="ghostBtn" onClick={() => void onSync()} disabled={syncing}>
-          {syncing ? 'Syncing…' : '⟳ Sync'}
-        </button>
-        <span className={styles.synced}>
-          {syncing ? 'Syncing…' : `synced ${fmtTimeAgo(lastSynced ?? null)}`}
-        </span>
+        <SyncControl
+          syncing={syncing}
+          lastSynced={lastSynced}
+          onSync={() => void onSync()}
+          statusClassName={styles.synced}
+        />
       </div>
       {filterPanelOpen && (
         <FilterPanel

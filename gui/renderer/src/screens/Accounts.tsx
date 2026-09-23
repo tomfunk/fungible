@@ -10,6 +10,7 @@ import type { ImportRow } from '../../../../core/imports.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
+import { SyncControl } from '../components/SyncControl.js';
 import { fmtTimeAgo, fmtSyncedAt } from '../../../../core/fmt.js';
 import {
   describeRefreshProgress, describeRefreshResult, POLL_DELAYS_MS,
@@ -238,12 +239,12 @@ export function Accounts() {
           ))}
         </div>
         <div className={styles.syncRow}>
-          <button className="ghostBtn" onClick={() => void forceSync()} disabled={syncing}>
-            {syncing ? 'Syncing…' : '⟳ Sync'}
-          </button>
-          {lastSynced !== undefined && (
-            <span className="dim">{fmtTimeAgo(lastSynced ?? null)}</span>
-          )}
+          <SyncControl
+            syncing={syncing}
+            lastSynced={lastSynced}
+            onSync={() => void forceSync()}
+            statusClassName={styles.synced}
+          />
         </div>
       </div>
 
