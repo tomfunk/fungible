@@ -35,6 +35,13 @@
   margin-left: auto;
 }
 
+.synced {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  flex: none;
+}
+
 .panel {
   display: flex;
   flex-direction: column;
