@@ -24,8 +24,8 @@
     "mcp": "node --import tsx/esm mcp/server.ts",
     "api": "node --import tsx/esm api/server.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer",
-    "test": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest run",
-    "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest",
+    "test": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest run",
+    "test:watch": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest",
     "test:e2e": "electron-vite build && playwright test"
   },
   "license": "MIT",

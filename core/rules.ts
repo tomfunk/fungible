@@ -1,29 +1,8 @@
 import { db } from './db.js';
-import { categorizeWithRules, loadCategoryRules } from './categorize.js';
+import { applyCategoriesToAll } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
 import { applyTagRules, type TagMatchType } from './tag-rules.js';
 import { validateRegex, inAmountRange, matchesPattern, countPatternMatches } from './rule-utils.js';
-
-async function applyAll(): Promise<number> {
-  const rules = await loadCategoryRules();
-  const txRes = await db.execute(
-    'SELECT id, account_id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
-  );
-  const rows = txRes.rows as unknown as {
-    id: string; account_id: string; name: string; merchant_name: string | null;
-    raw_category: string | null; amount: number; category: string;
-  }[];
-
-  const updates: { sql: string; args: (string | number | null)[] }[] = [];
-  for (const tx of rows) {
-    const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id);
-    if (cat !== tx.category) {
-      updates.push({ sql: 'UPDATE transactions SET category = ? WHERE id = ?', args: [cat, tx.id] });
-    }
-  }
-  if (updates.length > 0) await db.batch(updates, 'write');
-  return updates.length;
-}
 
 export async function getUncategorizedCount(): Promise<number> {
   const result = await db.execute("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'");
@@ -32,7 +11,8 @@ export async function getUncategorizedCount(): Promise<number> {
 
 export async function deleteCategoryRule(id: number): Promise<number> {
   await db.execute({ sql: 'DELETE FROM category_rules WHERE id = ?', args: [id] });
-  return applyAll();
+  // A deleted rule's transactions must be free to fall back to Uncategorized.
+  return applyCategoriesToAll(true);
 }
 
 export async function deleteNameRule(id: number): Promise<void> {
@@ -78,7 +58,10 @@ export async function saveCategoryRule(opts: SaveCategoryRuleOpts): Promise<numb
       });
     }
   }
-  return applyAll();
+  // Editing a rule (narrowing a pattern, rescoping to an account, etc.) can
+  // remove the only match a transaction had, same as a delete — let it fall
+  // back to Uncategorized rather than keep a category nothing justifies anymore.
+  return applyCategoriesToAll(true);
 }
 
 export type SaveNameRuleOpts = {

@@ -319,9 +319,7 @@ export function Rules() {
 
       {ruleForm && (
         <RuleFormModal
-          editing={ruleForm.editing}
-          categories={categories}
-          accounts={accounts}
+          mode={{ kind: 'category', editing: ruleForm.editing, categories, accounts }}
           onClose={() => setRuleForm(null)}
           onSaved={(message) => {
             setRuleForm(null);
@@ -332,14 +330,12 @@ export function Rules() {
       )}
 
       {tagRuleForm && (
-        <TagRuleFormModal
-          editing={tagRuleForm.editing}
-          tags={tagOptions}
-          accounts={accounts}
+        <RuleFormModal
+          mode={{ kind: 'tag', editing: tagRuleForm.editing, tags: tagOptions, accounts }}
           onClose={() => setTagRuleForm(null)}
-          onSaved={(count) => {
+          onSaved={(message) => {
             setTagRuleForm(null);
-            showStatus(`Tag rule saved · tagged ${count} transaction${count === 1 ? '' : 's'}`, 3000);
+            showStatus(message, 3000);
             reload();
           }}
         />
@@ -380,177 +376,77 @@ export function Rules() {
   );
 }
 
-// ── Rule form (add/edit — one rule writes a category rule, a name rule, or both) ─
+// ── Rule form (add/edit) ─────────────────────────────────────────────────────
+// One shared form for both rule kinds: a category rule (which writes a
+// category rule, a name rule, or both against the same pattern) and a tag
+// rule. They differ in which fields exist (category+display-name vs. tag,
+// "all" as a match type, live-match-count query and its dependencies, and
+// the save/error copy) — `mode` carries exactly those differences so each
+// call site keeps its pre-merge behavior, including field ORDER (the
+// category form shows Pattern before Match type; the tag form shows Match
+// type before an optionally-hidden Pattern) and which state changes
+// re-trigger the live match count.
+
+type RuleFormMode =
+  | { kind: 'category'; editing: MergedRule | null; categories: string[]; accounts: LinkedAccount[] }
+  | { kind: 'tag'; editing: TagRuleRow | null; tags: TagOption[]; accounts: LinkedAccount[] };
 
 function RuleFormModal({
-  editing,
-  categories,
-  accounts,
+  mode,
   onClose,
   onSaved,
 }: {
-  editing: MergedRule | null;
-  categories: string[];
-  accounts: LinkedAccount[];
+  mode: RuleFormMode;
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
-  const [pattern, setPattern] = useState(editing?.pattern ?? '');
-  const [matchType, setMatchType] = useState<'name' | 'regex'>((editing?.matchType as 'name' | 'regex') ?? 'name');
-  const [minAmount, setMinAmount] = useState(editing?.minAmount != null ? String(editing.minAmount) : '');
-  const [maxAmount, setMaxAmount] = useState(editing?.maxAmount != null ? String(editing.maxAmount) : '');
-  const [category, setCategory] = useState(editing?.category ?? '');
-  const [replacement, setReplacement] = useState(editing?.replacement ?? '');
-  const [accountId, setAccountId] = useState<string | null>(editing?.accountId ?? null);
+  const [pattern, setPattern] = useState(mode.editing?.pattern ?? '');
+  const [matchType, setMatchType] = useState<TagMatchType>(
+    mode.kind === 'tag' ? ((mode.editing?.match_type as TagMatchType) ?? 'all') : ((mode.editing?.matchType as TagMatchType) ?? 'name'),
+  );
+  const [minAmount, setMinAmount] = useState(
+    mode.kind === 'tag'
+      ? (mode.editing?.min_amount != null ? String(mode.editing.min_amount) : '')
+      : (mode.editing?.minAmount != null ? String(mode.editing.minAmount) : ''),
+  );
+  const [maxAmount, setMaxAmount] = useState(
+    mode.kind === 'tag'
+      ? (mode.editing?.max_amount != null ? String(mode.editing.max_amount) : '')
+      : (mode.editing?.maxAmount != null ? String(mode.editing.maxAmount) : ''),
+  );
+  const [accountId, setAccountId] = useState<string | null>(
+    mode.kind === 'tag' ? (mode.editing?.account_id ?? null) : (mode.editing?.accountId ?? null),
+  );
+  const [category, setCategory] = useState(mode.kind === 'category' ? (mode.editing?.category ?? '') : '');
+  const [replacement, setReplacement] = useState(mode.kind === 'category' ? (mode.editing?.replacement ?? '') : '');
+  const [tagId, setTagId] = useState<number | null>(
+    mode.kind === 'tag' ? (mode.editing?.tag_id ?? mode.tags[0]?.id ?? null) : null,
+  );
   const [matchCount, setMatchCount] = useState(0);
   const [error, setError] = useState('');
 
+  const needsPattern = matchType !== 'all'; // only ever 'all' in tag mode — always true for category
+  const displayName = replacement.trim();
+
+  // Category mode's live match count: unchanged from the pre-merge effect —
+  // countPatternMatches only takes pattern/matchType, so account/amount edits
+  // never re-trigger it.
   useEffect(() => {
+    if (mode.kind !== 'category') return;
     if (pattern.trim()) {
       api.rules
-        .countPatternMatches(pattern, matchType)
+        .countPatternMatches(pattern, matchType as 'name' | 'regex')
         .then(setMatchCount)
         .catch(() => setMatchCount(0));
     } else {
       setMatchCount(0);
     }
-  }, [pattern, matchType]);
+  }, [mode.kind, pattern, matchType]);
 
-  const displayName = replacement.trim();
-  // A rule that neither categorizes nor renames does nothing — don't let it save.
-  const canSave = pattern.trim().length > 0 && (category !== '' || displayName.length > 0);
-
-  async function save() {
-    if (!canSave) return;
-    const min = minAmount.trim() ? parseFloat(minAmount) : null;
-    const max = maxAmount.trim() ? parseFloat(maxAmount) : null;
-    try {
-      // Category first: both writes share the pattern, so a bad regex is
-      // rejected by the first one and cannot half-apply.
-      let recategorized: number | null = null;
-      if (category) {
-        recategorized = await api.rules.saveCategoryRule({
-          pattern,
-          matchType,
-          category,
-          minAmount: min,
-          maxAmount: max,
-          accountId,
-          editingId: editing?.categoryRuleId ?? null,
-        });
-      } else if (editing?.categoryRuleId != null) {
-        recategorized = await api.rules.deleteCategoryRule(editing.categoryRuleId);
-      }
-
-      if (displayName) {
-        await api.rules.saveNameRule({
-          pattern,
-          matchType,
-          replacement: displayName,
-          minAmount: min,
-          maxAmount: max,
-          accountId,
-          editingId: editing?.nameRuleId ?? null,
-        });
-      } else if (editing?.nameRuleId != null) {
-        await api.rules.deleteNameRule(editing.nameRuleId);
-      }
-
-      const parts = ['Rule saved'];
-      if (recategorized !== null) {
-        parts.push(`recategorized ${recategorized} transaction${recategorized === 1 ? '' : 's'}`);
-      }
-      if (displayName) parts.push(`shown as "${displayName}"`);
-      onSaved(parts.join(' · '));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save rule');
-    }
-  }
-
-  return (
-    <Modal title={editing ? 'Edit rule' : 'New rule'} onClose={onClose} accent="var(--manual)">
-      <div className={styles.formGrid}>
-        <label>Pattern</label>
-        <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. UBER or ^AMZN" />
-        <label>Match type</label>
-        <select value={matchType} onChange={(e) => setMatchType(e.target.value as 'name' | 'regex')}>
-          <option value="name">name (substring)</option>
-          <option value="regex">regex</option>
-        </select>
-        <label>Min $ (optional)</label>
-        <input value={minAmount} onChange={(e) => setMinAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
-        <label>Max $ (optional)</label>
-        <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
-        <label>Category</label>
-        <select value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option value="">{editing?.categoryRuleId != null ? '— none (removes rule) —' : '— none —'}</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <label>Display name</label>
-        <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="e.g. Amazon" />
-        <label>Account</label>
-        <select value={accountId ?? ''} onChange={(e) => setAccountId(e.target.value || null)}>
-          <option value="">All accounts</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.nickname ?? a.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {pattern.trim() && (
-        <p className={styles.matchHint}>
-          <span className="warn">{matchCount} transactions match</span>
-          {category && <span className="dim"> · saving recategorizes them</span>}
-        </p>
-      )}
-      {error && <p className="neg">{error}</p>}
-      {pattern.trim() && !canSave && (
-        <p className={styles.saveHint}>Pick a category or enter a display name to save.</p>
-      )}
-      <div className="modalActions">
-        <button className="btnSecondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button className="btnPrimary" onClick={() => void save()} disabled={!canSave}>
-          Save
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Tag rule form ────────────────────────────────────────────────────────────
-
-function TagRuleFormModal({
-  editing,
-  tags,
-  accounts,
-  onClose,
-  onSaved,
-}: {
-  editing: TagRuleRow | null;
-  tags: TagOption[];
-  accounts: LinkedAccount[];
-  onClose: () => void;
-  onSaved: (count: number) => void;
-}) {
-  const [matchType, setMatchType] = useState<TagMatchType>((editing?.match_type as TagMatchType) ?? 'all');
-  const [pattern, setPattern] = useState(editing?.pattern ?? '');
-  const [minAmount, setMinAmount] = useState(editing?.min_amount != null ? String(editing.min_amount) : '');
-  const [maxAmount, setMaxAmount] = useState(editing?.max_amount != null ? String(editing.max_amount) : '');
-  const [tagId, setTagId] = useState<number | null>(editing?.tag_id ?? tags[0]?.id ?? null);
-  const [accountId, setAccountId] = useState<string | null>(editing?.account_id ?? null);
-  const [matchCount, setMatchCount] = useState(0);
-  const [error, setError] = useState('');
-
-  const needsPattern = matchType !== 'all';
-
+  // Tag mode's live match count: unchanged from the pre-merge effect —
+  // countTagRuleMatches also takes account/amount, so those re-trigger it too.
   useEffect(() => {
+    if (mode.kind !== 'tag') return;
     if (needsPattern && !pattern.trim()) { setMatchCount(0); return; }
     api.rules
       .countTagRuleMatches(
@@ -562,73 +458,172 @@ function TagRuleFormModal({
       )
       .then(setMatchCount)
       .catch(() => setMatchCount(0));
-  }, [matchType, pattern, accountId, needsPattern, minAmount, maxAmount]);
+  }, [mode.kind, needsPattern, pattern, matchType, accountId, minAmount, maxAmount]);
 
-  const canSave = tagId !== null && (!needsPattern || pattern.trim().length > 0);
+  const canSave =
+    mode.kind === 'category'
+      // A rule that neither categorizes nor renames does nothing — don't let it save.
+      ? pattern.trim().length > 0 && (category !== '' || displayName.length > 0)
+      : tagId !== null && (!needsPattern || pattern.trim().length > 0);
 
   async function save() {
-    if (!canSave || tagId === null) return;
+    if (!canSave) return;
+    const min = minAmount.trim() ? parseFloat(minAmount) : null;
+    const max = maxAmount.trim() ? parseFloat(maxAmount) : null;
     try {
-      const count = await api.rules.saveTagRule({
-        matchType,
-        pattern,
-        tagId,
-        minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
-        maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
-        accountId,
-        editingId: editing?.id ?? null,
-      });
-      onSaved(count);
+      if (mode.kind === 'category') {
+        // Category first: both writes share the pattern, so a bad regex is
+        // rejected by the first one and cannot half-apply.
+        let recategorized: number | null = null;
+        if (category) {
+          recategorized = await api.rules.saveCategoryRule({
+            pattern,
+            matchType: matchType as 'name' | 'regex',
+            category,
+            minAmount: min,
+            maxAmount: max,
+            accountId,
+            editingId: mode.editing?.categoryRuleId ?? null,
+          });
+        } else if (mode.editing?.categoryRuleId != null) {
+          recategorized = await api.rules.deleteCategoryRule(mode.editing.categoryRuleId);
+        }
+
+        if (displayName) {
+          await api.rules.saveNameRule({
+            pattern,
+            matchType: matchType as 'name' | 'regex',
+            replacement: displayName,
+            minAmount: min,
+            maxAmount: max,
+            accountId,
+            editingId: mode.editing?.nameRuleId ?? null,
+          });
+        } else if (mode.editing?.nameRuleId != null) {
+          await api.rules.deleteNameRule(mode.editing.nameRuleId);
+        }
+
+        const parts = ['Rule saved'];
+        if (recategorized !== null) {
+          parts.push(`recategorized ${recategorized} transaction${recategorized === 1 ? '' : 's'}`);
+        }
+        if (displayName) parts.push(`shown as "${displayName}"`);
+        onSaved(parts.join(' · '));
+      } else {
+        if (tagId === null) return;
+        const count = await api.rules.saveTagRule({
+          matchType,
+          pattern,
+          tagId,
+          minAmount: min,
+          maxAmount: max,
+          accountId,
+          editingId: mode.editing?.id ?? null,
+        });
+        onSaved(`Tag rule saved · tagged ${count} transaction${count === 1 ? '' : 's'}`);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save tag rule');
+      setError(e instanceof Error ? e.message : mode.kind === 'category' ? 'Failed to save rule' : 'Failed to save tag rule');
     }
   }
 
   return (
-    <Modal title={editing ? 'Edit tag rule' : 'New tag rule'} onClose={onClose} accent="var(--accent)">
+    <Modal
+      title={
+        mode.kind === 'category'
+          ? mode.editing ? 'Edit rule' : 'New rule'
+          : mode.editing ? 'Edit tag rule' : 'New tag rule'
+      }
+      onClose={onClose}
+      accent={mode.kind === 'category' ? 'var(--manual)' : 'var(--accent)'}
+    >
       <div className={styles.formGrid}>
-        <label>Match type</label>
-        <select value={matchType} onChange={(e) => setMatchType(e.target.value as TagMatchType)}>
-          <option value="all">all (every transaction in scope)</option>
-          <option value="name">name (substring)</option>
-          <option value="regex">regex</option>
-        </select>
-        {needsPattern && (
+        {mode.kind === 'category' ? (
           <>
             <label>Pattern</label>
-            <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. AMZN or ^AMZN" />
+            <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. UBER or ^AMZN" />
+            <label>Match type</label>
+            <select value={matchType} onChange={(e) => setMatchType(e.target.value as TagMatchType)}>
+              <option value="name">name (substring)</option>
+              <option value="regex">regex</option>
+            </select>
+          </>
+        ) : (
+          <>
+            <label>Match type</label>
+            <select value={matchType} onChange={(e) => setMatchType(e.target.value as TagMatchType)}>
+              <option value="all">all (every transaction in scope)</option>
+              <option value="name">name (substring)</option>
+              <option value="regex">regex</option>
+            </select>
+            {needsPattern && (
+              <>
+                <label>Pattern</label>
+                <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. AMZN or ^AMZN" />
+              </>
+            )}
           </>
         )}
         <label>Min $ (optional)</label>
         <input value={minAmount} onChange={(e) => setMinAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
         <label>Max $ (optional)</label>
         <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
-        <label>Tag</label>
-        <select value={tagId ?? ''} onChange={(e) => setTagId(e.target.value ? Number(e.target.value) : null)}>
-          {tags.length === 0 && <option value="">No tags yet — create one first</option>}
-          {tags.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+        {mode.kind === 'category' ? (
+          <>
+            <label>Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="">{mode.editing?.categoryRuleId != null ? '— none (removes rule) —' : '— none —'}</option>
+              {mode.categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <label>Display name</label>
+            <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="e.g. Amazon" />
+          </>
+        ) : (
+          <>
+            <label>Tag</label>
+            <select value={tagId ?? ''} onChange={(e) => setTagId(e.target.value ? Number(e.target.value) : null)}>
+              {mode.tags.length === 0 && <option value="">No tags yet — create one first</option>}
+              {mode.tags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <label>Account</label>
         <select value={accountId ?? ''} onChange={(e) => setAccountId(e.target.value || null)}>
           <option value="">All accounts</option>
-          {accounts.map((a) => (
+          {mode.accounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.nickname ?? a.name}
             </option>
           ))}
         </select>
       </div>
-      {(!needsPattern || pattern.trim()) && (
-        <p className={styles.matchHint}>
-          <span className="warn">{matchCount} transactions match</span>
-          <span className="dim"> · saving tags them (removed tags stay removed)</span>
-        </p>
+      {mode.kind === 'category' ? (
+        pattern.trim() && (
+          <p className={styles.matchHint}>
+            <span className="warn">{matchCount} transactions match</span>
+            {category && <span className="dim"> · saving recategorizes them</span>}
+          </p>
+        )
+      ) : (
+        (!needsPattern || pattern.trim()) && (
+          <p className={styles.matchHint}>
+            <span className="warn">{matchCount} transactions match</span>
+            <span className="dim"> · saving tags them (removed tags stay removed)</span>
+          </p>
+        )
       )}
       {error && <p className="neg">{error}</p>}
+      {mode.kind === 'category' && pattern.trim() && !canSave && (
+        <p className={styles.saveHint}>Pick a category or enter a display name to save.</p>
+      )}
       <div className="modalActions">
         <button className="btnSecondary" onClick={onClose}>
           Cancel
