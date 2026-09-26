@@ -45,10 +45,8 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 // RETIREMENT panel, not a duplicate of Net Worth's asset breakdown.
 const HISTORY_PAGE = 20;
 const HISTORY_BAR_WIDTH = 24;
-// Two-tier History mode: a fixed-metric "at a glance" compact view (first [t]),
-// then the full metric/range/pagination drill-down (second [t]) -- see the
-// historyTier state in the component for the tier transitions themselves.
-const HISTORY_COMPACT_PERIODS = 6;
+// History mode: a single [t] press opens the full metric/range/pagination
+// drill-down directly -- see the historyOpen state in the component.
 
 type HistoryMetricId = 'savingsRate' | 'cashRunway' | 'liquidRunway' | 'debtPayoff' | 'retirement' | 'yearsToFire' | 'coastFire';
 
@@ -65,12 +63,6 @@ const HISTORY_METRICS: { id: HistoryMetricId; label: string; needsAssumptionCapt
   { id: 'yearsToFire',  label: 'Years to FIRE', needsAssumptionCaption: true },
   { id: 'coastFire',    label: 'Coast FIRE', needsAssumptionCaption: true },
 ];
-
-// The compact tier always shows this one metric ("at a glance" -- see the
-// coordinator's spec), independent of whatever metricIdx the full tier is
-// currently on, so backing in and out of the full tier can't change what the
-// compact tier displays.
-const COMPACT_METRIC = HISTORY_METRICS[0];
 
 type HistoryPoint = {
   period: string;
@@ -176,11 +168,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const [withdrawal, setWithdrawal]     = useState(DEFAULT_WITHDRAWAL);
   const [growth, setGrowth]             = useState(DEFAULT_GROWTH);
 
-  // 'none' = normal Snapshot/Runway/Debt/Retirement/Assumptions view; 'compact'
-  // = fixed-metric recent-trend view (first [t]); 'full' = metric/range/
-  // pagination drill-down (second [t]). [Esc] backs out one tier at a time,
-  // mirroring NetWorth.tsx's filterMode nesting.
-  const [historyTier, setHistoryTier]     = useState<'none' | 'compact' | 'full'>('none');
+  // false = normal Snapshot/Runway/Debt/Retirement/Assumptions view; true =
+  // metric/range/pagination History drill-down, opened by [t] and closed by
+  // [Esc] or [t] again -- mirroring NetWorth.tsx's filterMode toggle.
+  const [historyOpen, setHistoryOpen]     = useState(false);
   const [historyRange, setHistoryRange]   = useState<HistoryRange>('month');
   const [historyRows, setHistoryRows]     = useState<HealthHistoryPeriod[]>([]);
   const [metricIdx, setMetricIdx]         = useState(0);
@@ -236,11 +227,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
     // 'h' is the App-level hints toggle (see App.tsx), so History mode uses 't'
     // instead to avoid firing both handlers on the same keypress.
-    if (historyTier === 'full') {
-      // Collapsing back to 'compact' always resets the range to 'month' -- the
-      // compact tier has no range control, so it must not inherit whatever
-      // range the full tier was left on.
-      if (key.escape || input === 't') { setHistoryTier('compact'); setHistoryRange('month'); return; }
+    if (historyOpen) {
+      if (key.escape || input === 't') { setHistoryOpen(false); return; }
       if (key.upArrow)    { setHistoryCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow)  { setHistoryCursor((c) => Math.min(historyRows.length - 1, c + 1)); return; }
       if (key.leftArrow)  { setMetricIdx((i) => (i - 1 + HISTORY_METRICS.length) % HISTORY_METRICS.length); return; }
@@ -252,14 +240,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       return;
     }
 
-    if (historyTier === 'compact') {
-      if (key.escape) { setHistoryTier('none'); return; }
-      if (input === 't') { setHistoryTier('full'); return; }
-      return;
-    }
-
     if (key.escape) { onNavigate('dashboard'); return; }
-    if (input === 't') { setHistoryTier('compact'); return; }
+    if (input === 't') { setHistoryOpen(true); return; }
     handleNavKey(input, 'health', onNavigate);
 
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + DIALS.length) % DIALS.length); return; }
@@ -359,11 +341,6 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const { visible: visibleHistory, pageStart: historyPageStart } = usePagination(historyPoints, historyCursor, HISTORY_PAGE);
   const historyLabelW = periodLabelWidth(historyRange);
 
-  // Compact tier: last N points, fixed to COMPACT_METRIC, no cursor/pagination.
-  const compactPoints = historyPoints.slice(-HISTORY_COMPACT_PERIODS);
-  const compactValues = compactPoints.map((p) => HISTORY_VALUE[COMPACT_METRIC.id](p));
-  const compactMax = Math.max(...compactValues.filter((v): v is number => v !== null).map(Math.abs), 1);
-
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="health" showHints={showHints} />
@@ -372,15 +349,13 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       {showHints && (
         editMode
           ? <Text dimColor>type value  ·  Enter confirm  ·  Esc cancel</Text>
-          : historyTier === 'full'
-            ? <Text dimColor>←→ metric  ·  ↑↓ scroll  ·  [r] range  ·  [t] compact  ·  [Esc] back</Text>
-            : historyTier === 'compact'
-              ? <Text dimColor>[t] more detail  ·  [Esc] back</Text>
-              : <Text dimColor>↑↓ select  ·  ← → adjust  ·  Enter type  ·  [r] reset  ·  [t] history</Text>
+          : historyOpen
+            ? <Text dimColor>←→ metric  ·  ↑↓ scroll  ·  [r] range  ·  [Esc] back</Text>
+            : <Text dimColor>↑↓ select  ·  ← → adjust  ·  Enter type  ·  [r] reset  ·  [t] history</Text>
       )}
       <Divider />
 
-      {historyTier === 'full' ? (
+      {historyOpen ? (
         <Box flexDirection="column" marginTop={1}>
           <Box justifyContent="space-between">
             <Text bold>History — {currentMetric.label}</Text>
@@ -421,31 +396,6 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
               {historyPoints.length > HISTORY_PAGE && (
                 <Text dimColor>{historyCursor + 1} / {historyPoints.length}</Text>
               )}
-            </Box>
-          )}
-        </Box>
-      ) : historyTier === 'compact' ? (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>History — {COMPACT_METRIC.label}</Text>
-          {compactPoints.length === 0 ? (
-            <Box marginTop={1}><Text dimColor>No balance history yet.</Text></Box>
-          ) : (
-            <Box flexDirection="column" marginTop={1}>
-              {compactPoints.map((p) => {
-                const v = HISTORY_VALUE[COMPACT_METRIC.id](p);
-                const color = historyValueColor(COMPACT_METRIC.id, v);
-                return (
-                  <Box key={p.period} gap={2}>
-                    <Text dimColor>{periodLabel(p.period, historyRange).padEnd(historyLabelW)}</Text>
-                    <Text color={color} dimColor={v === null}>
-                      {formatHistoryValue(COMPACT_METRIC.id, v).padStart(12)}
-                    </Text>
-                    <Text color={color} dimColor>
-                      {bar(v ?? 0, compactMax, HISTORY_BAR_WIDTH)}
-                    </Text>
-                  </Box>
-                );
-              })}
             </Box>
           )}
         </Box>
