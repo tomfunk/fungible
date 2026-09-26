@@ -3314,6 +3314,163 @@ describe('Health', () => {
       expect(f).not.toContain('▊');
     });
   });
+
+  // ── History mode (two-tier) ──────────────────────────────────────────────
+  // 't' (not 'h' — that's App.tsx's global hints toggle) opens a two-tier history
+  // view: first press -> a compact, fixed-metric recent-trend view; second press
+  // -> the full metric/range/pagination drill-down (reusing NetWorth.tsx's
+  // period-bucketed bar/value list pattern). Esc backs out one tier at a time.
+
+  it("first 't' opens the compact view (fixed to Savings rate, no range tabs); second 't' expands to the full view", async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    expect(frame(r)).not.toContain('ASSUMPTIONS');
+    expect(frame(r)).not.toContain('Quarter'); // no range tabs in the compact tier
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('Quarter')); // range tabs appear in the full tier
+  });
+
+  it('Esc backs out one tier at a time: full -> compact -> snapshot, never straight to dashboard', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('\x1b'); // full -> compact
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('History — Savings rate');
+      expect(f).not.toContain('Quarter');
+    });
+    r.stdin.write('\x1b'); // compact -> snapshot
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+  });
+
+  it('digit-nav is suppressed in both the compact and full tiers', async () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Health onNavigate={onNavigate} showHints={false} /></W>);
+    await waitFor(() => expect(frame(r)).toContain('Financial Health'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History —'));
+    r.stdin.write('1');
+    expect(onNavigate).not.toHaveBeenCalled();
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('1');
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('the compact tier always shows Savings rate regardless of the full tier\'s last-selected metric', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('\x1B[C'); // full: cycle to Cash runway
+    await waitFor(() => expect(frame(r)).toContain('History — Cash runway'));
+    r.stdin.write('t'); // full -> compact (toggling 't' collapses one tier, same as Esc)
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('History — Savings rate');
+      expect(f).not.toContain('Quarter');
+    });
+  });
+
+  it('← → cycle through the seven chartable metrics in the full tier, wrapping in both directions', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('\x1B[C'); // right
+    await waitFor(() => expect(frame(r)).toContain('History — Cash runway'));
+    r.stdin.write('\x1B[D'); // left back to the first metric
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('\x1B[D'); // left wraps to the last metric
+    await waitFor(() => expect(frame(r)).toContain('History — Coast FIRE'));
+  });
+
+  it('shows the "today\'s assumptions" caption only for the FIRE-projection metrics in the full tier', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    expect(frame(r)).not.toContain('assumptions applied to past balances');
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1B[C'); // -> Years to FIRE
+    await waitFor(() => expect(frame(r)).toContain('History — Years to FIRE'));
+    expect(frame(r)).toContain("Using today's growth/withdrawal-rate assumptions applied to past balances.");
+    r.stdin.write('\x1B[C'); // -> Coast FIRE
+    await waitFor(() => expect(frame(r)).toContain('History — Coast FIRE'));
+    expect(frame(r)).toContain("Using today's growth/withdrawal-rate assumptions applied to past balances.");
+  });
+
+  it('[r] cycles the range in the full tier only, changing how periods are labeled', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('May 2026')); // month range, seeded balance @ 2026-05-20
+    r.stdin.write('r'); // no-op in the compact tier
+    await waitFor(() => expect(frame(r)).toContain('May 2026'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('r'); // month -> quarter
+    await waitFor(() => expect(frame(r)).toContain('Q2 2026'));
+  });
+
+  it('collapsing full -> compact resets the range to month', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('r'); // month -> quarter
+    await waitFor(() => expect(frame(r)).toContain('Q2 2026'));
+    r.stdin.write('\x1b'); // full -> compact
+    await waitFor(() => expect(frame(r)).toContain('May 2026'));
+  });
+
+  it('renders a row per balance-history period once more than one exists', async () => {
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('test-checking', 4500.00, '2026-04-20')");
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Apr 2026');
+      expect(f).toContain('May 2026');
+    });
+  });
+
+  it('charts a raw retirement balance (fmtCompact, not runway/FIRE math)', async () => {
+    await db.execute(`INSERT INTO accounts (id, name, type, subtype, institution_name, mask)
+                       VALUES ('test-401k', 'Test 401k', 'investment', '401k', 'Test Bank', '0003')`);
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('test-401k', 50000.00, '2026-05-20')");
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t'); // -> compact
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('t'); // -> full
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1B[C'); // -> Retirement Balance
+    await waitFor(() => expect(frame(r)).toContain('History — Retirement Balance'));
+    await waitFor(() => expect(frame(r)).toContain('$50.0K'));
+  });
+
+  it('shows a fallback message in the compact tier when there is no balance history', async () => {
+    await db.execute('DELETE FROM balance_history');
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('No balance history yet.'));
+  });
 });
 
 // ── App smoke test ────────────────────────────────────────────────────────────
