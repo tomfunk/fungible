@@ -34,11 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - run: npm ci
+      - uses: ./.github/actions/setup-node-deps
 
       # npm ci on the arm64 mac runner only installs the arm64 libsql binding;
       # the x64 build needs @libsql/darwin-x64 in node_modules too. --force

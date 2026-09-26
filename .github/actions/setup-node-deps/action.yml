@@ -1,0 +1,15 @@
+name: Setup Node & install deps
+description: >
+  Install the pinned Node version and run npm ci — the boilerplate every
+  workflow job needs after checkout and before running any npm script.
+  (Checkout itself stays a separate step in each workflow: a local action
+  like this one can't be loaded until the repo it lives in is checked out.)
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - run: npm ci
+      shell: bash
