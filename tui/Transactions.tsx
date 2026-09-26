@@ -14,7 +14,6 @@ import {
   addTagToTransaction, removeTagFromTransaction, addTagToTransactions,
   type TagOption,
 } from '../core/tags.js';
-import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getAllRules, getDataBounds, getLastSyncedAt, getLinkedAccounts, type TxRow, type SortMode, type LinkedAccount } from '../core/queries.js';
 import { isFilterActive, filterSummary } from '../core/filters.js';
@@ -22,9 +21,9 @@ import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { handleNavKey } from './nav.js';
-import { Divider } from './fmt.js';
+import { Divider, padTruncate } from './fmt.js';
 import { fmtTimeAgo, fmtTxAmount } from '../core/fmt.js';
-import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { useTerminalWidth, MONTHS, C_POSITIVE, C_WARNING, C_MANUAL, C_ACCENT } from './ui.js';
 import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
@@ -50,11 +49,6 @@ const SORT_LABEL: Record<SortMode, string> = {
   'name-asc':      'name ↑', 'name-desc':     'name ↓',
   'category-asc':  'category ↑', 'category-desc': 'category ↓',
 };
-
-function truncate(s: string, n: number) {
-  return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
-}
-
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
@@ -790,7 +784,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               <Text color={isManualRow ? C_MANUAL : isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
                 {tx.date}{tx.original_date ? <Text color={C_MANUAL}>*</Text> : null}
               </Text>
-              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored}>{truncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW).padEnd(descW)}</Text>
+              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored}>{padTruncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
                 {fmtTxAmount(tx.amount).padStart(10)}
               </Text>
@@ -798,12 +792,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
                 color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : (isPinned || isManualRow) ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
               >
-                {truncate('  ' + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
+                {padTruncate('  ' + (isIgnored ? '~' : '') + tx.category, catW)}
               </Text>
             </SelectableRow>
             {hasTags && isSelected && (
               <Box paddingLeft={14}>
-                <Text color={C_ACCENT}>{truncate('# ' + tx.tag_names, inner - 14)}</Text>
+                <Text color={C_ACCENT}>{padTruncate('# ' + tx.tag_names, inner - 14)}</Text>
               </Box>
             )}
           </Box>

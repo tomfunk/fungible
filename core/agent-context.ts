@@ -7,7 +7,7 @@
 import { db } from './db.js';
 import { yearsToFire, computeSavingsRate, getTrailing12moAverages } from './health.js';
 import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
-import { isAssetAccount, isLiabilityAccount } from './account-class.js';
+import { isAssetAccount, isLiabilityAccount, LIQUID_SUBTYPES, RETIREMENT_SUBTYPES } from './account-class.js';
 import type { MetricBasis } from './dateUtils.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -120,18 +120,18 @@ export async function getBalances(): Promise<BalanceSummary> {
     .filter((a) => a.type === 'depository')
     .reduce((s, a) => s + a.balance, 0);
 
-  const LIQUID_SUBTYPES     = new Set(['brokerage', 'cash isa', 'non-taxable brokerage account']);
-  const RETIREMENT_SUBTYPES = new Set(['ira', '401k', 'roth', '403b', '457b', 'hsa', 'roth 401k', 'simple ira', 'sep ira', 'pension']);
+  const liquidSubtypes: Set<string> = new Set(LIQUID_SUBTYPES);
+  const retirementSubtypes: Set<string> = new Set(RETIREMENT_SUBTYPES);
 
   const liquid = accounts
     .filter((a) =>
       a.type === 'depository' ||
-      (a.type === 'investment' && LIQUID_SUBTYPES.has((a.subtype ?? '').toLowerCase()))
+      (a.type === 'investment' && liquidSubtypes.has((a.subtype ?? '').toLowerCase()))
     )
     .reduce((s, a) => s + a.balance, 0);
 
   const retirement = accounts
-    .filter((a) => a.type === 'investment' && RETIREMENT_SUBTYPES.has((a.subtype ?? '').toLowerCase()))
+    .filter((a) => a.type === 'investment' && retirementSubtypes.has((a.subtype ?? '').toLowerCase()))
     .reduce((s, a) => s + a.balance, 0);
 
   const loanDebt = accounts

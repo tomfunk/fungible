@@ -8,10 +8,11 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
-import { importCsvTransactions, type ImportConfig } from '../../core/accounts.js';
+import { importCsvTransactions } from '../../core/accounts.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
+import { makeCsvRow } from '../helpers/makeCsvRow.js';
 
 const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
 const flat = (r: ReturnType<typeof render>) =>
@@ -47,10 +48,7 @@ async function toAddData(r: ReturnType<typeof render>) {
   await waitFor(() => expect(flat(r)).toContain('Import CSV file'));
 }
 
-const CFG: ImportConfig = {
-  amountMode: 'single', dateCol: 0, nameCol: 1, amountCol: 2,
-  debitCol: null, creditCol: null, positiveIsInflow: false,
-};
+const CFG = makeCsvRow();
 
 const rows = [['2025-01-02', 'AMAZON', '25.00'], ['2025-01-05', 'NETFLIX', '15.00']];
 

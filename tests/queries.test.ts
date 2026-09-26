@@ -9,7 +9,7 @@ import { db } from '../core/db.js';
 import {
   getRangeSummary,
   getFlexSummary,
-  getHiddenCategories,
+  getHiddenCategorySet,
   getRecentTransactions,
   getMerchantSummary,
   getSearchFilteredData,
@@ -73,15 +73,15 @@ beforeEach(async () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
-describe('getHiddenCategories', () => {
+describe('getHiddenCategorySet', () => {
   it('returns empty set when no hidden categories', async () => {
-    expect((await getHiddenCategories()).size).toBe(0);
+    expect((await getHiddenCategorySet()).size).toBe(0);
   });
 
   it('returns set of hidden category names', async () => {
     await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
     await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Loan Payment'] });
-    const hidden = await getHiddenCategories();
+    const hidden = await getHiddenCategorySet();
     expect(hidden.has('Transfer')).toBe(true);
     expect(hidden.has('Loan Payment')).toBe(true);
     expect(hidden.has('Shopping')).toBe(false);

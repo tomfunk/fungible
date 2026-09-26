@@ -4,6 +4,7 @@ import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyNameRulesWithRules, loadNameRules } from './rename.js';
 import { applyTagRules } from './tag-rules.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
+import { cascadeDeleteTransactionsSql } from './imports.js';
 import { decryptToken } from './crypto.js';
 import type { Transaction } from 'plaid';
 import { describeSyncProgress, type SyncProgress, type SyncProgressFn } from './sync-progress.js';
@@ -107,19 +108,12 @@ export async function syncTransactions(accessToken: string, itemId: string, onPr
     await applyTagRules({ txIds: [...added, ...modified].map((tx) => tx.transaction_id) });
   }
 
-  // Remove deleted. Clear child rows first: transaction_tags has a FK
-  // (transaction_id → transactions.id), so deleting a tagged transaction
-  // directly fails with a FOREIGN KEY constraint. tag_rule_suppressions is
-  // keyed by transaction_id too (no FK, but clearing it avoids orphan rows).
-  // One batch keeps the three deletes atomic.
+  // Remove deleted. cascadeDeleteTransactionsSql clears child rows first
+  // (transaction_tags has a FK to transactions; tag_rule_suppressions has no
+  // FK but would otherwise orphan) and one batch keeps the deletes atomic.
   if (removedIds.length > 0) {
     onProgress?.({ phase: 'remove', count: removedIds.length });
-    const placeholders = removedIds.map(() => '?').join(',');
-    await db.batch([
-      { sql: `DELETE FROM transaction_tags WHERE transaction_id IN (${placeholders})`, args: removedIds },
-      { sql: `DELETE FROM tag_rule_suppressions WHERE transaction_id IN (${placeholders})`, args: removedIds },
-      { sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: removedIds },
-    ], 'write');
+    await db.batch(cascadeDeleteTransactionsSql(removedIds), 'write');
   }
 
   // Save cursor and last_synced_at

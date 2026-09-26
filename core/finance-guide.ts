@@ -562,8 +562,3 @@ export function formatGuideSection(section: GuideSection): string {
   ];
   return lines.join('\n');
 }
-
-/** Format all topics as text. */
-export function formatFullGuide(): string {
-  return GUIDE.map(formatGuideSection).join('\n\n---\n\n');
-}

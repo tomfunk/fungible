@@ -43,10 +43,7 @@ export async function getTransactionTagIds(txId: string): Promise<Set<number>> {
 // A deliberate manual tag-add clears any suppression for that (tx, tag) pair,
 // so tag rules may apply it again — this is the only way to undo a removal.
 export async function addTagToTransaction(txId: string, tagId: number): Promise<void> {
-  await db.batch([
-    { sql: 'INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)', args: [txId, tagId] },
-    { sql: 'DELETE FROM tag_rule_suppressions WHERE transaction_id = ? AND tag_id = ?', args: [txId, tagId] },
-  ], 'write');
+  await addTagToTransactions([txId], tagId);
 }
 
 // Removing a tag records a suppression so tag rules don't re-add it — but only

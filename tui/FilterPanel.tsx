@@ -6,7 +6,7 @@ import {
   selectionToDim, selectionFromDim, invertSelection, invertTagModes, filtersEqual,
   type Filter, type TagPredicate,
 } from '../core/filters.js';
-import { ModalPanel } from './components/index.js';
+import { ModalPanel, usePagination } from './components/index.js';
 import { C_ACCENT, C_POSITIVE, C_NEGATIVE, C_DIM } from './ui.js';
 
 // Global, session-wide filter panel. Opens over any screen; reads the current
@@ -200,8 +200,7 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
 
   // Window the focused section's list around the cursor so a long universe
   // stays bounded.
-  const winStart = Math.max(0, Math.min(cursor - Math.floor(WINDOW / 2), items.length - WINDOW));
-  const visible = items.slice(winStart, winStart + WINDOW);
+  const { visible, pageStart: winStart } = usePagination(items, cursor, WINDOW);
   const clippedAbove = winStart;
   const clippedBelow = items.length - (winStart + visible.length);
 

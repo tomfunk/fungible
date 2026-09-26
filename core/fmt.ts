@@ -27,24 +27,21 @@ export function fmtMonths(n: number): string {
   return `${n.toFixed(1)} mo`;
 }
 
-export function fmtCompact(n: number): string {
+function fmtCompactWithSign(n: number, sign: string): string {
   const abs = Math.abs(n);
-  const sign = n < 0 ? '-' : '';
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
   if (abs >= 10_000)    return `${sign}$${(abs / 1_000).toFixed(1)}K`;
   return `${sign}${fmt(abs)}`;
+}
+
+export function fmtCompact(n: number): string {
+  return fmtCompactWithSign(n, n < 0 ? '-' : '');
 }
 
 export function fmtCompactSigned(n: number): string {
-  const abs = Math.abs(n);
-  const sign = n >= 0 ? '+' : '-';
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 10_000)    return `${sign}$${(abs / 1_000).toFixed(1)}K`;
-  return `${sign}${fmt(abs)}`;
+  return fmtCompactWithSign(n, n >= 0 ? '+' : '-');
 }
 
-// Formats a tag's date span (ISO YYYY-MM-DD bounds) down to month granularity,
-// e.g. "2024-01 → 2025-06", collapsing to a single month when they match.
 export function fmtTimeAgo(ms: number | null): string {
   if (ms === null) return 'never';
   const diffMs = Date.now() - ms;
@@ -71,6 +68,8 @@ export function fmtSyncedAt(ms: number | null): string {
   return dt.getFullYear() === year ? date : `${date} ${dt.getFullYear()}`;
 }
 
+// Formats a tag's date span (ISO YYYY-MM-DD bounds) down to month granularity,
+// e.g. "2024-01 → 2025-06", collapsing to a single month when they match.
 export function fmtSpan(earliest: string | null, latest: string | null): string {
   if (!earliest || !latest) return '—';
   const from = earliest.slice(0, 7);

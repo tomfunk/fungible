@@ -10,14 +10,12 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
-import { importCsvTransactions, type ImportConfig } from '../../core/accounts.js';
+import { importCsvTransactions } from '../../core/accounts.js';
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
+import { makeCsvRow } from '../helpers/makeCsvRow.js';
 
-const CFG: ImportConfig = {
-  amountMode: 'single', dateCol: 0, nameCol: 1, amountCol: 2,
-  debitCol: null, creditCol: null, positiveIsInflow: false,
-};
+const CFG = makeCsvRow();
 
 const addAccount = (id: string, name: string, itemId: string | null = null) =>
   db.execute({

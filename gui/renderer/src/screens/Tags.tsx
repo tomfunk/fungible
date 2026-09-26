@@ -5,7 +5,7 @@ import { useStatus } from '../hooks/useStatus.js';
 import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { Modal } from '../components/Modal.js';
+import { NameModal } from '../components/NameModal.js';
 import { fmt, fmtSigned, fmtSpan, sortTags, type TagSort } from '../../../../core/fmt.js';
 import type { Tag } from '../../../../core/queries.js';
 import { useFilter } from '../hooks/useFilter.js';
@@ -212,6 +212,7 @@ export function Tags() {
         <NameModal
           title="New tag"
           initial=""
+          placeholder="Tag name"
           onClose={() => setAddOpen(false)}
           onSave={async (name) => {
             await api.tags.createTag(name);
@@ -226,6 +227,7 @@ export function Tags() {
         <NameModal
           title={`Rename "${renameTag.name}"`}
           initial={renameTag.name}
+          placeholder="Tag name"
           onClose={() => setRenameTag(null)}
           onSave={async (name) => {
             await api.tags.renameTag(renameTag.id, name);
@@ -239,41 +241,5 @@ export function Tags() {
 
       {statusEl}
     </div>
-  );
-}
-
-function NameModal({
-  title,
-  initial,
-  onClose,
-  onSave,
-}: {
-  title: string;
-  initial: string;
-  onClose: () => void;
-  onSave: (name: string) => void;
-}) {
-  const [name, setName] = useState(initial);
-  return (
-    <Modal title={title} onClose={onClose}>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && name.trim()) onSave(name.trim());
-        }}
-        placeholder="Tag name"
-        autoFocus
-        className={styles.modalInput}
-      />
-      <div className="modalActions">
-        <button className="btnSecondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button className="btnPrimary" onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
-          Save
-        </button>
-      </div>
-    </Modal>
   );
 }

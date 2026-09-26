@@ -8,3 +8,8 @@ export function bar(amount: number, max: number, width = BAR_WIDTH): string {
 export function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
+
+/** Fixed-width cell: truncated with an ellipsis, or padded to keep columns aligned. */
+export function padTruncate(s: string, width: number): string {
+  return s.length > width ? s.slice(0, width - 1) + '…' : s.padEnd(width);
+}
