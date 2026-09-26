@@ -14,7 +14,7 @@ let health: HealthData = { ...BASE };
 
 vi.mock('../../core/health.js', async (importActual) => {
   const actual = await importActual<typeof import('../../core/health.js')>();
-  return { ...actual, loadHealthData: async () => health };
+  return { ...actual, loadHealthData: async () => health, getHealthHistory: async () => [] };
 });
 
 vi.mock('../../core/settings.js', () => ({

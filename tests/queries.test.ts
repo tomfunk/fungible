@@ -18,6 +18,7 @@ import {
   hasAccounts,
   getTransactions,
   getNetWorthHistory,
+  getHealthBalanceHistory,
   getAccountsWithBalances,
   getLinkedAccounts,
   getLinkedItems,
@@ -855,6 +856,79 @@ describe('loan accounts count as liabilities in net worth', () => {
     const { history } = await getAccountsWithBalances();
     expect(history.at(-1)!.liabilities).toBe(302000);
     expect(history.at(-1)!.net).toBe(-252000);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getHealthBalanceHistory', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    const acct = (id: string, type: string, subtype: string, excluded = 0) =>
+      db.execute({
+        sql: 'INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, ?, ?, ?, ?)',
+        args: [id, id, type, subtype, excluded],
+      });
+    const bal = (id: string, balance: number, date: string) =>
+      db.execute({
+        sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)',
+        args: [id, balance, date],
+      });
+
+    await acct('chk', 'depository', 'checking');
+    await acct('brk', 'investment', 'brokerage');
+    await acct('401k', 'investment', '401k');
+    await acct('cc', 'credit', 'credit card');
+    await acct('mtg', 'loan', 'mortgage');
+    await acct('529', 'investment', '529', 1); // excluded
+
+    // Two monthly snapshots per account.
+    await bal('chk', 10000, '2025-01-15');
+    await bal('chk', 12000, '2025-02-15');
+    await bal('brk', 5000, '2025-01-15');
+    await bal('brk', 6000, '2025-02-15');
+    await bal('401k', 50000, '2025-01-15');
+    await bal('401k', 55000, '2025-02-15');
+    await bal('cc', 500, '2025-01-15');
+    await bal('cc', 700, '2025-02-15');
+    await bal('mtg', 300000, '2025-01-15');
+    await bal('mtg', 299000, '2025-02-15');
+    await bal('529', 999999, '2025-01-15'); // must not appear in any total
+  });
+
+  it('buckets one row per period with the latest balance per account, in one pass', async () => {
+    const rows = await getHealthBalanceHistory('month');
+    expect(rows.map((r) => r.period)).toEqual(['2025-01', '2025-02']);
+  });
+
+  it('splits cash/liquid/retirement/debt exactly like loadHealthData, per period', async () => {
+    const rows = await getHealthBalanceHistory('month');
+    const jan = rows.find((r) => r.period === '2025-01')!;
+    const feb = rows.find((r) => r.period === '2025-02')!;
+
+    expect(jan.cash).toBe(10000);              // depository only
+    expect(jan.liquid).toBe(15000);             // checking + taxable brokerage
+    expect(jan.retirement).toBe(50000);         // 401k
+    expect(jan.totalDebt).toBe(500);            // credit card only
+    expect(jan.loanDebt).toBe(300000);          // mortgage, reported separately
+    expect(jan.netWorth).toBe(10000 + 5000 + 50000 - 500 - 300000);
+    expect(jan.asOf).toBe('2025-01-15');
+
+    expect(feb.cash).toBe(12000);
+    expect(feb.liquid).toBe(18000);
+    expect(feb.retirement).toBe(55000);
+    expect(feb.totalDebt).toBe(700);
+    expect(feb.loanDebt).toBe(299000);
+    expect(feb.netWorth).toBe(12000 + 6000 + 55000 - 700 - 299000);
+    expect(feb.asOf).toBe('2025-02-15');
+  });
+
+  it('drops excluded accounts from every field', async () => {
+    const rows = await getHealthBalanceHistory('month');
+    for (const r of rows) {
+      expect(r.liquid).toBeLessThan(999999);
+      expect(r.retirement).toBeLessThan(999999);
+    }
   });
 });
 

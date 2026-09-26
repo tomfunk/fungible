@@ -15,3 +15,6 @@ export const isLiabilityAccount = (a: { type: string }): boolean =>
 // copies of this business rule can't silently drift apart.
 export const LIQUID_SUBTYPES = ['brokerage', 'cash isa', 'non-taxable brokerage account'] as const;
 export const RETIREMENT_SUBTYPES = ['ira', '401k', 'roth', '403b', '457b', 'hsa', 'roth 401k', 'simple ira', 'sep ira', 'pension'] as const;
+
+// Render a fixed list of trusted (non-user-supplied) strings as a SQL `IN (...)` literal list.
+export const inClause = (vals: readonly string[]) => vals.map((v) => `'${v}'`).join(', ');
