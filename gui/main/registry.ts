@@ -71,7 +71,7 @@ import {
   renameCategory,
   suggestRuleForTransaction,
 } from '../../core/rules.js';
-import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
+import { loadHealthData, yearsToFire, coastYears, getHealthHistory } from '../../core/health.js';
 import { getSetting, setSetting, PRETAX_MONTHLY_KEY, BACKUP_INCLUDE_KEY_KEY } from '../../core/settings.js';
 import { checkKeyHealth } from '../../core/key-health.js';
 import {
@@ -193,6 +193,7 @@ export const registry = {
     loadHealthData,
     yearsToFire,
     coastYears,
+    getHealthHistory,
   },
   trends: {
     buildTrendViews,

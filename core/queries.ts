@@ -77,6 +77,73 @@ export const TRAILING_12MO_AVERAGES_SQL = `
   )
 `;
 
+/**
+ * Parameterized sibling of TRAILING_12MO_AVERAGES_SQL: same per-category
+ * netting logic (see summarizeBuckets/TRAILING_12MO_AVERAGES_SQL doc above),
+ * but bounded by an explicit `asOf` upper bound instead of `date('now', ...)`
+ * with no upper bound, so callers can ask "what would the trailing-12mo
+ * averages have been as of this past date". Used by getHealthHistory below,
+ * once per period -- this is NOT decomposable into a single GROUP-BY-month
+ * query, because the outflow>inflow netting is applied over the whole
+ * 12-month window per category, not per month (flooring at 0 per month would
+ * lose cross-month refund/reimbursement offsetting the whole-window version
+ * captures). TRAILING_12MO_AVERAGES_SQL / getTrailing12moAverages() are left
+ * untouched -- this is purely additive.
+ */
+export async function getTrailing12moTotalsAsOf(
+  asOf: string,
+): Promise<{ avgExpenses: number; avgIncome: number; avgSavings: number }> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        COALESCE(SUM(spend), 0) / 12.0            AS avg_expenses,
+        COALESCE(SUM(inc), 0) / 12.0              AS avg_income,
+        COALESCE(SUM(inc) - SUM(spend), 0) / 12.0 AS avg_savings
+      FROM (
+        SELECT
+          CASE WHEN category = '${UNCATEGORIZED}' THEN outflow
+               WHEN outflow > inflow THEN outflow - inflow ELSE 0 END AS spend,
+          CASE WHEN category = '${UNCATEGORIZED}' THEN inflow
+               WHEN inflow > outflow THEN inflow - outflow ELSE 0 END AS inc
+        FROM (
+          SELECT category,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)  AS outflow,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS inflow
+          FROM transactions
+          WHERE date >= date(?, '-12 months')
+            AND date <= ?
+            AND pending = 0 AND ignored = 0
+            AND category NOT IN (SELECT category FROM hidden_categories)
+            AND category != 'Transfer'
+          GROUP BY category
+        )
+      )
+    `,
+    args: [asOf, asOf],
+  });
+  const row = result.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
+  return {
+    avgExpenses: Number(row.avg_expenses),
+    avgIncome:   Number(row.avg_income),
+    avgSavings:  Number(row.avg_savings),
+  };
+}
+
+// Account-subtype classification for the "liquid" and "retirement" health
+// buckets. Extracted as shared consts so loadHealthData's current-snapshot
+// SQL (core/health.ts) and getHealthBalanceHistory below can't drift apart --
+// same failure mode TRAILING_12MO_AVERAGES_SQL was already extracted to avoid.
+export const LIQUID_INVESTMENT_SUBTYPES = ['brokerage', 'cash isa', 'non-taxable brokerage account'];
+export const RETIREMENT_SUBTYPES = [
+  'ira', '401k', 'roth', '403b', '457b', 'hsa',
+  'roth 401k', 'simple ira', 'sep ira', 'pension',
+];
+
+/** Render a fixed list of trusted (non-user-supplied) strings as a SQL `IN (...)` literal list. */
+export function sqlQuotedList(values: string[]): string {
+  return values.map((v) => `'${v}'`).join(', ');
+}
+
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
   return new Set((result.rows as unknown as { category: string }[]).map((r) => r.category));
@@ -990,6 +1057,92 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
     assets:      Number(r.assets),
     liabilities: Number(r.liabilities),
     net_worth:   Number(r.net_worth),
+  }));
+}
+
+export type HealthBalancePeriod = {
+  period: string;
+  asOf: string; // latest balance_history date actually present in this period bucket
+  cash: number;
+  liquid: number;
+  retirement: number;
+  totalDebt: number;
+  loanDebt: number;
+  netWorth: number;
+};
+
+/**
+ * Per-period cash/liquid/retirement/debt/net-worth snapshot, one windowed
+ * query for every period -- same ROW_NUMBER()-partitioned-CTE shape as
+ * getNetWorthHistory (each period takes each account's latest balance dated
+ * on or before the end of that period), just broken out into the finer
+ * buckets loadHealthData's current-snapshot queries use. Unlike the
+ * trailing-12mo averages, this IS a simple point-in-time read per period, so
+ * it costs one query total regardless of period count -- see
+ * getTrailing12moTotalsAsOf for why that one can't be folded in here too.
+ */
+export async function getHealthBalanceHistory(
+  granularity: NetWorthGranularity = 'month',
+): Promise<HealthBalancePeriod[]> {
+  const periodExpr: Record<NetWorthGranularity, string> = {
+    day:     `strftime('%Y-%m-%d', date)`,
+    week:    `strftime('%Y-W%W', date)`,
+    month:   `strftime('%Y-%m', date)`,
+    quarter: `strftime('%Y', date) || '-Q' || ((CAST(strftime('%m', date) AS INTEGER) + 2) / 3)`,
+    year:    `strftime('%Y', date)`,
+  };
+  const expr = periodExpr[granularity];
+  const liquidSubtypes     = sqlQuotedList(LIQUID_INVESTMENT_SUBTYPES);
+  const retirementSubtypes = sqlQuotedList(RETIREMENT_SUBTYPES);
+  const result = await db.execute(`
+    WITH period_last AS (
+      SELECT
+        ${expr} AS period,
+        account_id,
+        date,
+        balance,
+        ROW_NUMBER() OVER (PARTITION BY ${expr}, account_id ORDER BY date DESC) AS rn
+      FROM balance_history
+    )
+    SELECT
+      pl.period,
+      MAX(pl.date) AS as_of,
+      SUM(CASE WHEN a.type = 'depository' THEN pl.balance ELSE 0 END) AS cash,
+      SUM(CASE
+        WHEN a.type = 'depository'
+          OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, '')) IN (${liquidSubtypes}))
+        THEN pl.balance ELSE 0
+      END) AS liquid,
+      SUM(CASE
+        WHEN a.type = 'investment' AND LOWER(COALESCE(a.subtype, '')) IN (${retirementSubtypes})
+        THEN pl.balance ELSE 0
+      END) AS retirement,
+      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS total_debt,
+      SUM(CASE WHEN a.type = 'loan' THEN pl.balance ELSE 0 END) AS loan_debt,
+      SUM(CASE
+        WHEN a.type IN ('depository', 'investment') THEN pl.balance
+        WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
+        WHEN a.type IN ('credit', 'loan') THEN -pl.balance
+        ELSE 0
+      END) AS net_worth
+    FROM period_last pl
+    JOIN accounts a ON a.id = pl.account_id
+    WHERE pl.rn = 1 AND a.excluded = 0
+    GROUP BY pl.period
+    ORDER BY pl.period ASC
+  `);
+  return (result.rows as unknown as {
+    period: string; as_of: string; cash: number; liquid: number; retirement: number;
+    total_debt: number; loan_debt: number; net_worth: number;
+  }[]).map((r) => ({
+    period:     r.period,
+    asOf:       r.as_of,
+    cash:       Number(r.cash),
+    liquid:     Number(r.liquid),
+    retirement: Number(r.retirement),
+    totalDebt:  Number(r.total_debt),
+    loanDebt:   Number(r.loan_debt),
+    netWorth:   Number(r.net_worth),
   }));
 }
 

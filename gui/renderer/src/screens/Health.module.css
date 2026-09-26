@@ -103,3 +103,25 @@
   gap: 20px 34px;
   margin-top: 10px;
 }
+
+/* ── History (mirrors NetWorth.module.css's history section) ── */
+.rangePills {
+  margin-left: auto;
+}
+
+.metricPills {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.historyCaption {
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
+.chartFrame {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 10px 0;
+  margin-top: 12px;
+}
