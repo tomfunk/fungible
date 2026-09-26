@@ -1,7 +1,14 @@
 import { db } from './db.js';
 import { calcN } from './calculator.js';
-import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
+import {
+  TRAILING_12MO_AVERAGES_SQL, getTrailing12moTotalsAsOf, getHealthBalanceHistory,
+  LIQUID_INVESTMENT_SUBTYPES, RETIREMENT_SUBTYPES, sqlQuotedList,
+  type NetWorthGranularity,
+} from './queries.js';
 import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
+
+const LIQUID_INVESTMENT_SUBTYPES_SQL = sqlQuotedList(LIQUID_INVESTMENT_SUBTYPES);
+const RETIREMENT_SUBTYPES_SQL        = sqlQuotedList(RETIREMENT_SUBTYPES);
 
 export type HealthData = {
   avgMonthlyExpenses: number;
@@ -68,7 +75,7 @@ export async function loadHealthData(): Promise<HealthData> {
       WHERE (
         a.type = 'depository'
         OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, ''))
-            IN ('brokerage', 'cash isa', 'non-taxable brokerage account'))
+            IN (${LIQUID_INVESTMENT_SUBTYPES_SQL}))
       )
       AND a.excluded = 0
       AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
@@ -78,10 +85,7 @@ export async function loadHealthData(): Promise<HealthData> {
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.type = 'investment'
-        AND LOWER(COALESCE(a.subtype, '')) IN (
-          'ira', '401k', 'roth', '403b', '457b', 'hsa',
-          'roth 401k', 'simple ira', 'sep ira', 'pension'
-        )
+        AND LOWER(COALESCE(a.subtype, '')) IN (${RETIREMENT_SUBTYPES_SQL})
         AND a.excluded = 0
         AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
     `),
@@ -132,6 +136,71 @@ export async function loadHealthData(): Promise<HealthData> {
     basis:              avgs.basis,
     basisLabel:         avgs.basisLabel,
   };
+}
+
+export type HealthHistoryPeriod = {
+  period: string;
+  asOf: string;
+  cash: number;
+  liquid: number;
+  retirement: number;
+  totalDebt: number;
+  loanDebt: number;
+  netWorth: number;
+  avgMonthlyExpenses: number;
+  monthlyIncome: number;
+  monthlySavings: number;
+  basis: MetricBasis;
+  basisLabel: string;
+};
+
+/**
+ * HealthData's fields, tracked over time. Field names deliberately mirror
+ * HealthData (avgMonthlyExpenses/monthlyIncome/monthlySavings, not
+ * avgExpenses/avgIncome/avgSavings) so the live-snapshot and history types
+ * can't drift apart.
+ *
+ * No FIRE/runway/severity derivation here -- withdrawal rate, growth rate,
+ * and the spend/savings dial overrides are UI-local state (see tui/Health.tsx
+ * and gui's Health.tsx), not persisted settings, so gui/tui re-run the pure
+ * functions in health-metrics.ts per period with their own live dial values.
+ *
+ * Like getTrailing12moAverages, this applies NO minimum-history gating: a
+ * period with under 12 months of prior transactions still gets an average
+ * (just diluted toward 0 by the `/ 12.0` divisor), for consistency with the
+ * live snapshot number's existing behavior.
+ *
+ * One windowed query for the balance fields (getHealthBalanceHistory), plus
+ * one getTrailing12moTotalsAsOf call per period for the trailing-12mo
+ * averages -- see that function's doc comment for why the latter can't be
+ * folded into a single query the way the former is.
+ */
+export async function getHealthHistory(
+  granularity: NetWorthGranularity = 'month',
+  periods?: number,
+): Promise<HealthHistoryPeriod[]> {
+  const balanceRows = await getHealthBalanceHistory(granularity);
+  const limited = periods !== undefined && periods > 0 ? balanceRows.slice(-periods) : balanceRows;
+  const basis: MetricBasis = 'trailing-365d';
+  const basisLabel = BASIS_LABEL[basis];
+  return Promise.all(limited.map(async (row) => {
+    const avgs = await getTrailing12moTotalsAsOf(row.asOf);
+    return {
+      period:             row.period,
+      asOf:               row.asOf,
+      cash:               row.cash,
+      liquid:             row.liquid,
+      retirement:         row.retirement,
+      totalDebt:          row.totalDebt,
+      loanDebt:           row.loanDebt,
+      netWorth:           row.netWorth,
+      avgMonthlyExpenses: avgs.avgExpenses,
+      monthlyIncome:      avgs.avgIncome,
+      monthlySavings:     avgs.avgSavings,
+      basis,
+      basisLabel,
+    };
+  }));
 }
 
 export function yearsToFire(

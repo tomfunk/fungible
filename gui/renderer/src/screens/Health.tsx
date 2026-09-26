@@ -1,10 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
 import { computeSavingsRate } from '../../../../core/savings-rate.js';
 import { computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity } from '../../../../core/health-metrics.js';
 import type { SeverityLevel } from '../../../../core/severity.js';
+import type { NetWorthGranularity } from '../../../../core/queries.js';
+import { useChartTheme, tooltipStyle, tooltipLabelStyle } from '../components/chartTheme.js';
+import { periodLabel } from '../lib/periodLabel.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { DialRow } from '../components/DialRow.js';
 import styles from './Health.module.css';
@@ -14,6 +26,38 @@ const DEFAULT_GROWTH = 7.0;
 const SPEND_STEP = 100;
 const WITHDRAWAL_STEP = 0.5;
 const GROWTH_STEP = 1.0;
+
+const HISTORY_RANGES: NetWorthGranularity[] = ['week', 'month', 'quarter', 'year'];
+const HISTORY_RANGE_LABELS: Record<NetWorthGranularity, string> = { day: 'Day', week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
+
+type HistoryUnit = 'pct' | 'months' | 'dollar' | 'years';
+type HistoryMetricKey = 'savingsRate' | 'cashRunway' | 'liquidRunway' | 'debtPayoff' | 'retirement' | 'yearsToFire' | 'coastFire';
+
+const HISTORY_METRICS: { key: HistoryMetricKey; label: string; unit: HistoryUnit }[] = [
+  { key: 'savingsRate',  label: 'Savings Rate',  unit: 'pct' },
+  { key: 'cashRunway',   label: 'Cash Runway',   unit: 'months' },
+  { key: 'liquidRunway', label: 'Liquid Runway', unit: 'months' },
+  { key: 'debtPayoff',   label: 'Debt Payoff',   unit: 'months' },
+  { key: 'retirement',   label: 'Retirement Balance', unit: 'dollar' },
+  { key: 'yearsToFire',  label: 'Years to FIRE', unit: 'years' },
+  { key: 'coastFire',    label: 'Coast FIRE',    unit: 'years' },
+];
+
+// yearsToFire/coastYears apply *today's* withdrawal-rate/growth-rate dials
+// (and today's fireNumber target) to each period's historical net worth --
+// they are not a historically-accurate record the way the other metrics are,
+// since neither dial is tracked over time. Callers must caption this.
+const PROJECTED_METRICS: HistoryMetricKey[] = ['yearsToFire', 'coastFire'];
+
+function formatHistoryValue(value: number | null, unit: HistoryUnit): string {
+  if (value === null) return '—';
+  switch (unit) {
+    case 'pct': return fmtPct(value);
+    case 'months': return fmtMonths(value);
+    case 'dollar': return fmtCompact(value);
+    case 'years': return `${value.toFixed(1)} yr`;
+  }
+}
 
 // SeverityLevel -> this screen's existing pos/warn/neg/(neutral) class names.
 function severityToClass(level: SeverityLevel): string {
@@ -31,6 +75,11 @@ function roundToStep(n: number): number {
 
 export function Health() {
   const data = useQuery(() => api.health.loadHealthData(), []);
+  const chartTheme = useChartTheme();
+
+  const [historyRange, setHistoryRange] = useState<NetWorthGranularity>('month');
+  const [historyMetric, setHistoryMetric] = useState<HistoryMetricKey>('savingsRate');
+  const history = useQuery(() => api.health.getHealthHistory(historyRange), [historyRange]);
 
   const [monthlySpend, setMonthlySpend] = useState<number | null>(null);
   const [monthlySavings, setMonthlySavings] = useState<number | null>(null);
@@ -70,6 +119,63 @@ export function Health() {
     void api.health.yearsToFire(data.netWorth, savings + pretax, fireNumber, growth).then(setYears);
     void api.health.coastYears(data.netWorth, fireNumber, growth).then(setCoast);
   }, [data, savings, pretax, fireNumber, growth]);
+
+  // yearsToFire/coastYears live in health.ts (DB-adjacent), so they're only
+  // reachable through the bridge -- one batched effect projects the whole
+  // history array at once (rather than the chart re-triggering N round trips
+  // per render), and only while one of those two metrics is selected.
+  const [fireHistory, setFireHistory] = useState<{ years: number | null; coast: number | null }[] | null>(null);
+  useEffect(() => {
+    if (!history || !PROJECTED_METRICS.includes(historyMetric)) return;
+    let alive = true;
+    void Promise.all(
+      history.map((row) => Promise.all([
+        api.health.yearsToFire(row.netWorth, row.monthlySavings + pretax, fireNumber, growth),
+        api.health.coastYears(row.netWorth, fireNumber, growth),
+      ])),
+    ).then((pairs) => {
+      if (alive) setFireHistory(pairs.map(([y, c]) => ({ years: y, coast: c })));
+    });
+    return () => { alive = false; };
+  }, [history, historyMetric, fireNumber, growth, pretax]);
+
+  const historySelection = HISTORY_METRICS.find((m) => m.key === historyMetric)!;
+  const chartData = useMemo(() => {
+    if (!history) return [];
+    return history.map((row, i) => {
+      const label = periodLabel(row.period, historyRange);
+      let value: number | null;
+      switch (historyMetric) {
+        case 'savingsRate':
+          value = computeSavingsRate(row.monthlyIncome, row.monthlySavings, pretax);
+          break;
+        case 'retirement':
+          value = row.retirement;
+          break;
+        case 'yearsToFire':
+          value = fireHistory?.[i]?.years ?? null;
+          break;
+        case 'coastFire':
+          value = fireHistory?.[i]?.coast ?? null;
+          break;
+        default: {
+          const m = computeFireRunwayMetrics({
+            monthlySpend: row.avgMonthlyExpenses,
+            withdrawalRatePct: withdrawal,
+            cash: row.cash,
+            liquid: row.liquid,
+            totalDebt: row.totalDebt,
+            monthlySavings: row.monthlySavings,
+            netWorth: row.netWorth,
+          });
+          value = historyMetric === 'cashRunway' ? m.cashRunwayMonths
+            : historyMetric === 'liquidRunway' ? m.liquidRunwayMonths
+              : m.debtPayoffMonths;
+        }
+      }
+      return { label, value };
+    });
+  }, [history, historyMetric, historyRange, withdrawal, fireHistory, pretax]);
 
   if (!data) return <p className="dim">Loading…</p>;
 
@@ -255,6 +361,68 @@ export function Health() {
           </div>
         </section>
       </div>
+
+      {history && history.length > 0 && (
+        <section className={styles.panel}>
+          <div className="sectionHead">
+            <span className="sectionLabel">History</span>
+            <div className={`pillGroup ${styles.rangePills}`}>
+              {HISTORY_RANGES.map((r) => (
+                <button key={r} className={r === historyRange ? 'pillActive' : 'pill'} onClick={() => setHistoryRange(r)}>
+                  {HISTORY_RANGE_LABELS[r]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className={`pillGroup ${styles.metricPills}`}>
+            {HISTORY_METRICS.map((m) => (
+              <button key={m.key} className={m.key === historyMetric ? 'pillActive' : 'pill'} onClick={() => setHistoryMetric(m.key)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          {PROJECTED_METRICS.includes(historyMetric) && (
+            <p className={`dim ${styles.historyCaption}`}>
+              Using today's growth/withdrawal-rate assumptions applied to past balances — not a historical record.
+            </p>
+          )}
+          <div className={styles.chartFrame}>
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={chartData}>
+                <CartesianGrid stroke="var(--rule)" strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  stroke="var(--rule)"
+                  tick={{ fontSize: 11, fill: chartTheme.axis, fontFamily: 'var(--font-mono)' }}
+                  tickLine={false}
+                  minTickGap={24}
+                />
+                <YAxis
+                  stroke="var(--rule)"
+                  tick={{ fontSize: 11, fill: chartTheme.axis, fontFamily: 'var(--font-mono)' }}
+                  tickLine={false}
+                  tickFormatter={(v: number) => formatHistoryValue(v, historySelection.unit)}
+                  width={70}
+                />
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  labelStyle={tooltipLabelStyle}
+                  formatter={(value) => [formatHistoryValue(value === null ? null : Number(value), historySelection.unit), historySelection.label]}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  name={historySelection.label}
+                  stroke={chartTheme.accent}
+                  dot={false}
+                  strokeWidth={2}
+                  connectNulls={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
 
       <section className={styles.panel}>
         <h2>Assumptions</h2>

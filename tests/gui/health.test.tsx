@@ -30,16 +30,20 @@ describe('GUI Health', () => {
   it('renders cash flow, retirement sections and stat cards', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
-    expect(screen.getByText('Retirement')).toBeTruthy();
+    // 'Retirement' also names a History metric pill once history renders, so
+    // scope to the panel heading to disambiguate.
+    expect(screen.getByRole('heading', { name: 'Retirement' })).toBeTruthy();
     expect(screen.getByText('Monthly income')).toBeTruthy();
     expect(screen.getByText('Savings rate')).toBeTruthy();
     expect(screen.getByText('Cash runway')).toBeTruthy();
     expect(screen.getByText('FIRE spend')).toBeTruthy();
-    expect(screen.getByText('Coast FIRE')).toBeTruthy();
+    // 'Coast FIRE', 'Savings Rate' and 'Years to FIRE' also name History
+    // metric pills once history renders — just confirm they appear somewhere.
+    expect(screen.getAllByText('Coast FIRE').length).toBeGreaterThan(0);
     // Stat cards
-    expect(screen.getByText('Savings Rate')).toBeTruthy();
+    expect(screen.getAllByText('Savings Rate').length).toBeGreaterThan(0);
     expect(screen.getByText('Net Worth')).toBeTruthy();
-    expect(screen.getByText('Years to FIRE')).toBeTruthy();
+    expect(screen.getAllByText('Years to FIRE').length).toBeGreaterThan(0);
   });
 
   it('breaks debt into credit cards, loans and a combined total when a loan account exists', async () => {
@@ -134,5 +138,68 @@ describe('GUI Health', () => {
     await userEvent.click(plus);
     const after = (gDial.querySelector('input[type="number"]') as HTMLInputElement).value;
     expect(Number(after)).toBe(Number(before) + 1);
+  });
+
+  describe('History', () => {
+    it('renders a History section with range and metric pills, defaulting to Savings Rate', async () => {
+      renderScreen(<Health />);
+      await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
+      expect(screen.getByRole('button', { name: 'Month' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Year' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Savings Rate' }).className).toBe('pillActive');
+      expect(screen.getByRole('button', { name: 'Cash Runway' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Liquid Runway' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Debt Payoff' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Retirement Balance' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Years to FIRE' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Coast FIRE' })).toBeTruthy();
+    });
+
+    it('selecting a metric pill marks it active', async () => {
+      renderScreen(<Health />);
+      await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Retirement Balance' }));
+      expect(screen.getByRole('button', { name: 'Retirement Balance' }).className).toBe('pillActive');
+      expect(screen.getByRole('button', { name: 'Savings Rate' }).className).toBe('pill');
+    });
+
+    it('shows the live-assumptions caption only for Years to FIRE / Coast FIRE', async () => {
+      renderScreen(<Health />);
+      await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
+      expect(screen.queryByText(/today's growth\/withdrawal-rate assumptions/)).toBeNull();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Years to FIRE' }));
+      await waitFor(() => expect(screen.getByText(/today's growth\/withdrawal-rate assumptions/)).toBeTruthy());
+
+      await userEvent.click(screen.getByRole('button', { name: 'Coast FIRE' }));
+      expect(screen.getByText(/today's growth\/withdrawal-rate assumptions/)).toBeTruthy();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Retirement Balance' }));
+      expect(screen.queryByText(/today's growth\/withdrawal-rate assumptions/)).toBeNull();
+    });
+
+    it('switching the range pill marks the new range active', async () => {
+      renderScreen(<Health />);
+      await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Year' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Year' }).className).toBe('pillActive'));
+      expect(screen.getByRole('button', { name: 'Month' }).className).toBe('pill');
+    });
+
+    it('omits the History section when there is no balance history', async () => {
+      await db.execute('DELETE FROM balance_history');
+      renderScreen(<Health />);
+      await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
+      expect(screen.queryByText('History')).toBeNull();
+    });
+
+    it('renders above the Assumptions panel, not below it', async () => {
+      renderScreen(<Health />);
+      await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
+      const historyLabel = screen.getByText('History');
+      const assumptionsHeading = screen.getByText('Assumptions');
+      // Node.DOCUMENT_POSITION_FOLLOWING (4): assumptionsHeading comes after historyLabel.
+      expect(historyLabel.compareDocumentPosition(assumptionsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
   });
 });

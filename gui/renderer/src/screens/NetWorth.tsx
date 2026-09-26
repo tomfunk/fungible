@@ -20,27 +20,14 @@ import { useChartTheme, tooltipStyle, tooltipLabelStyle } from '../components/ch
 import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { SUBTYPE_DISPLAY, MONTHS } from '../constants.js';
+import { SUBTYPE_DISPLAY } from '../constants.js';
+import { periodLabel } from '../lib/periodLabel.js';
 import styles from './NetWorth.module.css';
 
 const NW_RANGES: NetWorthGranularity[] = ['week', 'month', 'quarter', 'year'];
 const NW_RANGE_LABELS: Record<string, string> = { day: 'Day', week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
 const typeLabel = (raw: string) => SUBTYPE_DISPLAY[raw] ?? raw;
-
-function periodLabel(period: string, range: NetWorthGranularity): string {
-  if (range === 'year') return period;
-  if (range === 'quarter') {
-    const [y, q] = period.split('-');
-    return `${q} ${y}`;
-  }
-  if (range === 'month') {
-    const [y, m] = period.split('-');
-    return `${MONTHS[parseInt(m) - 1]} ${y}`;
-  }
-  const [y, w] = period.split('-');
-  return `${w} ${y}`;
-}
 
 type SeriesKey = 'assets' | 'liabilities' | 'net';
 

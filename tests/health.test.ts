@@ -7,9 +7,10 @@ vi.mock('../core/db.js', async () => {
 
 import { db } from '../core/db.js';
 import {
-  yearsToFire, coastYears, loadHealthData,
+  yearsToFire, coastYears, loadHealthData, getHealthHistory,
   computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity,
 } from '../core/health.js';
+import { BASIS_LABEL } from '../core/dateUtils.js';
 
 describe('yearsToFire', () => {
   it('returns 0 when already at or above target', () => {
@@ -119,6 +120,114 @@ describe('loadHealthData — loan accounts as liabilities', () => {
     expect(h.cash).toBe(40000);              // depository only
     expect(h.liquid).toBe(190000);           // checking + taxable brokerage
     expect(h.retirement).toBe(500000);       // 401k
+  });
+});
+
+describe('getHealthHistory', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    await db.execute('DELETE FROM transactions');
+
+    const acct = (id: string, type: string, subtype: string) =>
+      db.execute({
+        sql: 'INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, ?, ?, ?, 0)',
+        args: [id, id, type, subtype],
+      });
+    const bal = (id: string, balance: number, date: string) =>
+      db.execute({
+        sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)',
+        args: [id, balance, date],
+      });
+    let txId = 0;
+    const tx = (date: string, category: string, amount: number) => {
+      txId++;
+      return db.execute({
+        sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+              VALUES (?, 'chk', ?, 'Test', ?, ?, 0, 0)`,
+        args: [`htx${txId}`, date, amount, category],
+      });
+    };
+
+    await acct('chk', 'depository', 'checking');
+    await acct('cc', 'credit', 'credit card');
+
+    // Three monthly balance snapshots.
+    await bal('chk', 10000, '2025-01-15');
+    await bal('chk', 12000, '2025-02-15');
+    await bal('chk', 15000, '2025-03-15');
+    await bal('cc', 500, '2025-01-15');
+    await bal('cc', 700, '2025-02-15');
+    await bal('cc', 300, '2025-03-15');
+
+    // Paycheck (inflow, amount negative) and Groceries (outflow, amount positive)
+    // spread across the three months, so the trailing-12mo asOf window has to
+    // actually bound by period -- not just always reflect all transactions.
+    await tx('2025-01-10', 'Paycheck', -3000);
+    await tx('2025-02-10', 'Paycheck', -3000);
+    await tx('2025-03-10', 'Paycheck', -3000);
+    await tx('2025-01-05', 'Groceries', 500);
+    await tx('2025-02-05', 'Groceries', 600);
+    await tx('2025-03-05', 'Groceries', 700);
+  });
+
+  it('returns one row per period, ordered ascending', async () => {
+    const rows = await getHealthHistory('month');
+    expect(rows.map((r) => r.period)).toEqual(['2025-01', '2025-02', '2025-03']);
+  });
+
+  it('bounds the trailing-12mo averages to each period asOf date, not the full range', async () => {
+    const rows = await getHealthHistory('month');
+    const [jan, feb, mar] = rows;
+
+    // January only sees the Jan 5/10 transactions (asOf = 2025-01-15).
+    expect(jan.asOf).toBe('2025-01-15');
+    expect(jan.monthlyIncome).toBeCloseTo(3000 / 12);
+    expect(jan.avgMonthlyExpenses).toBeCloseTo(500 / 12);
+
+    // February additionally sees the Feb 5/10 transactions.
+    expect(feb.asOf).toBe('2025-02-15');
+    expect(feb.monthlyIncome).toBeCloseTo(6000 / 12);
+    expect(feb.avgMonthlyExpenses).toBeCloseTo(1100 / 12);
+
+    // March sees all six.
+    expect(mar.asOf).toBe('2025-03-15');
+    expect(mar.monthlyIncome).toBeCloseTo(9000 / 12);
+    expect(mar.avgMonthlyExpenses).toBeCloseTo(1800 / 12);
+    expect(mar.monthlySavings).toBeCloseTo(9000 / 12 - 1800 / 12);
+  });
+
+  it('carries the balance-history snapshot fields per period, matching loadHealthData semantics', async () => {
+    const rows = await getHealthHistory('month');
+    const feb = rows.find((r) => r.period === '2025-02')!;
+    expect(feb.cash).toBe(12000);
+    expect(feb.liquid).toBe(12000);   // no brokerage account in this fixture
+    expect(feb.retirement).toBe(0);
+    expect(feb.totalDebt).toBe(700);
+    expect(feb.loanDebt).toBe(0);
+    expect(feb.netWorth).toBe(12000 - 700);
+  });
+
+  it('tags every row with the trailing-365d basis, same as loadHealthData', async () => {
+    const rows = await getHealthHistory('month');
+    for (const r of rows) {
+      expect(r.basis).toBe('trailing-365d');
+      expect(r.basisLabel).toBe(BASIS_LABEL['trailing-365d']);
+    }
+  });
+
+  it('caps to the most recent N periods when `periods` is given', async () => {
+    const rows = await getHealthHistory('month', 2);
+    expect(rows.map((r) => r.period)).toEqual(['2025-02', '2025-03']);
+  });
+
+  it('applies no minimum-history gating -- a period still gets an average even with less than 12mo of prior data', async () => {
+    const rows = await getHealthHistory('month');
+    // January has only ~2 weeks of transaction history behind it, yet still
+    // reports a (diluted) non-null average, consistent with
+    // getTrailing12moAverages' existing no-minimum behavior.
+    expect(rows[0].monthlyIncome).not.toBeNull();
+    expect(rows[0].monthlyIncome).toBeGreaterThan(0);
   });
 });
 
