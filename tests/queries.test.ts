@@ -9,7 +9,7 @@ import { db } from '../core/db.js';
 import {
   getRangeSummary,
   getFlexSummary,
-  getHiddenCategories,
+  getHiddenCategorySet,
   getRecentTransactions,
   getMerchantSummary,
   getSearchFilteredData,
@@ -18,10 +18,17 @@ import {
   hasAccounts,
   getTransactions,
   getNetWorthHistory,
+  getHealthBalanceHistory,
   getAccountsWithBalances,
   getLinkedAccounts,
   getLinkedItems,
+  groupAccountsByType,
+  buildTypeToAccountIds,
+  getAllTags,
+  getTagSummary,
+  type AccountBalance,
 } from '../core/queries.js';
+import { makeAccount } from './helpers/makeAccount.js';
 
 let txId = 0;
 async function insertTx(opts: {
@@ -56,6 +63,10 @@ async function insertTx(opts: {
 
 beforeEach(async () => {
   txId = 0;
+  // transaction_tags/tags first: they FK-reference transactions, and FK
+  // enforcement is on for the real sqlite3 driver this test db uses.
+  await db.execute('DELETE FROM transaction_tags');
+  await db.execute('DELETE FROM tags');
   await db.execute('DELETE FROM transactions');
   await db.execute('DELETE FROM hidden_categories');
   await db.execute('DELETE FROM categories');
@@ -63,15 +74,15 @@ beforeEach(async () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
-describe('getHiddenCategories', () => {
+describe('getHiddenCategorySet', () => {
   it('returns empty set when no hidden categories', async () => {
-    expect((await getHiddenCategories()).size).toBe(0);
+    expect((await getHiddenCategorySet()).size).toBe(0);
   });
 
   it('returns set of hidden category names', async () => {
     await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
     await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Loan Payment'] });
-    const hidden = await getHiddenCategories();
+    const hidden = await getHiddenCategorySet();
     expect(hidden.has('Transfer')).toBe(true);
     expect(hidden.has('Loan Payment')).toBe(true);
     expect(hidden.has('Shopping')).toBe(false);
@@ -392,6 +403,140 @@ describe('getSearchFilteredData merchant_name fallback', () => {
 
     const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'Lyft');
     expect(summary.expenses).toBeCloseTo(30);
+  });
+
+  it('an unsigned amount search matches by displayed magnitude, either direction', async () => {
+    await insertTx({ amount: 42.50, category: 'Shopping' });   // outflow, displays -$42.50
+    await insertTx({ amount: -42.50, category: 'Refund' });    // inflow, displays +$42.50
+    await insertTx({ amount: 100, category: 'Shopping' });     // distractor
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', '42.50');
+    expect(summary.expenses).toBeCloseTo(42.50);
+    expect(summary.income).toBeCloseTo(42.50);
+  });
+
+  it('a signed amount search matches only the matching direction', async () => {
+    await insertTx({ amount: 42.50, category: 'Shopping' }); // outflow, displays -$42.50
+    await insertTx({ amount: -42.50, category: 'Refund' });  // inflow, displays +$42.50
+
+    const negative = await getSearchFilteredData('2025-01-01', '2025-01-31', '-42.50');
+    expect(negative.summary.expenses).toBeCloseTo(42.50);
+    expect(negative.summary.income).toBe(0);
+
+    const positive = await getSearchFilteredData('2025-01-01', '2025-01-31', '+42.50');
+    expect(positive.summary.expenses).toBe(0);
+    expect(positive.summary.income).toBeCloseTo(42.50);
+  });
+
+  it('amount search is exact to the cent, not a prefix match', async () => {
+    await insertTx({ amount: 42.37, category: 'Shopping' });
+    await insertTx({ amount: 42, category: 'Grocery' });
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', '42');
+    expect(summary.expenses).toBeCloseTo(42);
+    expect(summary.byCategory.map((c) => c.category)).toEqual(['Grocery']);
+  });
+
+  it('exact date forms (YYYY-MM-DD, M/D/YYYY) match a single day', async () => {
+    await insertTx({ date: '2025-01-15', amount: 30, category: 'Travel' });
+    await insertTx({ date: '2025-01-16', amount: 99, category: 'Travel' });
+
+    expect((await getSearchFilteredData('2025-01-01', '2025-01-31', '2025-01-15')).summary.expenses).toBeCloseTo(30);
+    expect((await getSearchFilteredData('2025-01-01', '2025-01-31', '1/15/2025')).summary.expenses).toBeCloseTo(30);
+  });
+
+  it('a bare M/D date search matches that day across every year', async () => {
+    await insertTx({ date: '2024-01-15', amount: 15, category: 'A' });
+    await insertTx({ date: '2025-01-15', amount: 25, category: 'B' });
+    await insertTx({ date: '2025-01-16', amount: 999, category: 'C' }); // distractor
+
+    const { summary } = await getSearchFilteredData('2024-01-01', '2025-12-31', '1/15');
+    expect(summary.expenses).toBeCloseTo(40);
+    expect(summary.byCategory.map((c) => c.category).sort()).toEqual(['A', 'B']);
+  });
+
+  it('whole-month forms (YYYY-MM, "Month YYYY") match every day in that month', async () => {
+    await insertTx({ date: '2025-01-01', amount: 10, category: 'A' });
+    await insertTx({ date: '2025-01-31', amount: 20, category: 'B' });
+    await insertTx({ date: '2025-02-01', amount: 999, category: 'C' }); // distractor
+
+    expect((await getSearchFilteredData('2025-01-01', '2025-02-28', '2025-01')).summary.expenses).toBeCloseTo(30);
+    expect((await getSearchFilteredData('2025-01-01', '2025-02-28', 'January 2025')).summary.expenses).toBeCloseTo(30);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getAllTags — ignored/hidden-category filtering matches getTagSummary', () => {
+  async function makeTag(name: string): Promise<number> {
+    const res = await db.execute({ sql: 'INSERT INTO tags (name) VALUES (?)', args: [name] });
+    return Number(res.lastInsertRowid);
+  }
+  async function tagTx(transactionId: string, tagId: number) {
+    await db.execute({
+      sql: 'INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)',
+      args: [transactionId, tagId],
+    });
+  }
+
+  it('excludes an ignored transaction from inflow/outflow but keeps it in count', async () => {
+    await insertTx({ amount: 50, category: 'Shopping', ignored: 0 });
+    const visibleId = 'tx1';
+    await insertTx({ amount: 999, category: 'Shopping', ignored: 1 });
+    const ignoredId = 'tx2';
+
+    const tagId = await makeTag('reimbursable');
+    await tagTx(visibleId, tagId);
+    await tagTx(ignoredId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.count).toBe(2); // both tagged transactions still counted
+    expect(tag.outflow).toBeCloseTo(50); // the ignored one's 999 must not leak in
+
+    const summary = await getTagSummary('reimbursable');
+    expect(summary.expenses).toBeCloseTo(tag.outflow); // list and detail panel now agree
+  });
+
+  it('excludes a hidden-category transaction from inflow/outflow but keeps it in count', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories (category) VALUES (?)', args: ['Transfer'] });
+    await insertTx({ amount: 50, category: 'Shopping' });
+    const visibleId = 'tx1';
+    await insertTx({ amount: 999, category: 'Transfer' });
+    const hiddenId = 'tx2';
+
+    const tagId = await makeTag('reimbursable');
+    await tagTx(visibleId, tagId);
+    await tagTx(hiddenId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.count).toBe(2);
+    expect(tag.outflow).toBeCloseTo(50);
+
+    const summary = await getTagSummary('reimbursable');
+    expect(summary.expenses).toBeCloseTo(tag.outflow);
+  });
+
+  it('a tag whose only transaction is ignored still appears, with zero financials', async () => {
+    await insertTx({ amount: 999, category: 'Shopping', ignored: 1 });
+    const ignoredId = 'tx1';
+    const tagId = await makeTag('lonely');
+    await tagTx(ignoredId, tagId);
+
+    const [tag] = await getAllTags();
+    expect(tag.name).toBe('lonely');
+    expect(tag.count).toBe(1); // still tagged — not silently dropped
+    expect(tag.outflow).toBe(0);
+    expect(tag.inflow).toBe(0);
+    expect(tag.earliest).toBeNull();
+    expect(tag.latest).toBeNull();
+  });
+
+  it('a tag with zero transactions still appears as a 0-count row', async () => {
+    await makeTag('untouched');
+    const [tag] = await getAllTags();
+    expect(tag.name).toBe('untouched');
+    expect(tag.count).toBe(0);
+    expect(tag.outflow).toBe(0);
+    expect(tag.inflow).toBe(0);
   });
 });
 
@@ -715,6 +860,79 @@ describe('loan accounts count as liabilities in net worth', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+describe('getHealthBalanceHistory', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    const acct = (id: string, type: string, subtype: string, excluded = 0) =>
+      db.execute({
+        sql: 'INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, ?, ?, ?, ?)',
+        args: [id, id, type, subtype, excluded],
+      });
+    const bal = (id: string, balance: number, date: string) =>
+      db.execute({
+        sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)',
+        args: [id, balance, date],
+      });
+
+    await acct('chk', 'depository', 'checking');
+    await acct('brk', 'investment', 'brokerage');
+    await acct('401k', 'investment', '401k');
+    await acct('cc', 'credit', 'credit card');
+    await acct('mtg', 'loan', 'mortgage');
+    await acct('529', 'investment', '529', 1); // excluded
+
+    // Two monthly snapshots per account.
+    await bal('chk', 10000, '2025-01-15');
+    await bal('chk', 12000, '2025-02-15');
+    await bal('brk', 5000, '2025-01-15');
+    await bal('brk', 6000, '2025-02-15');
+    await bal('401k', 50000, '2025-01-15');
+    await bal('401k', 55000, '2025-02-15');
+    await bal('cc', 500, '2025-01-15');
+    await bal('cc', 700, '2025-02-15');
+    await bal('mtg', 300000, '2025-01-15');
+    await bal('mtg', 299000, '2025-02-15');
+    await bal('529', 999999, '2025-01-15'); // must not appear in any total
+  });
+
+  it('buckets one row per period with the latest balance per account, in one pass', async () => {
+    const rows = await getHealthBalanceHistory('month');
+    expect(rows.map((r) => r.period)).toEqual(['2025-01', '2025-02']);
+  });
+
+  it('splits cash/liquid/retirement/debt exactly like loadHealthData, per period', async () => {
+    const rows = await getHealthBalanceHistory('month');
+    const jan = rows.find((r) => r.period === '2025-01')!;
+    const feb = rows.find((r) => r.period === '2025-02')!;
+
+    expect(jan.cash).toBe(10000);              // depository only
+    expect(jan.liquid).toBe(15000);             // checking + taxable brokerage
+    expect(jan.retirement).toBe(50000);         // 401k
+    expect(jan.totalDebt).toBe(500);            // credit card only
+    expect(jan.loanDebt).toBe(300000);          // mortgage, reported separately
+    expect(jan.netWorth).toBe(10000 + 5000 + 50000 - 500 - 300000);
+    expect(jan.asOf).toBe('2025-01-15');
+
+    expect(feb.cash).toBe(12000);
+    expect(feb.liquid).toBe(18000);
+    expect(feb.retirement).toBe(55000);
+    expect(feb.totalDebt).toBe(700);
+    expect(feb.loanDebt).toBe(299000);
+    expect(feb.netWorth).toBe(12000 + 6000 + 55000 - 700 - 299000);
+    expect(feb.asOf).toBe('2025-02-15');
+  });
+
+  it('drops excluded accounts from every field', async () => {
+    const rows = await getHealthBalanceHistory('month');
+    for (const r of rows) {
+      expect(r.liquid).toBeLessThan(999999);
+      expect(r.retirement).toBeLessThan(999999);
+    }
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
 describe('getLinkedAccounts — awaiting-first-sync placeholders', () => {
   beforeEach(async () => {
     await db.execute('DELETE FROM plaid_items');
@@ -995,5 +1213,49 @@ describe('getLinkedItems', () => {
 
   it('returns nothing when no items are linked', async () => {
     expect(await getLinkedItems()).toEqual([]);
+  });
+});
+
+describe('groupAccountsByType / buildTypeToAccountIds', () => {
+  const identity = (raw: string) => raw;
+  const upper = (raw: string) => raw.toUpperCase();
+
+  const accounts: AccountBalance[] = [
+    makeAccount({ id: 'a1', type: 'depository', subtype: 'checking', balance: 1000 }),
+    makeAccount({ id: 'a2', type: 'depository', subtype: 'checking', balance: 500 }),
+    makeAccount({ id: 'a3', type: 'credit', subtype: null, balance: -200 }),
+    makeAccount({ id: 'a4', type: 'investment', subtype: 'brokerage', balance: 5000 }),
+  ];
+
+  it('groups by subtype (falling back to type), summing balances', () => {
+    expect(groupAccountsByType(accounts, identity)).toEqual([
+      { label: 'brokerage', balance: 5000 },
+      { label: 'checking', balance: 1500 },
+      { label: 'credit', balance: -200 },
+    ]);
+  });
+
+  it('sorts groups by descending balance', () => {
+    const result = groupAccountsByType(accounts, identity);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i - 1].balance).toBeGreaterThanOrEqual(result[i].balance);
+    }
+  });
+
+  it('applies the caller-supplied typeLabel to the grouping key', () => {
+    const result = groupAccountsByType(accounts, upper);
+    expect(result.map((r) => r.label)).toEqual(['BROKERAGE', 'CHECKING', 'CREDIT']);
+  });
+
+  it('buildTypeToAccountIds groups ids under the same key as groupAccountsByType', () => {
+    const map = buildTypeToAccountIds(accounts, identity);
+    expect(map.get('checking')).toEqual(['a1', 'a2']);
+    expect(map.get('credit')).toEqual(['a3']);
+    expect(map.get('brokerage')).toEqual(['a4']);
+  });
+
+  it('returns empty results for an empty account list', () => {
+    expect(groupAccountsByType([], identity)).toEqual([]);
+    expect(buildTypeToAccountIds([], identity).size).toBe(0);
   });
 });

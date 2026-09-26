@@ -113,6 +113,8 @@ afterEach(() => cleanup());
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 describe('Dashboard', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   function dash(overrides?: Parameters<typeof Dashboard>[0]) {
     return render(
       <W>
@@ -436,6 +438,44 @@ describe('Dashboard', () => {
       const f = frame(r);
       expect(f).toMatch(/May 2026/);
     });
+  });
+
+  it('S key syncs and shows a toast with the added count', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+      { itemId: 'item-a', added: 3, modified: 0, removed: 0, dupes: 0, skipped: false },
+    ]);
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('S');
+    expect(syncApi.syncAll).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(frame(r)).toContain('Synced — 3 new'));
+  });
+
+  it('S key shows a failure toast when sync rejects', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockRejectedValue(new Error('boom'));
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('Sync failed'));
+  });
+
+  // A successful sync must reload what's on screen, not just show a toast —
+  // simulate syncAll actually writing a new transaction, the way a real Plaid
+  // sync would, and confirm the category breakdown picks it up without any
+  // other user action (period/view change).
+  it('S key reloads the displayed category summary after sync adds data', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockImplementation(async () => {
+      await db.execute(
+        `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+         VALUES ('tx-synced', 'test-credit', '2026-05-12', 'New From Sync', 77.00, 'Synced Category', 0, 0)`,
+      );
+      return [{ itemId: 'item-a', added: 1, modified: 0, removed: 0, dupes: 0, skipped: false }];
+    });
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    expect(frame(r)).not.toContain('Synced Category');
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('Synced Category'));
   });
 });
 
@@ -816,6 +856,86 @@ describe('Transactions', () => {
     });
   });
 
+  it('recategorizing without a pattern offers to save a category rule, and [y] saves it', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[D'); // cycle Grocery → Dining, no Pattern typed
+    await waitFor(() => expect(frame(r)).toContain('← Dining  →'));
+    r.stdin.write('\r'); // save — plain recategorize, not saveAsRule
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Always categorize');
+      expect(f).toContain('Trader Joes');
+      expect(f).toContain('Dining');
+      expect(f).toContain('Yes, always');
+    });
+    r.stdin.write('y');
+    await waitFor(() => expect(frame(r)).toContain('Saved: category rule'));
+    const rule = await db.execute("SELECT category FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect((rule.rows[0] as unknown as { category: string }).category).toBe('Dining');
+  });
+
+  it('[n] on the rule prompt declines and creates no rule', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery'));
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[D'); // Grocery → Dining
+    await waitFor(() => expect(frame(r)).toContain('← Dining  →'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Always categorize'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Always categorize');
+      expect(f).toContain('Trader Joes'); // back on the list
+    });
+    const rule = await db.execute("SELECT id FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect(rule.rows.length).toBe(0);
+  });
+
+  it('recategorizing over a conflicting rule offers to update it instead, and [y] repoints it without losing its amount range or account scope', async () => {
+    // tx-groc-2 (Trader Joes) is on test-credit, amount 85.00 — the range and
+    // account below still match it, so the conflict is still detected, and
+    // acceptRuleSuggestion must carry these through rather than nulling them.
+    await db.execute(
+      "INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount, account_id) " +
+      "VALUES (10, 'name', 'Trader Joes', 'Bills & Utilities', 50.00, 200.00, 'test-credit')",
+    );
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery'));
+    r.stdin.write('\x1b[B'); // name → category
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    r.stdin.write('\x1b[C'); // cycle Grocery → Income, no Pattern typed
+    await waitFor(() => expect(frame(r)).toContain('← Income  →'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('already has a rule');
+      expect(f).toContain('Bills & Utilities');
+      expect(f).toContain('Update that rule to');
+      expect(f).toContain('Income');
+    });
+    r.stdin.write('y');
+    await waitFor(() => expect(frame(r)).toContain('Saved: category rule'));
+    const rules = await db.execute("SELECT category, min_amount, max_amount, account_id FROM category_rules WHERE pattern = 'Trader Joes'");
+    expect(rules.rows.length).toBe(1); // updated in place, not duplicated
+    const rule = rules.rows[0] as unknown as { category: string; min_amount: number; max_amount: number; account_id: string };
+    expect(rule.category).toBe('Income');
+    // The amount range and account scope must survive the update untouched.
+    expect(rule.min_amount).toBe(50);
+    expect(rule.max_amount).toBe(200);
+    expect(rule.account_id).toBe('test-credit');
+  });
+
   it('edit panel shows a Date field prefilled with the transaction date', async () => {
     const r = txns();
     await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
@@ -938,11 +1058,204 @@ describe('Transactions', () => {
     r.stdin.write('/'); // ...and list-mode keys work again rather than typing into the panel
     await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
   });
+
+  // ── Add transaction ([n]) ───────────────────────────────────────────────────
+
+  it('[n] opens the add-transaction panel with all fields', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Add transaction');
+      expect(f).toContain('Date');
+      expect(f).toContain('Name');
+      expect(f).toContain('Amount');
+      expect(f).toContain('Type');
+      expect(f).toContain('Account');
+      expect(f).toContain('Category');
+      // Account/category pickers default to the first row of each — seeded
+      // depository account and alphabetically-first category.
+      expect(f).toContain('← Test Checking');
+      expect(f).toContain('← Bills & Utilities');
+      expect(f).toContain('← Expense');
+    });
+  });
+
+  it('Esc cancels the add-transaction panel without creating a row', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    const before = (await db.execute('SELECT COUNT(*) as n FROM transactions')).rows[0] as unknown as { n: number };
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    for (const ch of 'Coffee') r.stdin.write(ch);
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Add transaction');
+      expect(f).toContain('Trader Joes');
+    });
+    const after = (await db.execute('SELECT COUNT(*) as n FROM transactions')).rows[0] as unknown as { n: number };
+    expect(after.n).toBe(before.n);
+  });
+
+  it('Enter on an empty Name shows a validation error and keeps the panel open', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    r.stdin.write('\r'); // Name is still empty — Date field is prefilled but that's not what's missing
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Name is required');
+      expect(f).toContain('Add transaction'); // panel still open
+    });
+  });
+
+  it('filling the form and Enter creates a manual, source=manual transaction with the signed amount', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    // Date field is active first, prefilled with today's real date — clear it
+    // and set one inside the May filter so the new row is visible after reload.
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f');
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD'));
+    for (const ch of '2026-05-20') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('2026-05-20'));
+    r.stdin.write('\x1b[B'); // date → name
+    await waitFor(() => expect(frame(r)).toContain('e.g. Coffee shop')); // Name field active & empty
+    for (const ch of 'Coffee Shop') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Coffee Shop'));
+    r.stdin.write('\x1b[B'); // name → amount
+    await waitFor(() => expect(frame(r)).toContain('0.00')); // Amount field active & empty
+    for (const ch of '12.50') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('12.50'));
+    // Type/Account/Category left at their defaults: Expense, Test Checking, Bills & Utilities.
+    r.stdin.write('\r'); // save
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Add transaction'); // panel closed
+      expect(f).toContain('Transaction added');
+      expect(f).toContain('Coffee Shop'); // reloaded list shows the new row
+    });
+    const row = (await db.execute(
+      "SELECT amount, source, account_id, category, date FROM transactions WHERE name = 'Coffee Shop'",
+    )).rows[0] as unknown as { amount: number; source: string; account_id: string; category: string; date: string };
+    expect(row.amount).toBe(12.5); // Expense → positive, matching fmt()'s convention
+    expect(row.source).toBe('manual');
+    expect(row.account_id).toBe('test-checking');
+    expect(row.category).toBe('Bills & Utilities');
+    expect(row.date).toBe('2026-05-20');
+  });
+
+  it('toggling Type to Income flips the stored sign to negative', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Add transaction'));
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f');
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD'));
+    for (const ch of '2026-05-20') r.stdin.write(ch);
+    r.stdin.write('\x1b[B'); // date → name
+    await waitFor(() => expect(frame(r)).toContain('e.g. Coffee shop'));
+    for (const ch of 'Refund') r.stdin.write(ch);
+    r.stdin.write('\x1b[B'); // name → amount
+    await waitFor(() => expect(frame(r)).toContain('0.00'));
+    for (const ch of '20') r.stdin.write(ch);
+    r.stdin.write('\x1b[B'); // amount → type
+    await waitFor(() => expect(frame(r)).toContain('← Expense'));
+    r.stdin.write('\x1b[C'); // → toggle Expense to Income
+    await waitFor(() => expect(frame(r)).toContain('← Income'));
+    r.stdin.write('\r'); // save
+    await waitFor(() => expect(frame(r)).toContain('Transaction added'));
+    const row = (await db.execute("SELECT amount FROM transactions WHERE name = 'Refund'")).rows[0] as unknown as { amount: number };
+    expect(row.amount).toBe(-20);
+  });
+
+  it('← → on the Account field cycles to the other seeded account', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('← Test Checking'));
+    r.stdin.write('\x1b[B'); // date → name
+    r.stdin.write('\x1b[B'); // name → amount
+    r.stdin.write('\x1b[B'); // amount → type
+    r.stdin.write('\x1b[B'); // type → account
+    await waitFor(() => expect(frame(r)).toContain('← Test Checking'));
+    r.stdin.write('\x1b[C'); // → cycle to the credit account
+    await waitFor(() => expect(frame(r)).toContain('← Test Visa'));
+  });
+
+  it('a manually-added row can be deleted with [x], same as a CSV row', async () => {
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, source)
+            VALUES ('tx-manual-1', 'test-checking', '2026-05-18', 'Hand-typed refund', -5.00, 'Income', 'manual')`,
+    });
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    // Search narrows the list to just this row, so it's unambiguously under
+    // the cursor without depending on sort order or row position.
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel')); // search bar active — 'n' in the query below must not hit the list's [n] add binding
+    for (const ch of 'Hand-typed') r.stdin.write(ch);
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Hand-typed refund');
+      expect(f).toContain('1 transactions');
+    });
+    r.stdin.write('x');
+    await waitFor(() => expect(frame(r)).not.toContain('Hand-typed refund'));
+    const row = await db.execute("SELECT id FROM transactions WHERE id = 'tx-manual-1'");
+    expect(row.rows.length).toBe(0);
+  });
+
+  it('[i] ignores/un-ignores a synced (non-manual) transaction', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row, source=null (seeded)
+    r.stdin.write('i');
+    await waitFor(() => expect(frame(r)).toContain('~Grocery')); // ignored marker on the category cell
+    r.stdin.write('i');
+    await waitFor(() => expect(frame(r)).not.toContain('~Grocery'));
+  });
+
+  it('[i] is a no-op on a manually-added row, and the hint line drops [i] ignore for it', async () => {
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, source)
+            VALUES ('tx-manual-1', 'test-checking', '2026-05-18', 'Hand-typed refund', -5.00, 'Income', 'manual')`,
+    });
+    // Ignoring a hand-typed row doesn't make sense — if it shouldn't count,
+    // delete it outright (issue: gate [i] off for source='manual', matching
+    // how GUI drops its ignore button for the same rows).
+    const r = txns({ showHints: true });
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
+    for (const ch of 'Hand-typed') r.stdin.write(ch);
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Hand-typed refund');
+      expect(f).toContain('1 transactions');
+    });
+    // Hint line no longer advertises [i] ignore once the selected row is manual.
+    expect(frame(r)).not.toContain('[i] ignore');
+    r.stdin.write('i');
+    await new Promise((res) => setTimeout(res, 50)); // nothing to waitFor — proving absence of a change
+    expect(frame(r)).not.toContain('~Hand-typed');
+    const row = (await db.execute(
+      "SELECT ignored FROM transactions WHERE id = 'tx-manual-1'",
+    )).rows[0] as unknown as { ignored: number };
+    expect(row.ignored).toBe(0);
+  });
 });
 
 // ── Trends ────────────────────────────────────────────────────────────────────
 
 describe('Trends', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   function trends(overrides?: Partial<Parameters<typeof Trends>[0]>) {
     return render(
       <W>
@@ -1108,6 +1421,46 @@ describe('Trends', () => {
       const f = frame(r);
       expect(f).toContain('No periods match');
     });
+  });
+
+  it('S key syncs and shows a toast with the added count', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+      { itemId: 'item-a', added: 5, modified: 0, removed: 0, dupes: 0, skipped: false },
+    ]);
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    r.stdin.write('S');
+    expect(syncApi.syncAll).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(frame(r)).toContain('Synced — 5 new'));
+  });
+
+  it('S key shows a failure toast when sync rejects', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockRejectedValue(new Error('boom'));
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('Sync failed'));
+  });
+
+  // A successful sync must reload what's on screen, not just show a toast —
+  // simulate syncAll actually writing a new transaction, the way a real Plaid
+  // sync would, and confirm the May period's expense total picks it up
+  // without any other user action (period/view change).
+  it('S key reloads displayed period totals after sync adds data', async () => {
+    vi.spyOn(syncApi, 'syncAll').mockImplementation(async () => {
+      await db.execute(
+        `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+         VALUES ('tx-synced', 'test-credit', '2026-05-12', 'New From Sync', 12345.67, 'Shopping', 0, 0)`,
+      );
+      return [{ itemId: 'item-a', added: 1, modified: 0, removed: 0, dupes: 0, skipped: false }];
+    });
+    const r = trends();
+    await waitFor(() => expect(frame(r)).toContain('May 2026'));
+    // Baseline May expenses (120 + 85 + 45 + 95 + 43.99) is 388.99; adding the
+    // synced 12,345.67 makes the period total 12,734.66.
+    expect(frame(r)).not.toContain('12,734.66');
+    r.stdin.write('S');
+    await waitFor(() => expect(frame(r)).toContain('12,734.66'));
   });
 });
 
@@ -1507,6 +1860,45 @@ describe('Tags', () => {
     await waitFor(() => expect(frame(r)).toContain('Tags'));
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
+  });
+
+  // A tag rarely represents actual income (e.g. a reimbursement is inflow,
+  // not income), so the detail view's KPI labels read as Inflow/Outflow
+  // rather than Income/Expenses.
+  it('Enter on a tag opens its detail view with Inflow/Outflow KPI labels', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Inflow');
+      expect(f).toContain('Outflow');
+    });
+  });
+
+  // Regression: the category breakdown intentionally NETS a refund against its
+  // category's spending (e.g. Amtrak $300 charge + $100 refund shows as $200
+  // Travel spend), but the headline Inflow/Outflow KPIs must stay gross — a
+  // reimbursement should show up as Inflow, not silently reduce Outflow.
+  it('Inflow/Outflow KPIs are gross, not netted within a category', async () => {
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-amtrak-charge', 'test-credit', '2026-05-05', 'Amtrak',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-amtrak-refund', 'test-credit', '2026-05-06', 'Amtrak Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-amtrak-charge', 1)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-amtrak-refund', 1)`,
+    ], 'write');
+
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Inflow'));
+
+    const f = frame(r);
+    // Gross: Outflow $300.00 (not netted down to $200.00), Inflow $100.00.
+    expect(f).toContain('300.00');
+    expect(f).toContain('100.00');
   });
 });
 
@@ -2921,6 +3313,109 @@ describe('Health', () => {
       expect(f).toContain('4,000'); // formatted value appears in dial
       expect(f).not.toContain('▊');
     });
+  });
+
+  // ── History mode ──────────────────────────────────────────────────────────
+  // 't' (not 'h' — that's App.tsx's global hints toggle) opens the full
+  // metric/range/pagination History drill-down directly (reusing NetWorth.tsx's
+  // period-bucketed bar/value list pattern). Esc (or 't' again) closes it,
+  // going straight back to the Snapshot view.
+
+  it("'t' opens the full History view directly (metric header, range tabs)", async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    expect(frame(r)).not.toContain('ASSUMPTIONS');
+    expect(frame(r)).toContain('Quarter'); // range tabs appear right away
+  });
+
+  it("Esc closes History and goes straight back to the Snapshot view", async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+  });
+
+  it('digit-nav is suppressed while History is open', async () => {
+    const onNavigate = vi.fn();
+    const r = render(<W><Health onNavigate={onNavigate} showHints={false} /></W>);
+    await waitFor(() => expect(frame(r)).toContain('Financial Health'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    r.stdin.write('1');
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('← → cycle through the seven chartable metrics, wrapping in both directions', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('\x1B[C'); // right
+    await waitFor(() => expect(frame(r)).toContain('History — Cash runway'));
+    r.stdin.write('\x1B[D'); // left back to the first metric
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    r.stdin.write('\x1B[D'); // left wraps to the last metric
+    await waitFor(() => expect(frame(r)).toContain('History — Coast FIRE'));
+  });
+
+  it('shows the "today\'s assumptions" caption only for the FIRE-projection metrics', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('History — Savings rate'));
+    expect(frame(r)).not.toContain('assumptions applied to past balances');
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1B[C'); // -> Years to FIRE
+    await waitFor(() => expect(frame(r)).toContain('History — Years to FIRE'));
+    expect(frame(r)).toContain("Using today's growth/withdrawal-rate assumptions applied to past balances.");
+    r.stdin.write('\x1B[C'); // -> Coast FIRE
+    await waitFor(() => expect(frame(r)).toContain('History — Coast FIRE'));
+    expect(frame(r)).toContain("Using today's growth/withdrawal-rate assumptions applied to past balances.");
+  });
+
+  it('[r] cycles the range, changing how periods are labeled', async () => {
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('May 2026')); // month range, seeded balance @ 2026-05-20
+    r.stdin.write('r'); // month -> quarter
+    await waitFor(() => expect(frame(r)).toContain('Q2 2026'));
+  });
+
+  it('renders a row per balance-history period once more than one exists', async () => {
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('test-checking', 4500.00, '2026-04-20')");
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Apr 2026');
+      expect(f).toContain('May 2026');
+    });
+  });
+
+  it('charts a raw retirement balance (fmtCompact, not runway/FIRE math)', async () => {
+    await db.execute(`INSERT INTO accounts (id, name, type, subtype, institution_name, mask)
+                       VALUES ('test-401k', 'Test 401k', 'investment', '401k', 'Test Bank', '0003')`);
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('test-401k', 50000.00, '2026-05-20')");
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1B[C'); // -> Retirement Balance
+    await waitFor(() => expect(frame(r)).toContain('History — Retirement Balance'));
+    await waitFor(() => expect(frame(r)).toContain('$50.0K'));
+  });
+
+  it('shows a fallback message when there is no balance history', async () => {
+    await db.execute('DELETE FROM balance_history');
+    const r = health();
+    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
+    r.stdin.write('t');
+    await waitFor(() => expect(frame(r)).toContain('No balance history yet.'));
   });
 });
 

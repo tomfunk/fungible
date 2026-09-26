@@ -127,7 +127,7 @@ export function Canvas() {
       <KeyHints hints="[1-9·0] screens   [/] history   [esc] close history" />
       <div className={styles.topBar}>
         <h1 className={styles.title}>Canvas</h1>
-        <button className={styles.historyBtn} onClick={() => setShowHistory((v) => !v)}>
+        <button className="ghostBtn" onClick={() => setShowHistory((v) => !v)}>
           {showHistory ? 'close history' : `history (${history.length})`}
         </button>
       </div>
@@ -264,7 +264,7 @@ export function CanvasView({ spec, historyId }: { spec: CanvasSpec; historyId?: 
       {visibleElements.map(({ el, i }) => {
         if (el.type === 'section') {
           return (
-            <h3 key={i} className={styles.sectionLabel}>
+            <h3 key={i} className={`sectionLabel ${styles.blockLabel}`}>
               {el.label}
             </h3>
           );
@@ -367,7 +367,7 @@ export function CanvasView({ spec, historyId }: { spec: CanvasSpec; historyId?: 
           if (!driverDial || points.length === 0) {
             return (
               <div key={i} className={styles.projectionSection}>
-                <h3 className={styles.sectionLabel}>{proj.label}</h3>
+                <h3 className={`sectionLabel ${styles.blockLabel}`}>{proj.label}</h3>
                 <p className="dim">No data available — check the driver dial's range.</p>
               </div>
             );
@@ -434,7 +434,7 @@ function ProjectionChart({
 
   return (
     <div className={styles.projectionSection}>
-      <h3 className={styles.sectionLabel}>{proj.label}</h3>
+      <h3 className={`sectionLabel ${styles.blockLabel}`}>{proj.label}</h3>
       <ResponsiveContainer width="100%" height={280}>
         <ComposedChart data={data} onClick={onChartClick} style={{ cursor: 'pointer' }}>
           <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
@@ -496,7 +496,7 @@ function ProjectionTable({
 }) {
   return (
     <div className={styles.projectionSection}>
-      <h3 className={styles.sectionLabel}>{proj.label}</h3>
+      <h3 className={`sectionLabel ${styles.blockLabel}`}>{proj.label}</h3>
       <table className={styles.projectionTable}>
         <thead>
           <tr>
@@ -613,7 +613,7 @@ function ListElement({
 
   return (
     <div className={styles.listSection}>
-      <h3 className={styles.sectionLabel}>{list.label}</h3>
+      <h3 className={`sectionLabel ${styles.blockLabel}`}>{list.label}</h3>
       {list.rows.map((row) => (
         <div key={row.id} className={styles.listRow}>
           <input

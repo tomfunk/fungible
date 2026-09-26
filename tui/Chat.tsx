@@ -187,7 +187,7 @@ export function Chat({
       <Box borderStyle="single" borderColor={C_DIM} paddingX={1}>
         <Text dimColor>agent  </Text>
         {noKey
-          ? <Text dimColor color={C_WARNING}>no API key — add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env</Text>
+          ? <Text dimColor color={C_WARNING}>no API key — add ANTHROPIC_API_KEY or OPENAI_API_KEY to ~/.fungible/.env</Text>
           : <Text dimColor>[ ` ] ask anything about your finances  <Text>({label})</Text></Text>
         }
       </Box>

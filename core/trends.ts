@@ -1,6 +1,6 @@
 import { db } from './db.js';
-import { MONTHS, addDays, weekLabel, type TrendsRange } from './dateUtils.js';
-import { buildSearchRe, UNCATEGORIZED } from './queries.js';
+import { MONTHS, addDays, weekLabel, generatePeriods, type TrendsRange } from './dateUtils.js';
+import { buildSearchMatcher, UNCATEGORIZED } from './queries.js';
 import { buildFilterClause, type Filter } from './filters.js';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -43,46 +43,17 @@ export async function generateAllPeriods(range: TrendsRange): Promise<Array<{ la
   const bounds = boundsResult.rows[0] as unknown as { minDate: string | null; maxDate: string | null };
   if (!bounds.minDate || !bounds.maxDate) return [];
 
-  const result: Array<{ label: string; from: string; to: string }> = [];
-
-  if (range === 'month') {
-    let y = parseInt(bounds.minDate.slice(0, 4));
-    let m = parseInt(bounds.minDate.slice(5, 7));
-    const endY = parseInt(bounds.maxDate.slice(0, 4));
-    const endM = parseInt(bounds.maxDate.slice(5, 7));
-    while (y < endY || (y === endY && m <= endM)) {
-      result.push({ label: `${MONTHS[m - 1]} ${y}`, from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-31` });
-      if (++m > 12) { m = 1; y++; }
-    }
-  } else if (range === 'quarter') {
-    let y = parseInt(bounds.minDate.slice(0, 4));
-    let q = Math.floor((parseInt(bounds.minDate.slice(5, 7)) - 1) / 3) + 1;
-    const endY = parseInt(bounds.maxDate.slice(0, 4));
-    const endQ = Math.floor((parseInt(bounds.maxDate.slice(5, 7)) - 1) / 3) + 1;
-    while (y < endY || (y === endY && q <= endQ)) {
-      result.push({ label: `Q${q} ${y}`, from: `${y}-${Q_FROM[q - 1]}-01`, to: `${y}-${Q_TO[q - 1]}-31` });
-      if (++q > 4) { q = 1; y++; }
-    }
-  } else if (range === 'year') {
-    let y = parseInt(bounds.minDate.slice(0, 4));
-    const endY = parseInt(bounds.maxDate.slice(0, 4));
-    while (y <= endY) {
-      result.push({ label: `${y}`, from: `${y}-01-01`, to: `${y}-12-31` });
-      y++;
-    }
-  } else {
+  if (range === 'week') {
+    // Align the start to the most recent Monday on/before the earliest transaction date,
+    // so week buckets match calendar weeks rather than starting mid-week.
     const startResult = await db.execute({
       sql: `SELECT date(?, '-' || ((CAST(strftime('%w', ?) AS INTEGER)+6)%7) || ' days') as ws`,
       args: [bounds.minDate, bounds.minDate],
     });
-    let current = (startResult.rows[0] as unknown as { ws: string }).ws;
-    while (current <= bounds.maxDate) {
-      const to = addDays(current, 6);
-      result.push({ label: weekLabel(current, to), from: current, to });
-      current = addDays(current, 7);
-    }
+    const start = (startResult.rows[0] as unknown as { ws: string }).ws;
+    return generatePeriods(range, start, bounds.maxDate);
   }
-  return result;
+  return generatePeriods(range, bounds.minDate, bounds.maxDate);
 }
 
 export async function getPeriodTotals(view: View, range: TrendsRange, filter?: Filter): Promise<PeriodRow[]> {
@@ -254,10 +225,10 @@ export async function getSearchPeriodTotals(search: string, range: TrendsRange, 
     args: f.args,
   });
   const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string; amount: number }[];
-  const re = buildSearchRe(search);
+  const matcher = buildSearchMatcher(search);
   const periodMap = new Map<string, { income: number; expenses: number }>();
   for (const row of rows) {
-    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    if (!matcher.test([row.display, row.merchant_name], Number(row.amount), row.date)) continue;
     const from = periodFrom(row.date, range);
     const existing = periodMap.get(from) ?? { income: 0, expenses: 0 };
     const amt = Number(row.amount);
@@ -282,17 +253,17 @@ export async function getSearchMatchingPeriods(
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
     sql: `
-    SELECT COALESCE(display_name, name) as display, merchant_name, date
+    SELECT COALESCE(display_name, name) as display, merchant_name, date, amount
     FROM transactions WHERE pending = 0 AND ignored = 0${f.clause}
   `,
     args: f.args,
   });
-  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string }[];
-  const re = buildSearchRe(search);
+  const rows = result.rows as unknown as { display: string; merchant_name: string | null; date: string; amount: number }[];
+  const matcher = buildSearchMatcher(search);
   const periods = new Set<string>();
   let count = 0;
   for (const row of rows) {
-    if (!re.test(row.display) && !(row.merchant_name ? re.test(row.merchant_name) : false)) continue;
+    if (!matcher.test([row.display, row.merchant_name], Number(row.amount), row.date)) continue;
     count++;
     periods.add(periodFrom(row.date, range));
   }

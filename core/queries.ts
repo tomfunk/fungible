@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { buildFilterClause, buildFilterConditions, type Filter } from './filters.js';
-import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
+import { BASIS_LABEL, type MetricBasis, parseSearchDate, isSearchDateAnyYear, type ParsedSearchDate } from './dateUtils.js';
+import { LIQUID_SUBTYPES, RETIREMENT_SUBTYPES, inClause } from './account-class.js';
 
 export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
@@ -77,9 +78,56 @@ export const TRAILING_12MO_AVERAGES_SQL = `
   )
 `;
 
-export async function getHiddenCategories(): Promise<Set<string>> {
-  const result = await db.execute('SELECT category FROM hidden_categories');
-  return new Set((result.rows as unknown as { category: string }[]).map((r) => r.category));
+/**
+ * Parameterized sibling of TRAILING_12MO_AVERAGES_SQL: same per-category
+ * netting logic (see summarizeBuckets/TRAILING_12MO_AVERAGES_SQL doc above),
+ * but bounded by an explicit `asOf` upper bound instead of `date('now', ...)`
+ * with no upper bound, so callers can ask "what would the trailing-12mo
+ * averages have been as of this past date". Used by getHealthHistory below,
+ * once per period -- this is NOT decomposable into a single GROUP-BY-month
+ * query, because the outflow>inflow netting is applied over the whole
+ * 12-month window per category, not per month (flooring at 0 per month would
+ * lose cross-month refund/reimbursement offsetting the whole-window version
+ * captures). TRAILING_12MO_AVERAGES_SQL / getTrailing12moAverages() are left
+ * untouched -- this is purely additive.
+ */
+export async function getTrailing12moTotalsAsOf(
+  asOf: string,
+): Promise<{ avgExpenses: number; avgIncome: number; avgSavings: number }> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        COALESCE(SUM(spend), 0) / 12.0            AS avg_expenses,
+        COALESCE(SUM(inc), 0) / 12.0              AS avg_income,
+        COALESCE(SUM(inc) - SUM(spend), 0) / 12.0 AS avg_savings
+      FROM (
+        SELECT
+          CASE WHEN category = '${UNCATEGORIZED}' THEN outflow
+               WHEN outflow > inflow THEN outflow - inflow ELSE 0 END AS spend,
+          CASE WHEN category = '${UNCATEGORIZED}' THEN inflow
+               WHEN inflow > outflow THEN inflow - outflow ELSE 0 END AS inc
+        FROM (
+          SELECT category,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)  AS outflow,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS inflow
+          FROM transactions
+          WHERE date >= date(?, '-12 months')
+            AND date <= ?
+            AND pending = 0 AND ignored = 0
+            AND category NOT IN (SELECT category FROM hidden_categories)
+            AND category != 'Transfer'
+          GROUP BY category
+        )
+      )
+    `,
+    args: [asOf, asOf],
+  });
+  const row = result.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
+  return {
+    avgExpenses: Number(row.avg_expenses),
+    avgIncome:   Number(row.avg_income),
+    avgSavings:  Number(row.avg_savings),
+  };
 }
 
 export async function getMonthlySummary(year: number, month: number): Promise<MonthlySummary> {
@@ -416,7 +464,7 @@ export async function getSearchFilteredData(
 ): Promise<{ summary: MonthlySummary; flexData: FlexSummary }> {
   const f = buildFilterClause(filter, 't');
   const result = await db.execute({
-    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.amount, t.category,
+    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.amount, t.date, t.category,
             COALESCE(c.flexibility, 'untagged') as flex
           FROM transactions t
           LEFT JOIN categories c ON c.name = t.category
@@ -425,10 +473,10 @@ export async function getSearchFilteredData(
             AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; amount: number; category: string; flex: string }[];
+  const rows = result.rows as unknown as { display: string; amount: number; date: string; category: string; flex: string }[];
 
-  const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display));
+  const matcher = buildSearchMatcher(search);
+  const matches = rows.filter((r) => matcher.test([r.display], Number(r.amount), r.date));
 
   // Accumulate per-category outflow/inflow, then apply the hybrid rule: real
   // categories net (refunds reduce them), Uncategorized splits by flow (outflow =
@@ -552,6 +600,21 @@ export type Tag = {
 };
 
 export async function getAllTags(): Promise<Tag[]> {
+  // Financial totals (inflow/outflow/earliest/latest) apply the same
+  // ignored/hidden-category filtering as getTagSummary/getRangeSummary, so
+  // the tag list and the tag detail panel agree on dollar amounts. The
+  // filter lives in the transactions JOIN's ON clause, not a WHERE clause,
+  // for two reasons: (1) a WHERE clause would drop tags with zero
+  // transactions entirely (this LEFT JOIN exists specifically so they still
+  // show up as a 0-count row), and (2) it must not touch `count`, which
+  // stays COUNT(tt.transaction_id) against the tags↔transaction_tags join —
+  // deliberately inclusive of ignored/hidden transactions, since it answers
+  // "how many transactions carry this tag" (a tag-management question, e.g.
+  // "can I safely delete/rename this tag"), not "how much visible spending
+  // does this tag represent" (what inflow/outflow answer). A transaction you
+  // ignored or whose category you hid is still tagged; excluding it from
+  // count would make an existing tag assignment silently disappear from the
+  // count on that basis alone.
   const result = await db.execute(`
     SELECT t.id, t.name, COUNT(tt.transaction_id) as count,
       COALESCE(SUM(CASE WHEN tx.amount < 0 THEN ABS(tx.amount) ELSE 0 END), 0) as inflow,
@@ -560,6 +623,8 @@ export async function getAllTags(): Promise<Tag[]> {
     FROM tags t
     LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
     LEFT JOIN transactions tx ON tx.id = tt.transaction_id
+      AND tx.ignored = 0
+      AND tx.category NOT IN (SELECT category FROM hidden_categories)
     GROUP BY t.id ORDER BY t.name
   `);
   return (result.rows as unknown as Tag[]).map((r) => ({
@@ -584,18 +649,81 @@ export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
   // Gates the delete affordance: a Plaid-owned row comes back on the next sync,
-  // so offering to delete it would be a lie. NULL only for rows written before
-  // the column existed, which initDb backfills on the next launch.
-  source: 'plaid' | 'csv' | null;
+  // so offering to delete it would be a lie. csv and manual rows are freely
+  // deletable — manual because Thomas typed it, csv because a re-import is
+  // the user's to redo. NULL only for rows written before the column existed,
+  // which initDb backfills on the next launch.
+  source: 'plaid' | 'csv' | 'manual' | null;
   // The bank's posting date, retained by setTransactionDate when a transaction
   // is reattributed to another period; NULL unless `date` has been overridden.
   // UI uses it to show "reattributed from X" and offer restore-to-posting-date.
   original_date: string | null;
 };
 
-export function buildSearchRe(search: string): RegExp {
+function buildSearchRe(search: string): RegExp {
   try { return new RegExp(search, 'i'); }
   catch { return new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
+}
+
+// Parses "$42.50", "-42.5", "+42", "42" etc. Deliberately strict ("parses
+// cleanly") so free text like "42 Main St" or "4/2" never gets treated as an
+// amount search. Kept separate from the date grammar so "4/2" (a date) can
+// never also look like an amount.
+const AMOUNT_TOKEN = /^([+-])?\$?(\d+(?:\.\d{1,2})?)$/;
+type ParsedSearchAmount = { value: number; sign: 1 | -1 | null };
+
+function parseSearchAmount(search: string): ParsedSearchAmount | null {
+  const m = AMOUNT_TOKEN.exec(search.trim());
+  if (!m) return null;
+  return { value: Number(m[2]), sign: m[1] === '-' ? -1 : m[1] === '+' ? 1 : null };
+}
+
+// To-the-cent equality, in integer cents, to dodge float noise (42.1 - 42 etc).
+const toCents = (n: number) => Math.round(n * 100);
+
+// amount is stored in the Plaid sign convention (positive = outflow); fmtTxAmount
+// (fmt.ts) displays -amount so spending reads as "-$X" and income as "+$X". A
+// signed search term ("-42.50") is matched against that displayed, signed value
+// so the user never needs to know the storage convention. An unsigned term
+// ("42.50") matches either direction -- magnitude alone, sign ignored -- since
+// fmtTxAmount's *magnitude* is just Math.abs(amount) regardless of stored sign.
+function amountMatches(parsed: ParsedSearchAmount, amount: number): boolean {
+  if (parsed.sign === null) return toCents(Math.abs(amount)) === toCents(parsed.value);
+  const displayed = -amount;
+  return toCents(displayed) === toCents(parsed.sign * parsed.value);
+}
+
+function dateMatches(parsed: ParsedSearchDate, date: string): boolean {
+  if (isSearchDateAnyYear(parsed)) {
+    const month = Number(date.slice(5, 7));
+    const day = Number(date.slice(8, 10));
+    return month === parsed.month && day === parsed.day;
+  }
+  return date >= parsed.from && date <= parsed.to;
+}
+
+// Shared search predicate for getTransactions/countSearchMatches/
+// getSearchFilteredData (here) and getSearchPeriodTotals/getSearchMatchingPeriods
+// (trends.ts). Precedence: a search string that parses cleanly as an amount or
+// a date is matched ONLY on that (not OR'd with name text — "42" should not
+// also match a transaction merely named "42nd Street Deli"); anything else
+// falls back to the existing case-insensitive name/merchant regex, unchanged.
+// `candidates` lets each call site keep its own text-fallback nuance (e.g.
+// getTransactions also tries the raw `name` when display_name is absent)
+// instead of forcing one shape on every row.
+export type SearchMatcher = {
+  test(candidates: (string | null)[], amount: number, date: string): boolean;
+};
+
+export function buildSearchMatcher(search: string): SearchMatcher {
+  const amountToken = parseSearchAmount(search);
+  if (amountToken) return { test: (_candidates, amount) => amountMatches(amountToken, amount) };
+
+  const dateToken = parseSearchDate(search);
+  if (dateToken) return { test: (_candidates, _amount, date) => dateMatches(dateToken, date) };
+
+  const re = buildSearchRe(search);
+  return { test: (candidates) => candidates.some((c) => c !== null && re.test(c)) };
 }
 
 export async function getTransactions(filters: {
@@ -627,10 +755,13 @@ export async function getTransactions(filters: {
   });
   const rows = result.rows as unknown as TxRow[];
   if (!search) return rows.slice(0, 200);
-  const re = buildSearchRe(search);
+  const matcher = buildSearchMatcher(search);
   return rows.filter((r) =>
-    re.test(r.display_name ?? r.merchant_name ?? r.name) ||
-    (!r.display_name && r.merchant_name !== null && re.test(r.name)),
+    matcher.test(
+      [r.display_name ?? r.merchant_name ?? r.name, !r.display_name && r.merchant_name !== null ? r.name : null],
+      Number(r.amount),
+      r.date,
+    ),
   ).slice(0, 200);
 }
 
@@ -640,13 +771,13 @@ export async function countSearchMatches(
   if (!search) return { count: 0, expenses: 0 };
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
-    sql: `SELECT COALESCE(display_name, merchant_name, name) as display, amount
+    sql: `SELECT COALESCE(display_name, merchant_name, name) as display, amount, date
           FROM transactions WHERE date >= ? AND date <= ?${f.clause} AND pending = 0 AND ignored = 0`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; amount: number }[];
-  const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display));
+  const rows = result.rows as unknown as { display: string; amount: number; date: string }[];
+  const matcher = buildSearchMatcher(search);
+  const matches = rows.filter((r) => matcher.test([r.display], Number(r.amount), r.date));
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
@@ -843,6 +974,13 @@ export async function getImportTargets(): Promise<ImportTarget[]> {
 
 export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
 
+// Pure account-grouping helpers (TypeBalance, groupAccountsByType,
+// buildTypeToAccountIds) live in account-rollup.ts (DB-free, so the gui
+// renderer bundle can import them without pulling in db.ts) -- re-exported
+// here so existing `from './queries.js'` imports (tui) keep working
+// unchanged.
+export { type TypeBalance, groupAccountsByType, buildTypeToAccountIds } from './account-rollup.js';
+
 // SQLite has no boolean type — integer 0/1 columns are coerced here.
 const toBool = (v: unknown): boolean => Number(v) === 1;
 export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };
@@ -900,6 +1038,92 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
     assets:      Number(r.assets),
     liabilities: Number(r.liabilities),
     net_worth:   Number(r.net_worth),
+  }));
+}
+
+export type HealthBalancePeriod = {
+  period: string;
+  asOf: string; // latest balance_history date actually present in this period bucket
+  cash: number;
+  liquid: number;
+  retirement: number;
+  totalDebt: number;
+  loanDebt: number;
+  netWorth: number;
+};
+
+/**
+ * Per-period cash/liquid/retirement/debt/net-worth snapshot, one windowed
+ * query for every period -- same ROW_NUMBER()-partitioned-CTE shape as
+ * getNetWorthHistory (each period takes each account's latest balance dated
+ * on or before the end of that period), just broken out into the finer
+ * buckets loadHealthData's current-snapshot queries use. Unlike the
+ * trailing-12mo averages, this IS a simple point-in-time read per period, so
+ * it costs one query total regardless of period count -- see
+ * getTrailing12moTotalsAsOf for why that one can't be folded in here too.
+ */
+export async function getHealthBalanceHistory(
+  granularity: NetWorthGranularity = 'month',
+): Promise<HealthBalancePeriod[]> {
+  const periodExpr: Record<NetWorthGranularity, string> = {
+    day:     `strftime('%Y-%m-%d', date)`,
+    week:    `strftime('%Y-W%W', date)`,
+    month:   `strftime('%Y-%m', date)`,
+    quarter: `strftime('%Y', date) || '-Q' || ((CAST(strftime('%m', date) AS INTEGER) + 2) / 3)`,
+    year:    `strftime('%Y', date)`,
+  };
+  const expr = periodExpr[granularity];
+  const liquidSubtypes     = inClause(LIQUID_SUBTYPES);
+  const retirementSubtypes = inClause(RETIREMENT_SUBTYPES);
+  const result = await db.execute(`
+    WITH period_last AS (
+      SELECT
+        ${expr} AS period,
+        account_id,
+        date,
+        balance,
+        ROW_NUMBER() OVER (PARTITION BY ${expr}, account_id ORDER BY date DESC) AS rn
+      FROM balance_history
+    )
+    SELECT
+      pl.period,
+      MAX(pl.date) AS as_of,
+      SUM(CASE WHEN a.type = 'depository' THEN pl.balance ELSE 0 END) AS cash,
+      SUM(CASE
+        WHEN a.type = 'depository'
+          OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, '')) IN (${liquidSubtypes}))
+        THEN pl.balance ELSE 0
+      END) AS liquid,
+      SUM(CASE
+        WHEN a.type = 'investment' AND LOWER(COALESCE(a.subtype, '')) IN (${retirementSubtypes})
+        THEN pl.balance ELSE 0
+      END) AS retirement,
+      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS total_debt,
+      SUM(CASE WHEN a.type = 'loan' THEN pl.balance ELSE 0 END) AS loan_debt,
+      SUM(CASE
+        WHEN a.type IN ('depository', 'investment') THEN pl.balance
+        WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
+        WHEN a.type IN ('credit', 'loan') THEN -pl.balance
+        ELSE 0
+      END) AS net_worth
+    FROM period_last pl
+    JOIN accounts a ON a.id = pl.account_id
+    WHERE pl.rn = 1 AND a.excluded = 0
+    GROUP BY pl.period
+    ORDER BY pl.period ASC
+  `);
+  return (result.rows as unknown as {
+    period: string; as_of: string; cash: number; liquid: number; retirement: number;
+    total_debt: number; loan_debt: number; net_worth: number;
+  }[]).map((r) => ({
+    period:     r.period,
+    asOf:       r.as_of,
+    cash:       Number(r.cash),
+    liquid:     Number(r.liquid),
+    retirement: Number(r.retirement),
+    totalDebt:  Number(r.total_debt),
+    loanDebt:   Number(r.loan_debt),
+    netWorth:   Number(r.net_worth),
   }));
 }
 

@@ -5,7 +5,7 @@ import { useStatus } from '../hooks/useStatus.js';
 import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { Modal } from '../components/Modal.js';
+import { NameModal } from '../components/NameModal.js';
 import { fmt, fmtSigned, fmtSpan, sortTags, type TagSort } from '../../../../core/fmt.js';
 import type { Tag } from '../../../../core/queries.js';
 import { useFilter } from '../hooks/useFilter.js';
@@ -70,7 +70,7 @@ export function Tags() {
         <h1 className={styles.title}>Tags</h1>
         <input
           ref={searchRef}
-          className={styles.search}
+          className={`underline ${styles.search}`}
           placeholder="Filter tags…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -86,7 +86,7 @@ export function Tags() {
           <option value="recent">Sort: most recent</option>
           <option value="oldest">Sort: oldest</option>
         </select>
-        <button className={styles.addBtn} onClick={() => setAddOpen(true)}>
+        <button className={`ghostBtn ${styles.addBtn}`} onClick={() => setAddOpen(true)}>
           + New tag
         </button>
       </div>
@@ -102,9 +102,6 @@ export function Tags() {
                   <th className={styles.th}>Tag</th>
                   <th className={styles.th}>Txns</th>
                   <th className={styles.th}>Span</th>
-                  <th className={styles.th}>Inflow</th>
-                  <th className={styles.th}>Outflow</th>
-                  <th className={styles.th} />
                 </tr>
               </thead>
               <tbody>
@@ -117,31 +114,6 @@ export function Tags() {
                     <td className={styles.tdName}>{t.name}</td>
                     <td className="num dim">{t.count}</td>
                     <td className="dim">{fmtSpan(t.earliest, t.latest)}</td>
-                    <td className="num pos">{fmt(t.inflow)}</td>
-                    <td className="num neg">{fmt(t.outflow)}</td>
-                    <td className={styles.tdActions}>
-                      <button
-                        className={styles.rowBtn}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenameTag(t);
-                        }}
-                      >
-                        rename
-                      </button>
-                      <button
-                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          await api.tags.deleteTag(t.id);
-                          if (selected?.id === t.id) setSelectedName(null);
-                          showStatus(`Deleted "${t.name}"`);
-                          reload();
-                        }}
-                      >
-                        delete
-                      </button>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -154,35 +126,55 @@ export function Tags() {
             <p className="dim">Select a tag to see its breakdown.</p>
           ) : (
             <>
-              <div className={styles.detailHeader}>
-                <h2>
+              <div className="sectionHead">
+                <h2 className={styles.tagHeading}>
                   <span className="accent"># {selected.name}</span>
                 </h2>
-                <button className={styles.rowBtnVisible} onClick={() => drillToTransactions(selected.name)}>
-                  all transactions →
-                </button>
+                <div className={styles.detailActions}>
+                  <button className="ghostBtn" onClick={() => setRenameTag(selected)}>
+                    rename
+                  </button>
+                  <button
+                    className={`ghostBtn ${styles.dangerBtn}`}
+                    onClick={async () => {
+                      await api.tags.deleteTag(selected.id);
+                      setSelectedName(null);
+                      showStatus(`Deleted "${selected.name}"`);
+                      reload();
+                    }}
+                  >
+                    delete
+                  </button>
+                  <button className="ghostBtn" onClick={() => drillToTransactions(selected.name)}>
+                    all transactions →
+                  </button>
+                </div>
               </div>
               {summary && (
                 <>
-                  <div className={styles.statRow}>
-                    <div>
-                      <div className={styles.statLabel}>Income</div>
-                      <div className="num pos">{fmt(summary.income)}</div>
+                  <div className="kpiStrip">
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Inflow</div>
+                      {/* Gross, from getAllTags (selected), not summary.income:
+                          getTagSummary nets refunds against spend within each
+                          real category (correct for the breakdown below, but
+                          it would hide a reimbursement inside Outflow here). */}
+                      <div className="num pos kpiFigure">{fmt(selected.inflow)}</div>
                     </div>
-                    <div>
-                      <div className={styles.statLabel}>Expenses</div>
-                      <div className="num neg">{fmt(summary.expenses)}</div>
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Outflow</div>
+                      <div className="num neg kpiFigure">{fmt(selected.outflow)}</div>
                     </div>
-                    <div>
-                      <div className={styles.statLabel}>Net</div>
-                      <div className={`num ${summary.net >= 0 ? 'pos' : 'neg'}`}>{fmtSigned(summary.net)}</div>
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Net</div>
+                      <div className={`num kpiFigure ${summary.net >= 0 ? 'pos' : 'neg'}`}>{fmtSigned(summary.net)}</div>
                     </div>
-                    <div>
-                      <div className={styles.statLabel}>Txns</div>
-                      <div className="num">{selected.count}</div>
+                    <div className="kpiCell">
+                      <div className="kpiLabel">Txns</div>
+                      <div className="num kpiFigure">{selected.count}</div>
                     </div>
                   </div>
-                  <h3 className={styles.sectionLabel}>Spending by category</h3>
+                  <h3 className={`sectionLabel ${styles.blockLabel}`}>Spending by category</h3>
                   {summary.byCategory.length === 0 ? (
                     <p className="dim">No expense data for this tag.</p>
                   ) : (
@@ -197,9 +189,9 @@ export function Tags() {
                             <td className={styles.tdName}>{row.category}</td>
                             <td className="num warn">{fmt(row.total)}</td>
                             <td className={styles.tdBar}>
-                              <div className={styles.barTrack}>
+                              <div className="barTrack">
                                 <div
-                                  className={styles.barFill}
+                                  className="barFill"
                                   style={{ width: `${Math.min(100, (row.total / maxCategorySpend) * 100)}%` }}
                                 />
                               </div>
@@ -220,6 +212,7 @@ export function Tags() {
         <NameModal
           title="New tag"
           initial=""
+          placeholder="Tag name"
           onClose={() => setAddOpen(false)}
           onSave={async (name) => {
             await api.tags.createTag(name);
@@ -234,6 +227,7 @@ export function Tags() {
         <NameModal
           title={`Rename "${renameTag.name}"`}
           initial={renameTag.name}
+          placeholder="Tag name"
           onClose={() => setRenameTag(null)}
           onSave={async (name) => {
             await api.tags.renameTag(renameTag.id, name);
@@ -247,41 +241,5 @@ export function Tags() {
 
       {statusEl}
     </div>
-  );
-}
-
-function NameModal({
-  title,
-  initial,
-  onClose,
-  onSave,
-}: {
-  title: string;
-  initial: string;
-  onClose: () => void;
-  onSave: (name: string) => void;
-}) {
-  const [name, setName] = useState(initial);
-  return (
-    <Modal title={title} onClose={onClose}>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && name.trim()) onSave(name.trim());
-        }}
-        placeholder="Tag name"
-        autoFocus
-        className={styles.modalInput}
-      />
-      <div className={styles.modalActions}>
-        <button className={styles.btnSecondary} onClick={onClose}>
-          Cancel
-        </button>
-        <button className={styles.btnPrimary} onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
-          Save
-        </button>
-      </div>
-    </Modal>
   );
 }

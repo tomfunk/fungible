@@ -44,6 +44,11 @@ describe('GUI App navigation', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Net Worth' })).toBeTruthy());
   });
 
+  it('sidebar footer shows the app version from the bridge', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('v0.0.0-test')).toBeTruthy());
+  });
+
   it('digit keys navigate when the keys toggle is on', async () => {
     localStorage.setItem('fungible-keys', 'on');
     render(<App />);
@@ -62,21 +67,27 @@ describe('GUI App navigation', () => {
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy();
   });
 
-  it('keys toggle shows digit badges and hint lines', async () => {
+  it('keys toggle (in Settings > Appearance) shows digit badges and hint lines', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     expect(screen.queryByText(/\[1-9·0\] screens/)).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /Keys off/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('switch', { name: 'Keyboard shortcut hints' }));
     await waitFor(() => expect(screen.getByText(/\[1-9·0\] screens/)).toBeTruthy());
     const transactionsNav = screen.getByRole('button', { name: /Transactions/ });
     expect(transactionsNav.textContent).toContain('2');
   });
 
-  it('theme toggle flips the document theme and persists', async () => {
+  it('theme select (in Settings > Appearance) flips the document theme and persists', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     expect(document.documentElement.dataset.theme).toBe('dark');
-    await userEvent.click(screen.getByRole('button', { name: /Dark/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+    const themeSelect = screen.getByRole('combobox', { name: 'Theme' });
+    expect((themeSelect as HTMLSelectElement).value).toBe('dark');
+    await userEvent.selectOptions(themeSelect, 'light');
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(localStorage.getItem('fungible-theme')).toBe('light');
   });
@@ -97,23 +108,56 @@ describe('GUI App navigation', () => {
     expect(localStorage.getItem('fungible-palette')).toBe('deuteranopia');
   });
 
+  it('row density defaults to "compact" and selecting balanced sets the document density and persists', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
+    expect(document.documentElement.dataset.density).toBe('compact');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+
+    const densitySelect = screen.getByRole('combobox', { name: 'Row density' });
+    expect((densitySelect as HTMLSelectElement).value).toBe('compact');
+
+    await userEvent.selectOptions(densitySelect, 'balanced');
+    expect(document.documentElement.dataset.density).toBe('balanced');
+    expect(localStorage.getItem('fungible-density')).toBe('balanced');
+  });
+
+  it('an explicit stored row density preference overrides the "compact" default', async () => {
+    // A user who chose "Balanced" before (or after) the default flipped to
+    // "Compact" keeps exactly what they picked — only a never-set preference
+    // should see the new default.
+    localStorage.setItem('fungible-density', 'balanced');
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
+    expect(document.documentElement.dataset.density).toBe('balanced');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
+    expect((screen.getByRole('combobox', { name: 'Row density' }) as HTMLSelectElement).value).toBe('balanced');
+  });
+
   it('FilterBar appears on filterable screens only', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
-    expect(screen.getByText(/⚲ Filter/)).toBeTruthy();
+    expect(screen.getByText(/⌕ filter/)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
-    expect(screen.queryByText(/⚲ Filter/)).toBeNull();
+    expect(screen.queryByText(/⌕ filter/)).toBeNull();
   });
 
   it('filter panel constrains categories and carries across screens', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
-    await userEvent.click(screen.getByText(/⚲ Filter/));
+    await userEvent.click(screen.getByText(/⌕ filter/));
     await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Grocery' })).toBeTruthy());
     await userEvent.click(screen.getByRole('checkbox', { name: 'Grocery' }));
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    await waitFor(() => expect(screen.getByText(/Filter: 4 categories/)).toBeTruthy());
+    // 5 seeded real categories + the Uncategorized sentinel now folded into
+    // this same checklist (was a dedicated Transactions quick-filter button)
+    // = 6 in the universe; unchecking just Grocery leaves 5 selected.
+    await waitFor(() => expect(screen.getByText(/filter: 5 categories/)).toBeTruthy());
     // carries to Transactions: Grocery rows excluded
     await userEvent.click(screen.getByRole('button', { name: 'Transactions' }));
     await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
@@ -128,7 +172,7 @@ describe('GUI App navigation', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Transactions' }));
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
-    await userEvent.click(screen.getByText(/⚲ Filter/));
+    await userEvent.click(screen.getByText(/⌕ filter/));
     await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Grocery' })).toBeTruthy());
     // Toggle Grocery off — the underlying transaction list should repaint
     // before Apply is clicked (debounce is 120ms, well under waitFor's window).
@@ -142,14 +186,14 @@ describe('GUI App navigation', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Transactions' }));
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
-    await userEvent.click(screen.getByText(/⚲ Filter/));
+    await userEvent.click(screen.getByText(/⌕ filter/));
     await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Grocery' })).toBeTruthy());
     await userEvent.click(screen.getByRole('checkbox', { name: 'Grocery' }));
     await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     // Preview clears on unmount → list reverts to the committed (empty) filter.
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
-    expect(screen.queryByText(/Filter: \d+ categories/)).toBeNull();
+    expect(screen.queryByText(/filter: \d+ categories/)).toBeNull();
   });
 
   it('agent drawer collapsed bar shows no-key state and expands', async () => {

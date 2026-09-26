@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
-import { rebuildDisplayNames } from './rename.js';
+import { rebuildDisplayNames, applyNameRulesWithRules, loadNameRules } from './rename.js';
 import { applyCategoriesToAll } from './categorize.js';
 import { validateRegex } from './rule-utils.js';
+import { applyTagRules } from './tag-rules.js';
 
 /**
  * True when `s` is a real calendar date in YYYY-MM-DD form. Used by both the
@@ -19,6 +21,78 @@ export function isValidIsoDate(s: string): boolean {
 }
 
 // ── Single-transaction mutations ───────────────────────────────────────────────
+
+/**
+ * Insert a hand-entered transaction — for a real bank transaction Plaid's
+ * `transactionsSync` never reports (a genuine feed gap, not something our
+ * sync lost), typed in directly.
+ *
+ * id: `manual-<uuid>`, parallel to the `manual-<timestamp>` namespace
+ * `createManualAccount` already uses for manual accounts, and distinct from
+ * `source`, which is the actual signal everything else reads.
+ *
+ * category is required and always written to both `category` and
+ * `manual_category` — same as `setTransactionCategory` — so it's pinned from
+ * the moment it's created and never overwritten by rule application. Because
+ * category is always supplied, this deliberately does NOT fall through to
+ * `categorizeWithRules` the way sync/CSV import do for feed-sourced rows.
+ *
+ * Still runs name rules and tag rules, same as a synced row, so a manual
+ * entry isn't a second-class citizen for renaming/tagging.
+ *
+ * `accountId` is checked against `accounts` before inserting and rejected if
+ * it doesn't currently exist — there's no enforced FK, so a typo'd id would
+ * otherwise silently orphan the row. This is only about creation time: once
+ * a manual row exists, its account can later be deleted out from under it
+ * the same as any other transaction's, and the rest of the system already
+ * tolerates that (dedup.ts's CANDIDATE_SQL uses a LEFT JOIN to accounts for
+ * exactly this reason) — nothing extra is needed here for that case.
+ */
+export async function addTransaction(input: {
+  accountId: string;
+  date: string;
+  name: string;
+  amount: number;
+  category: string;
+  merchantName?: string;
+}): Promise<string> {
+  const { accountId, date, amount, category } = input;
+  const name = input.name.trim();
+  const merchantName = input.merchantName?.trim() || null;
+
+  if (!isValidIsoDate(date)) {
+    throw new Error(`Invalid transaction date "${date}": expected YYYY-MM-DD.`);
+  }
+  if (!name) {
+    throw new Error('Transaction name is required.');
+  }
+  if (!category) {
+    throw new Error('Transaction category is required.');
+  }
+
+  const acct = await db.execute({ sql: 'SELECT 1 FROM accounts WHERE id = ?', args: [accountId] });
+  if (acct.rows.length === 0) {
+    throw new Error(`No account with id ${accountId}.`);
+  }
+
+  const id = `manual-${randomUUID()}`;
+  const nameRules = await loadNameRules();
+  const displayName = applyNameRulesWithRules(nameRules, name, amount, accountId);
+
+  await db.execute({
+    sql: `INSERT INTO transactions
+            (id, account_id, date, name, merchant_name, amount, category, raw_category,
+             pending, manual_category, display_name, source, import_id, dedup_key)
+          VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, 'manual', NULL, NULL)`,
+    args: [
+      id, accountId, date, name, merchantName, amount, category,
+      category, displayName !== name ? displayName : null,
+    ],
+  });
+
+  await applyTagRules({ txIds: [id] });
+  return id;
+}
 
 export async function setTransactionCategory(id: string, category: string): Promise<void> {
   await db.execute({

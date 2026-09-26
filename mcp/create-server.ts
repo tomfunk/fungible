@@ -1,8 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { executeTool, WRITE_TOOLS } from '../core/tools.js';
-import { loadCanvasContext } from '../core/canvas-agent.js';
-import { buildPriorCanvasesSection } from '../core/canvas-history.js';
+import { buildCanvasContextSections } from '../core/canvas-history.js';
 
 export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServer {
   async function run(name: string, input: Record<string, unknown>) {
@@ -116,6 +115,22 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       ignore: z.boolean().describe('true to ignore, false to un-ignore'),
     },
     (input) => run('ignore_transaction', input),
+  );
+
+  // ── add_transaction ─────────────────────────────────────────────────────────
+
+  server.tool(
+    'add_transaction',
+    'Hand-enter a transaction Plaid never reported — a genuine gap in the bank sync, not something this app lost. Use list_accounts to get the account ID.',
+    {
+      account_id:    z.string().describe('Account ID to add the transaction to (from list_accounts)'),
+      date:          z.string().describe('Transaction date, YYYY-MM-DD'),
+      name:          z.string().describe('Transaction name/description'),
+      amount:        z.number().describe('Signed amount: positive for an outflow/expense, negative for an inflow/income'),
+      category:      z.string().describe('Category to assign'),
+      merchant_name: z.string().optional().describe('Merchant name, if different from the transaction name'),
+    },
+    (input) => run('add_transaction', input),
   );
 
   // ── list_rules ──────────────────────────────────────────────────────────────
@@ -404,12 +419,9 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       prompt: z.string().describe('Natural language question or scenario, e.g. "how long to pay off my mortgage?" or "what if I save $500 more per month?"'),
     },
     async ({ prompt }) => {
-      const { system, tool } = await loadCanvasContext();
+      const sections = await buildCanvasContextSections(prompt);
       const text = [
-        `## User prompt\n${prompt}`,
-        buildPriorCanvasesSection(prompt),
-        `## Canvas instructions\n${system}`,
-        `## render_canvas tool schema\n${JSON.stringify(tool, null, 2)}`,
+        ...sections,
         `Now generate the CanvasSpec JSON by calling render_canvas.`,
       ].filter(Boolean).join('\n\n');
       return { content: [{ type: 'text' as const, text }] };

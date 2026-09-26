@@ -2,28 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
-  setTransactionDisplayName, deleteTransaction,
+  setTransactionDisplayName, deleteTransaction, addTransaction,
   setTransactionDate, clearTransactionDate,
   upsertCategoryRule, upsertNameRule,
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
+import { suggestRuleForTransaction, saveCategoryRule, type RuleSuggestion } from '../core/rules.js';
 import { syncAll } from '../core/sync.js';
 import {
   getTagOptions, getTransactionTagIds, getOrCreateTag,
   addTagToTransaction, removeTagFromTransaction, addTagToTransactions,
   type TagOption,
 } from '../core/tags.js';
-import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
-import { getTransactions, getAllCategories, getDataBounds, getLastSyncedAt, type TxRow, type SortMode } from '../core/queries.js';
+import { getTransactions, getAllCategories, getAllRules, getDataBounds, getLastSyncedAt, getLinkedAccounts, type TxRow, type SortMode, type LinkedAccount } from '../core/queries.js';
 import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { handleNavKey } from './nav.js';
-import { Divider } from './fmt.js';
-import { fmtTimeAgo } from '../core/fmt.js';
-import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
+import { Divider, padTruncate } from './fmt.js';
+import { fmtTimeAgo, fmtTxAmount } from '../core/fmt.js';
+import { useTerminalWidth, MONTHS, C_POSITIVE, C_WARNING, C_MANUAL, C_ACCENT } from './ui.js';
 import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
@@ -34,8 +34,9 @@ import { useSetTyping } from './TypingContext.js';
 type Tx = TxRow;
 
 
-type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all';
+type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all' | 'rule-prompt' | 'add';
 type EditField = 'name' | 'category' | 'date' | 'pattern' | 'type';
+type AddField = 'date' | 'name' | 'amount' | 'type' | 'account' | 'category';
 
 /** Reattributed dates are always stored as ISO YYYY-MM-DD; reject anything else before calling core. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -48,16 +49,6 @@ const SORT_LABEL: Record<SortMode, string> = {
   'name-asc':      'name ↑', 'name-desc':     'name ↓',
   'category-asc':  'category ↑', 'category-desc': 'category ↓',
 };
-
-function fmt(amount: number) {
-  const s = `$${Math.abs(amount).toFixed(2)}`;
-  return amount < 0 ? `+${s}` : `-${s}`;
-}
-
-function truncate(s: string, n: number) {
-  return s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n);
-}
-
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
@@ -85,6 +76,25 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [editCatCursor, setEditCatCursor] = useState(0);
   const [editPattern, setEditPattern] = useState('');
   const [editMatchType, setEditMatchType] = useState<'name' | 'regex'>('name');
+
+  // Inline "always categorize as…?" prompt shown after a plain manual
+  // recategorize (no Pattern typed — that path goes through saveAsRule
+  // instead, which is already an explicit rule save).
+  const [ruleSuggestion, setRuleSuggestion] = useState<RuleSuggestion | null>(null);
+
+  // Add-transaction panel state. Amount is entered as a bare magnitude plus a
+  // separate Expense/Income toggle rather than a signed number — typing "-42.50"
+  // to mean income is exactly backwards from every other amount shown on this
+  // screen (fmt() shows a negative stored amount as income), so the sign is
+  // computed at submit time instead of asked for directly.
+  const [addField, setAddField] = useState<AddField>('date');
+  const [addDate, setAddDate] = useState('');
+  const [addName, setAddName] = useState('');
+  const [addAmount, setAddAmount] = useState('');
+  const [addType, setAddType] = useState<'expense' | 'income'>('expense');
+  const [addAccounts, setAddAccounts] = useState<LinkedAccount[]>([]);
+  const [addAccountCursor, setAddAccountCursor] = useState(0);
+  const [addCategoryCursor, setAddCategoryCursor] = useState(0);
 
   // Tag panel state. The applied-tag set is kept together with the transaction
   // it was read for: the panel acts on whatever row the cursor is on, and that
@@ -121,9 +131,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const setTyping = useSetTyping();
   useEffect(() => {
     const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all'
-      || (mode === 'edit' && (editField === 'name' || editField === 'pattern' || editField === 'date'));
+      || (mode === 'edit' && (editField === 'name' || editField === 'pattern' || editField === 'date'))
+      || (mode === 'add' && (addField === 'name' || addField === 'date' || addField === 'amount'));
     setTyping(isTextInput);
-  }, [mode, editField]);
+  }, [mode, editField, addField]);
 
   const selected = txs[cursor];
 
@@ -143,6 +154,61 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       setEditField('name');
       setMode('edit');
     });
+  }
+
+  // Accounts a manually-entered transaction can post against: excludes
+  // excluded=1 accounts (same convention as the rest of the app) and the
+  // manual-* net-worth-only asset accounts (house, etc. — createManualAccount
+  // in core/accounts.ts) since those don't carry real transactions.
+  function eligibleAddAccounts(accts: LinkedAccount[]): LinkedAccount[] {
+    return accts.filter((a) => !a.excluded && !a.id.startsWith('manual-'));
+  }
+
+  function openAdd() {
+    void Promise.all([getAllCategories(), getLinkedAccounts()]).then(([cats, accts]) => {
+      const eligible = eligibleAddAccounts(accts);
+      if (eligible.length === 0) {
+        showStatus('No accounts to add a transaction to — link or import one first', 4000);
+        return;
+      }
+      setCategories(cats);
+      setAddAccounts(eligible);
+      setAddDate(new Date().toISOString().slice(0, 10));
+      setAddName('');
+      setAddAmount('');
+      setAddType('expense');
+      setAddAccountCursor(0);
+      setAddCategoryCursor(0);
+      setAddField('date');
+      setMode('add');
+    });
+  }
+
+  async function submitAdd() {
+    const name = addName.trim();
+    const dateStr = addDate.trim();
+    const magnitude = parseFloat(addAmount);
+    const account = addAccounts[addAccountCursor];
+    const category = categories[addCategoryCursor];
+
+    if (!name) { showStatus('Name is required', 3000); return; }
+    if (!ISO_DATE_RE.test(dateStr)) { showStatus('Invalid date — use YYYY-MM-DD', 3000); return; }
+    if (!Number.isFinite(magnitude) || magnitude <= 0) { showStatus('Enter an amount greater than 0', 3000); return; }
+    if (!account) { showStatus('No account selected', 3000); return; }
+    if (!category) { showStatus('No category selected', 3000); return; }
+
+    // Stored convention (matches fmt() above): positive = outflow/expense,
+    // negative = inflow/income.
+    const amount = addType === 'expense' ? magnitude : -magnitude;
+
+    try {
+      await addTransaction({ accountId: account.id, date: dateStr, name, amount, category });
+      showStatus('Transaction added');
+      setMode('list');
+      load(search);
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to add transaction', 4000);
+    }
   }
 
   function openTagPanel() {
@@ -204,6 +270,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     const nameChanged = newDisplay.length > 0;
     const catChanged = newCat !== selected.category;
     const dateChanged = newDate.length > 0 && newDate !== selected.date;
+    const txId = selected.id;
+    const oldCategory = selected.category;
 
     if (dateChanged) {
       if (!ISO_DATE_RE.test(newDate)) {
@@ -229,8 +297,57 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (nameChanged || catChanged || dateChanged) {
       showStatus(dateChanged && !nameChanged && !catChanged ? `Date set to ${newDate}` : 'Transaction updated');
     }
+
+    // Plain manual recategorize with no Pattern typed — offer to turn it into
+    // a standing rule instead of silently dropping back to the list.
+    if (catChanged) {
+      const suggestion = await suggestRuleForTransaction(txId, oldCategory, newCat);
+      if (suggestion) {
+        setRuleSuggestion(suggestion);
+        setMode('rule-prompt');
+        load(search, true);
+        return;
+      }
+    }
+
     setMode('list');
     load(search, true);
+  }
+
+  async function acceptRuleSuggestion() {
+    if (!ruleSuggestion) { setMode('list'); return; }
+    try {
+      let count: number;
+      if (ruleSuggestion.conflictingRule) {
+        // saveCategoryRule does a full UPDATE — fetch the existing rule's
+        // amount range / account scope so accepting the suggestion only
+        // repoints its category, rather than silently wiping those fields.
+        const conflicting = ruleSuggestion.conflictingRule;
+        const existing = (await getAllRules()).find((r) => r.id === conflicting.id);
+        count = await saveCategoryRule({
+          pattern: conflicting.pattern,
+          matchType: conflicting.matchType,
+          category: ruleSuggestion.newCategory,
+          minAmount: existing?.min_amount ?? null,
+          maxAmount: existing?.max_amount ?? null,
+          accountId: existing?.account_id ?? null,
+          editingId: conflicting.id,
+        });
+      } else {
+        count = await upsertCategoryRule(ruleSuggestion.pattern, ruleSuggestion.matchType, ruleSuggestion.newCategory);
+      }
+      showStatus(`Saved: category rule (${count} updated)`);
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to save rule', 4000);
+    }
+    setRuleSuggestion(null);
+    setMode('list');
+    load(search, true);
+  }
+
+  function declineRuleSuggestion() {
+    setRuleSuggestion(null);
+    setMode('list');
   }
 
   async function saveAsRule() {
@@ -305,14 +422,30 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   useInput((input, key) => {
     if (mode === 'search') {
       if (key.escape) { setSearchInput(''); setSearch(''); setMode('list'); return; }
-      if (key.return) { setSearch(searchInput); setMode('list'); return; }
+      // search already tracks searchInput in lockstep on every keystroke below
+      // (live filter-as-you-type), so Enter only needs to leave search mode —
+      // it must NOT re-derive search from the closured searchInput here: if
+      // several keystrokes (e.g. a paste, or a fast scripted burst) land in the
+      // same tick as Enter, this closure's searchInput can still be the value
+      // from before those keystrokes were applied, silently reverting the
+      // just-typed query back to a stale one.
+      if (key.return) { setMode('list'); return; }
       if (key.backspace || key.delete) {
-        const next = searchInput.slice(0, -1);
-        setSearchInput(next); setSearch(next); return;
+        // Functional update so back-to-back keystrokes in one tick each see the
+        // previous one's result instead of racing on the same stale closure.
+        setSearchInput((s) => {
+          const next = s.slice(0, -1);
+          setSearch(next);
+          return next;
+        });
+        return;
       }
       if (input && !key.ctrl && !key.meta) {
-        const next = searchInput + input;
-        setSearchInput(next); setSearch(next);
+        setSearchInput((s) => {
+          const next = s + input;
+          setSearch(next);
+          return next;
+        });
       }
       return;
     }
@@ -405,6 +538,42 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       return;
     }
 
+    if (mode === 'add') {
+      const ADD_FIELDS: AddField[] = ['date', 'name', 'amount', 'type', 'account', 'category'];
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) { void submitAdd(); return; }
+      if (key.upArrow) { setAddField((f) => ADD_FIELDS[Math.max(0, ADD_FIELDS.indexOf(f) - 1)]); return; }
+      if (key.downArrow) { setAddField((f) => ADD_FIELDS[Math.min(ADD_FIELDS.length - 1, ADD_FIELDS.indexOf(f) + 1)]); return; }
+      if (addField === 'date') {
+        if (key.backspace || key.delete) { setAddDate((d) => d.slice(0, -1)); return; }
+        // Only the characters an ISO date is made of, matching editDate's gate.
+        if (input && !key.ctrl && !key.meta && /^[0-9-]+$/.test(input)) { setAddDate((d) => d + input); return; }
+      } else if (addField === 'name') {
+        if (key.backspace || key.delete) { setAddName((n) => n.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setAddName((n) => n + input); return; }
+      } else if (addField === 'amount') {
+        if (key.backspace || key.delete) { setAddAmount((a) => a.slice(0, -1)); return; }
+        // Digits and a decimal point only — sign comes from the Type toggle,
+        // not typed here.
+        if (input && !key.ctrl && !key.meta && /^[0-9.]$/.test(input)) { setAddAmount((a) => a + input); return; }
+      } else if (addField === 'type') {
+        if (key.leftArrow || key.rightArrow) { setAddType((t) => t === 'expense' ? 'income' : 'expense'); return; }
+      } else if (addField === 'account') {
+        if (key.leftArrow) { setAddAccountCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setAddAccountCursor((c) => Math.min(addAccounts.length - 1, c + 1)); return; }
+      } else if (addField === 'category') {
+        if (key.leftArrow) { setAddCategoryCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setAddCategoryCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      }
+      return;
+    }
+
+    if (mode === 'rule-prompt') {
+      if (input === 'y' || input === 'Y') { void acceptRuleSuggestion(); return; }
+      if (input === 'n' || input === 'N' || key.escape) { declineRuleSuggestion(); return; }
+      return;
+    }
+
     if (mode === 'list') {
       if (input === 's') { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
       // Pass active search to adjacent screens (1=dashboard, 3=trends)
@@ -445,6 +614,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         return;
       }
       if (input === '/') { setMode('search'); return; }
+      if (input === 'n') { openAdd(); return; }
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
       if (input === 'u') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({ ...sharedFilter, categories: ['Uncategorized'] }); }
@@ -477,7 +647,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search, true);
         return;
       }
-      if (input === 'i' && selected) toggleIgnored();
+      // A hand-typed row has nothing else feeding its totals to hide from —
+      // "ignore" only makes sense for a row that would otherwise show up from
+      // a sync/import. Delete it outright instead (already scoped to
+      // csv|manual below).
+      if (input === 'i' && selected && selected.source !== 'manual') toggleIgnored();
       if (input === 'I' && txs.length > 0) {
         const target = !selected?.ignored;
         setIgnoredBulk(txs.map((t) => t.id), target);
@@ -485,7 +659,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search, true);
         return;
       }
-      if (input === 'x' && selected?.source === 'csv') {
+      if (input === 'x' && (selected?.source === 'csv' || selected?.source === 'manual')) {
         deleteTransaction(selected.id);
         load(search);
         return;
@@ -567,7 +741,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  ${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  ${selected?.source !== 'manual' ? '[i] ignore  ' : ''}${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
           : '[/] search'}
       </Text>
 
@@ -596,27 +770,34 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         const isSelected = tx.id === selected?.id;
         const isPinned = !!tx.manual_category;
         const isIgnored = !!tx.ignored;
+        // Hand-entered row (not a manual *category* override — the whole
+        // transaction was typed in, not synced/imported): the entire row goes
+        // C_MANUAL, matching the purple already used for a manual category
+        // override and a reattributed date. Amount's sign color stays
+        // independent below — it's a separate signal (money in vs. out) worth
+        // keeping even on a manual row.
+        const isManualRow = tx.source === 'manual';
         const hasTags = !!tx.tag_names;
         return (
           <Box key={tx.id} flexDirection="column">
             <SelectableRow selected={isSelected}>
-              <Text color={isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
+              <Text color={isManualRow ? C_MANUAL : isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
                 {tx.date}{tx.original_date ? <Text color={C_MANUAL}>*</Text> : null}
               </Text>
-              <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW).padEnd(descW)}</Text>
+              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored}>{padTruncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
-                {fmt(tx.amount).padStart(10)}
+                {fmtTxAmount(tx.amount).padStart(10)}
               </Text>
               <Text
-                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : isPinned ? C_MANUAL : undefined}
+                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : (isPinned || isManualRow) ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
               >
-                {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
+                {padTruncate('  ' + (isIgnored ? '~' : '') + tx.category, catW)}
               </Text>
             </SelectableRow>
             {hasTags && isSelected && (
               <Box paddingLeft={14}>
-                <Text color={C_ACCENT}>{truncate('# ' + tx.tag_names, inner - 14)}</Text>
+                <Text color={C_ACCENT}>{padTruncate('# ' + tx.tag_names, inner - 14)}</Text>
               </Box>
             )}
           </Box>
@@ -724,6 +905,51 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
           <Box marginTop={1}>
             <Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text>
+          </Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'add' && (
+        <ModalPanel borderColor={C_MANUAL}>
+          <Text bold>Add transaction</Text>
+
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            <EditTextField label="Date" labelWidth={12} active={addField === 'date'} value={addDate} color={C_WARNING} placeholder="YYYY-MM-DD" emptyText="—" />
+            <EditTextField label="Name" labelWidth={12} active={addField === 'name'} value={addName} color={C_WARNING} placeholder="e.g. Coffee shop" emptyText="—" />
+            <EditTextField label="Amount" labelWidth={12} active={addField === 'amount'} value={addAmount} color={C_WARNING} placeholder="0.00" emptyText="—" />
+            <EditToggleField label="Type" labelWidth={12} active={addField === 'type'} value={addType === 'expense' ? 'Expense' : 'Income'} />
+            <EditToggleField
+              label="Account" labelWidth={12} active={addField === 'account'}
+              value={addAccounts[addAccountCursor] ? (addAccounts[addAccountCursor].nickname ?? addAccounts[addAccountCursor].name) : '—'}
+            />
+            <EditToggleField label="Category" labelWidth={12} active={addField === 'category'} value={categories[addCategoryCursor] ?? '—'} />
+          </Box>
+
+          <Box marginTop={1}>
+            <Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text>
+          </Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'rule-prompt' && ruleSuggestion && (
+        <ModalPanel borderColor={C_MANUAL}>
+          {ruleSuggestion.conflictingRule ? (
+            <Text bold color={C_MANUAL}>
+              <Text color={C_ACCENT}>{ruleSuggestion.pattern}</Text> already has a rule categorizing it as <Text color={C_ACCENT}>{ruleSuggestion.conflictingRule.category}</Text>. Update that rule to <Text color={C_ACCENT}>{ruleSuggestion.newCategory}</Text> instead?
+            </Text>
+          ) : (
+            <Text bold color={C_MANUAL}>
+              Always categorize <Text color={C_ACCENT}>{ruleSuggestion.pattern}</Text> as <Text color={C_ACCENT}>{ruleSuggestion.newCategory}</Text>?
+            </Text>
+          )}
+          {ruleSuggestion.matchCount - 1 > 0 && (
+            <Box marginTop={1}>
+              <Text dimColor>(would also apply to {ruleSuggestion.matchCount - 1} other transaction{ruleSuggestion.matchCount - 1 !== 1 ? 's' : ''})</Text>
+            </Box>
+          )}
+          <Box marginTop={1} gap={4}>
+            <Text color={C_MANUAL}>[y] Yes, always</Text>
+            <Text dimColor>[n] / Esc  No, just this once</Text>
           </Box>
         </ModalPanel>
       )}

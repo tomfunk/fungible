@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useStdout } from 'ink';
+import type { SeverityLevel } from '../core/severity.js';
 
 export const CURSOR = '▊';
 
@@ -99,6 +100,20 @@ export function applyTheme(name: string): void {
   C_ACCENT = theme.accent;
   C_DIM = theme.dim;
   FLEX_COLORS = { ...theme.flex };
+}
+
+/**
+ * Maps the shared core/severity.ts vocabulary onto the terminal's semantic
+ * color tokens. Reads the current C_* bindings at call time, so it picks up
+ * theme changes the same way a direct `color={C_POSITIVE}` reference does.
+ */
+export function severityColor(level: SeverityLevel): string {
+  switch (level) {
+    case 'good':    return C_POSITIVE;
+    case 'neutral': return C_NEUTRAL;
+    case 'caution': return C_WARNING;
+    case 'bad':     return C_NEGATIVE;
+  }
 }
 
 export function useTerminalWidth(): number {

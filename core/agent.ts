@@ -8,8 +8,7 @@ import { streamResponse, makeAssistantMessage, detectProvider, getProviderModel 
 import type { Message, ContentBlock, ToolDef } from './llm-provider.js';
 import { APP_CONTEXT } from './agent-context.js';
 import { TOOL_DEFS, WRITE_TOOLS, describeToolCall, executeTool } from './tools.js';
-import { loadCanvasContext } from './canvas-agent.js';
-import { buildPriorCanvasesSection } from './canvas-history.js';
+import { buildCanvasContextSections } from './canvas-history.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,12 +108,9 @@ async function dispatchTool(
   // Load canvas context — agent generates spec, then calls show_canvas
   if (name === 'generate_canvas') {
     const prompt = String(input.prompt ?? '');
-    const { system, tool } = await loadCanvasContext();
+    const sections = await buildCanvasContextSections(prompt);
     return [
-      `## User prompt\n${prompt}`,
-      buildPriorCanvasesSection(prompt),
-      `## Canvas instructions\n${system}`,
-      `## render_canvas tool schema\n${JSON.stringify(tool, null, 2)}`,
+      ...sections,
       `Now generate the CanvasSpec JSON following these instructions, then call show_canvas({ spec: JSON.stringify(spec), prompt: ${JSON.stringify(prompt)} }).`,
     ].filter(Boolean).join('\n\n');
   }

@@ -30,6 +30,11 @@ export function validateRegex(pattern: string): void {
   }
 }
 
+/** Returns true if the regex matches a row's name or merchant_name. */
+export function matchesNameOrMerchant(re: RegExp, row: { name: string; merchant_name: string | null }): boolean {
+  return re.test(row.name) || (row.merchant_name ? re.test(row.merchant_name) : false);
+}
+
 /** Count how many transactions match a pattern (name substring or regex). */
 export async function countPatternMatches(pattern: string, matchType: 'name' | 'regex'): Promise<number> {
   if (!pattern) return 0;
@@ -44,7 +49,7 @@ export async function countPatternMatches(pattern: string, matchType: 'name' | '
     const re = new RegExp(pattern, 'i');
     const result = await db.execute('SELECT name, merchant_name FROM transactions');
     const rows = result.rows as unknown as { name: string; merchant_name: string | null }[];
-    return rows.filter((r) => re.test(r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).length;
+    return rows.filter((r) => matchesNameOrMerchant(re, r)).length;
   } catch { return 0; }
 }
 

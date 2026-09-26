@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ResponsiveContainer,
   ComposedChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -38,12 +39,17 @@ export function Trends() {
 
   const [views, setViews] = useState<View[]>([]);
   const [viewIdx, setViewIdx] = useState(0);
+  // Bar vs. line rendering for the same underlying period data — a per-screen
+  // display preference, not app state worth persisting across visits (no
+  // existing pattern elsewhere in the app for that; Dashboard's view/range
+  // toggles are local state too), so this resets to the 'bar' default on
+  // every remount, same as everything else on this screen.
+  const [chartType, setChartType] = useState<'bar' | 'line'>('bar');
   const [range, setRange] = useState<TrendsRange>(() => {
     const r = txFilter.range;
     return r && (TRENDS_RANGES as string[]).includes(r) ? (r as TrendsRange) : 'month';
   });
-  const [searchInput, setSearchInput] = useState(txFilter.search ?? '');
-  const [search, setSearch] = useState(txFilter.search ?? '');
+  const { filter: sharedFilter, setFilter, search, setSearch, focusSearch } = useFilter();
 
   useEffect(() => {
     void api.trends.buildTrendViews().then((loaded) => {
@@ -56,9 +62,15 @@ export function Trends() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Seed the shared search box from a nav param once per mount — see the
+  // matching comment in Dashboard.tsx.
+  useEffect(() => {
+    if (txFilter.search) setSearch(txFilter.search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const view = views[viewIdx] as View | undefined;
 
-  const { filter: sharedFilter, setFilter } = useFilter();
   const rows = useQuery(
     () => (view ? api.trends.getPeriodTotals(view, range, sharedFilter) : Promise.resolve([])),
     [viewIdx, range, views, sharedFilter],
@@ -67,10 +79,9 @@ export function Trends() {
     () => (search ? api.trends.getSearchPeriodTotals(search, range, sharedFilter) : Promise.resolve(null)),
     [search, range, sharedFilter],
   );
-  const liveSearch = searchInput;
   const matchInfo = useQuery(
-    () => (liveSearch ? api.trends.getSearchMatchingPeriods(liveSearch, range, sharedFilter) : Promise.resolve(null)),
-    [liveSearch, range, sharedFilter],
+    () => (search ? api.trends.getSearchMatchingPeriods(search, range, sharedFilter) : Promise.resolve(null)),
+    [search, range, sharedFilter],
   );
 
   const activeRows: PeriodRow[] = (search ? searchRows : rows) ?? [];
@@ -108,7 +119,6 @@ export function Trends() {
     if (row) navToPeriod(row);
   }
 
-  const searchRef = useRef<HTMLInputElement>(null);
   useScreenKeys({
     r: () => setRange((r) => TRENDS_RANGES[(TRENDS_RANGES.indexOf(r) + 1) % TRENDS_RANGES.length]),
     ArrowLeft: () => {
@@ -117,88 +127,89 @@ export function Trends() {
     ArrowRight: () => {
       if (!search && views.length) setViewIdx((i) => (i + 1) % views.length);
     },
-    '/': () => searchRef.current?.focus(),
+    '/': () => focusSearch(),
     Escape: () => {
-      if (search) {
-        setSearch('');
-        setSearchInput('');
-      } else navigate('dashboard');
+      if (search) setSearch('');
+      else navigate('dashboard');
     },
   });
 
   const lineColor = view ? viewColor(view, chartTheme) : chartTheme.negative;
   const searchOnlyColor = searchIncome > 0 && searchExpenses === 0 ? chartTheme.positive : chartTheme.negative;
 
+  // The stacked flex-breakdown view (three series sharing one stackId) has no
+  // sensible line-chart equivalent — three overlapping lines lose the "parts
+  // of a whole" reading a stacked bar gives for free. Force bars there and
+  // hide the toggle entirely rather than offering a mode that looks broken.
+  const chartTypeLocked = isFlexBreakdown;
+  const effectiveChartType = chartTypeLocked ? 'bar' : chartType;
+
   return (
     <div className={styles.screen}>
       <KeyHints hints="[1-9·0] screens   [r] range   [← →] view   [/] search   [esc] back" />
       <div className={styles.topBar}>
         <h1 className={styles.title}>Trends</h1>
-        {!search && views.length > 0 && (
-          <select
-            className={styles.viewSelect}
-            value={viewIdx}
-            onChange={(e) => setViewIdx(Number(e.target.value))}
-          >
-            {views.map((v, i) => (
-              <option key={`${v.label}-${i}`} value={i}>
-                {v.label}
-              </option>
-            ))}
-          </select>
+        {search && matchInfo && (
+          <span className={`num ${styles.matchCount}`}>
+            {matchInfo.count} txn{matchInfo.count === 1 ? '' : 's'}
+            {activeRows.length > 0 ? ` · ${activeRows.length} periods` : ''}
+          </span>
         )}
-        <div className={styles.rangePills}>
+        {!search && views.length > 0 && (
+          <div className={styles.viewSelectWrap}>
+            <select
+              className={styles.viewSelect}
+              value={viewIdx}
+              onChange={(e) => setViewIdx(Number(e.target.value))}
+            >
+              {views.map((v, i) => (
+                <option key={`${v.label}-${i}`} value={i}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!chartTypeLocked && (
+          <div className="pillGroup" title="Chart type">
+            <button className={chartType === 'bar' ? 'pillActive' : 'pill'} onClick={() => setChartType('bar')}>
+              Bars
+            </button>
+            <button className={chartType === 'line' ? 'pillActive' : 'pill'} onClick={() => setChartType('line')}>
+              Line
+            </button>
+          </div>
+        )}
+        <div className={`pillGroup ${styles.rangePills}`}>
           {TRENDS_RANGES.map((r) => (
-            <button key={r} className={r === range ? styles.pillActive : styles.pill} onClick={() => setRange(r)}>
+            <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
               {RANGE_LABELS[r]}
             </button>
           ))}
         </div>
-        <div className={styles.searchWrap}>
-          <input
-            ref={searchRef}
-            className={styles.search}
-            placeholder="Search transactions…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') setSearch(searchInput);
-              if (e.key === 'Escape') {
-                setSearch('');
-                setSearchInput('');
-                searchRef.current?.blur();
-              }
-            }}
-          />
-          {matchInfo && searchInput && (
-            <span className="dim">
-              {matchInfo.count} txn{matchInfo.count === 1 ? '' : 's'}
-              {search && activeRows.length > 0 ? ` · ${activeRows.length} periods` : ''}
-            </span>
-          )}
-          {search && (
-            <button
-              className={styles.clearSearch}
-              onClick={() => {
-                setSearch('');
-                setSearchInput('');
-              }}
-            >
-              clear
-            </button>
-          )}
-        </div>
       </div>
 
-      <section className={styles.panel}>
+      <section className={styles.chartSection}>
         {activeRows.length === 0 ? (
           <p className="dim">{search ? 'No periods match the search.' : 'No data.'}</p>
         ) : (
           <ResponsiveContainer width="100%" height={420}>
-            <ComposedChart data={activeRows} onClick={onChartClick} style={{ cursor: 'pointer' }}>
-              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" stroke={chartTheme.axis} tick={{ fontSize: 12 }} minTickGap={24} />
-              <YAxis stroke={chartTheme.axis} tick={{ fontSize: 12 }} tickFormatter={(v: number) => fmtCompact(v)} width={70} />
+            <ComposedChart data={activeRows} onClick={onChartClick} style={{ cursor: 'pointer' }} barCategoryGap={16}>
+              <CartesianGrid stroke="var(--rule)" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="label"
+                stroke="var(--rule)"
+                tick={{ fontSize: 11, fill: chartTheme.axis, fontFamily: 'var(--font-mono)' }}
+                tickLine={false}
+                minTickGap={24}
+              />
+              <YAxis
+                stroke="var(--rule)"
+                tick={{ fontSize: 11, fill: chartTheme.axis, fontFamily: 'var(--font-mono)' }}
+                tickLine={false}
+                tickFormatter={(v: number) => fmtCompact(v)}
+                width={74}
+              />
               <Tooltip
                 contentStyle={tooltipStyle}
                 labelStyle={tooltipLabelStyle}
@@ -208,47 +219,72 @@ export function Trends() {
                 <>
                   <Legend />
                   <ReferenceLine y={0} stroke={chartTheme.axis} />
-                  <Bar dataKey="income" name="Income" fill={chartTheme.positive} />
-                  <Bar dataKey="expenses" name="Expenses" fill={chartTheme.negative} />
-                  <Bar dataKey="total" name="Net" fill={chartTheme.accent} />
+                  {effectiveChartType === 'bar' ? (
+                    <>
+                      <Bar dataKey="income" name="Income" fill={chartTheme.positive} radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="expenses" name="Expenses" fill={chartTheme.negative} radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="total" name="Net" fill={chartTheme.accent} radius={[2, 2, 0, 0]} />
+                    </>
+                  ) : (
+                    <>
+                      <Line type="monotone" dataKey="income" name="Income" stroke={chartTheme.positive} strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="expenses" name="Expenses" stroke={chartTheme.negative} strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="total" name="Net" stroke={chartTheme.accent} strokeWidth={2} dot={false} />
+                    </>
+                  )}
                 </>
               ) : isFlexBreakdown ? (
                 <>
                   <Legend />
-                  <Bar dataKey="fixed" name="Fixed" stackId="flex" fill={chartTheme.fixed} />
-                  <Bar dataKey="flexible" name="Flexible" stackId="flex" fill={chartTheme.flexible} />
-                  <Bar dataKey="discretionary" name="Discretionary" stackId="flex" fill={chartTheme.discretionary} />
+                  <Bar dataKey="fixed" name="Fixed" stackId="flex" fill={chartTheme.fixed} radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="flexible" name="Flexible" stackId="flex" fill={chartTheme.flexible} radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="discretionary" name="Discretionary" stackId="flex" fill={chartTheme.discretionary} radius={[2, 2, 0, 0]} />
                 </>
-              ) : (
+              ) : effectiveChartType === 'bar' ? (
                 <Bar
                   dataKey="total"
                   name={search ? `"${search}"` : view?.label ?? ''}
                   fill={search ? searchOnlyColor : lineColor}
+                  radius={[2, 2, 0, 0]}
+                />
+              ) : (
+                <Line
+                  type="monotone"
+                  dataKey="total"
+                  name={search ? `"${search}"` : view?.label ?? ''}
+                  stroke={search ? searchOnlyColor : lineColor}
+                  strokeWidth={2}
+                  dot={false}
                 />
               )}
             </ComposedChart>
           </ResponsiveContainer>
         )}
-        {activeRows.length > 0 && <p className={`dim ${styles.chartHint}`}>Click a bar to see its transactions</p>}
+        {activeRows.length > 0 && (
+          <p className={styles.chartHint}>
+            Click a {effectiveChartType === 'bar' ? 'bar' : 'point'} to see its transactions
+          </p>
+        )}
       </section>
 
       {activeRows.length > 0 && (
-        <div className={styles.cards}>
-          <div className={styles.card}>
-            <div className={styles.cardLabel}>Periods</div>
-            <div className={`num ${styles.cardValue}`}>{activeRows.length}</div>
+        <div className="kpiStrip">
+          <div className="kpiCell">
+            <div className="kpiLabel">Periods</div>
+            <div className="num kpiFigure">{activeRows.length}</div>
           </div>
-          <div className={styles.card}>
-            <div className={styles.cardLabel}>Avg / {RANGE_LABELS[range].toLowerCase()}</div>
-            <div className={`num ${netStyle ? (avg >= 0 ? 'pos' : 'neg') : ''} ${styles.cardValue}`}>
+          <div className="kpiCell">
+            <div className="kpiLabel">Avg / {RANGE_LABELS[range].toLowerCase()}</div>
+            <div className={`num kpiFigure ${netStyle ? (avg >= 0 ? 'pos' : 'neg') : ''}`}>
               {netStyle ? fmtSigned(avg) : fmt(avg)}
             </div>
           </div>
           {peak && peak.total !== 0 && (
-            <button className={`${styles.card} ${styles.cardClickable}`} onClick={() => navToPeriod(peak)}>
-              <div className={styles.cardLabel}>Peak</div>
-              <div className={styles.cardValue}>
-                {peak.label} <span className="num dim">{netStyle ? fmtSigned(peak.total) : fmt(peak.total)}</span>
+            <button className={`kpiCell ${styles.peakCell}`} onClick={() => navToPeriod(peak)}>
+              <div className="kpiLabel">Peak</div>
+              <div className={styles.peakValue}>
+                {peak.label}
+                <span className={`num dim ${styles.peakAmount}`}>{netStyle ? fmtSigned(peak.total) : fmt(peak.total)}</span>
               </div>
             </button>
           )}

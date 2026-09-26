@@ -1,88 +1,116 @@
 .screen {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 22px;
   max-width: 1100px;
 }
 
 .topBar {
   display: flex;
   align-items: baseline;
-  gap: 24px;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .title {
-  font-size: 20px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
 .bigNumber {
-  font-size: 28px;
-  font-weight: 700;
-}
-
-.panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 20px;
-}
-
-.panelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.panelHeader h2 {
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  margin: 0;
+  font-size: 19px;
 }
 
 .rangePills {
-  display: flex;
-  gap: 4px;
+  margin-left: auto;
 }
 
-.pill,
-.pillActive {
-  padding: 4px 11px;
-  border-radius: 14px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
+/* ── Section label rows ── */
 
-.pill:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.pillActive {
-  background: var(--bg-raised);
-  color: var(--accent);
-  font-weight: 600;
+.sectionLabelAlone {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .toggleBtn {
   font-size: 12px;
   color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 3px 9px;
 }
 
 .toggleBtn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
 }
+
+/* ── History ── */
+
+.legendRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+}
+
+.legendItem,
+.legendItemHidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legendItem:hover {
+  opacity: 0.75;
+}
+
+.legendItemHidden {
+  color: var(--text-faint);
+  opacity: 0.5;
+}
+
+.legendItemHidden:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.filterNote {
+  color: var(--text-dim);
+}
+
+.resetAllBtn {
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.resetAllBtn:hover {
+  background: var(--bg-hover);
+}
+
+.chartFrame {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 10px 0;
+  margin-top: 10px;
+}
+
+/* ── Assets / Liabilities columns ── */
 
 .columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 34px;
   align-items: start;
 }
 
@@ -93,33 +121,33 @@
 }
 
 .table td {
-  padding: 6px 10px;
+  padding: var(--table-row-padding) 0;
   text-align: right;
   white-space: nowrap;
 }
 
+.table tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.table tbody tr:last-child {
+  border-bottom: none;
+}
+
 .tdName {
   text-align: left !important;
-  color: var(--text-dim);
-  width: 50%;
+  color: var(--text);
+  width: 60%;
 }
 
 .tdSub {
   font-size: 12px;
+  color: var(--text-faint);
+  margin-left: 6px;
 }
 
 .totalRow td {
-  border-top: 1px solid var(--border);
   font-weight: 600;
-  padding-top: 9px;
-}
-
-.totalRow .tdName {
-  color: var(--text);
-}
-
-.panelFiltered {
-  border-left: 3px solid var(--accent);
+  padding-top: calc(var(--table-row-padding) + 2px);
 }
 
 .tdDot {
@@ -130,76 +158,15 @@
 }
 
 .dotDefault {
-  color: var(--text-dim);
   opacity: 0.3;
 }
 
-.dotIn {
-  color: var(--pos);
-}
-
 .dotOut {
-  color: var(--text-dim);
   opacity: 0.4;
 }
 
 .accountRowSelected td {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
-}
-
-.seriesRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.seriesPill,
-.seriesPillHidden {
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  font-weight: 500;
-}
-
-.seriesPillHidden {
-  color: var(--text-dim);
-  opacity: 0.45;
-}
-
-.seriesPill:hover,
-.seriesPillHidden:hover {
-  opacity: 1;
-  border-color: var(--text-dim);
-  color: var(--text);
-}
-
-.filterNote {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.resetBtn {
-  font-size: 12px;
-  color: var(--accent);
-}
-
-.resetAllBtn {
-  padding: 4px 11px;
-  border-radius: 14px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-}
-
-.resetAllBtn:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .accountRow {

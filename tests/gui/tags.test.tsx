@@ -50,26 +50,34 @@ describe('GUI Tags', () => {
     await waitFor(() => expect(screen.getByText('vacation')).toBeTruthy());
   });
 
-  it('renames a tag', async () => {
+  // Rename/delete now live in the detail panel (act on the selected tag),
+  // not as per-row list buttons — select the tag first to reach them.
+  it('renames a tag via the detail panel', async () => {
     renderScreen(<Tags />);
     await waitFor(() => expect(screen.getByText('work')).toBeTruthy());
-    const row = screen.getByText('work').closest('tr')!;
-    await userEvent.click(Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'rename')!);
+    await userEvent.click(screen.getByText('work'));
+    await waitFor(() => expect(screen.getByText('# work')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'rename' }));
     const input = screen.getByPlaceholderText('Tag name');
     await userEvent.clear(input);
     await userEvent.type(input, 'office');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.getByText('office')).toBeTruthy());
     expect(screen.queryByText('work')).toBeNull();
+    // Detail panel follows the rename rather than losing its selection.
+    expect(screen.getByText('# office')).toBeTruthy();
   });
 
-  it('deletes a tag', async () => {
+  it('deletes a tag via the detail panel', async () => {
     renderScreen(<Tags />);
     await waitFor(() => expect(screen.getByText('work')).toBeTruthy());
-    const row = screen.getByText('work').closest('tr')!;
-    await userEvent.click(Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'delete')!);
+    await userEvent.click(screen.getByText('work'));
+    await waitFor(() => expect(screen.getByText('# work')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'delete' }));
     await waitFor(() => expect(screen.queryByText('work')).toBeNull());
     expect(screen.getByText('Deleted "work"')).toBeTruthy();
+    // Selection clears along with the deleted tag.
+    expect(screen.getByText('Select a tag to see its breakdown.')).toBeTruthy();
   });
 
   it('detail panel shows breakdown and navigates to transactions', async () => {
@@ -89,5 +97,37 @@ describe('GUI Tags', () => {
   it('opens detail directly from a tag nav filter', async () => {
     renderScreen(<Tags />, { txFilter: { focusTag: 'travel' } });
     await waitFor(() => expect(screen.getByText('# travel')).toBeTruthy());
+  });
+
+  it('headline Inflow/Outflow are gross (not netted by category like the breakdown below)', async () => {
+    // A $300 spend + a $100 refund in the same real category (Travel) nets to
+    // $200 in getTagSummary's byCategory bucket (correct for that section) —
+    // but the headline KPIs must show the true gross $100 inflow / $300
+    // outflow (selected.inflow/outflow from getAllTags), not summary's netted
+    // income/expenses, or a reimbursement silently vanishes into Outflow.
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-spend',  'test-credit', '2026-05-04', 'Amtrak',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-refund', 'test-credit', '2026-05-05', 'Amtrak Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-travel-spend', 1)`,
+      `INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-travel-refund', 1)`,
+    ], 'write');
+
+    renderScreen(<Tags />);
+    await waitFor(() => expect(screen.getByText('travel')).toBeTruthy());
+    await userEvent.click(screen.getByText('travel'));
+    await waitFor(() => expect(screen.getByText('# travel')).toBeTruthy());
+
+    // Headline: gross, unnetted.
+    await waitFor(() => expect(screen.getByText('$100.00')).toBeTruthy()); // Inflow
+    expect(screen.getByText('$300.00')).toBeTruthy(); // Outflow
+    // Net (income - expenses) is the same either way: spent $300, got $100
+    // back, net cash flow is -$200 whether or not the category nets first.
+    expect(screen.getByText('-$200.00')).toBeTruthy();
+    // The category breakdown below still nets, on purpose.
+    await waitFor(() => expect(screen.getByText('Travel')).toBeTruthy());
+    const categoryRow = screen.getByText('Travel').closest('tr')!;
+    expect(categoryRow.textContent).toContain('$200.00');
   });
 });

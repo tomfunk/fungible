@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR } from './paths.js';
 import type { CanvasSpec } from './canvas-agent.js';
-import { resolveCanvasBindings } from './canvas-agent.js';
+import { resolveCanvasBindings, loadCanvasContext } from './canvas-agent.js';
 
 export const CANVAS_HISTORY_PATH = join(DATA_DIR, 'canvas-history.json');
 export const CANVAS_SPEC_PATH    = join(DATA_DIR, 'canvas-spec.json');
@@ -115,4 +115,20 @@ export function buildPriorCanvasesSection(prompt: string): string {
     (e) => `### ${e.title}\nprompt: ${e.prompt}\n\`\`\`json\n${JSON.stringify(e.spec, null, 2)}\n\`\`\``,
   ).join('\n\n');
   return `## Prior canvases on similar topics\n\nBefore generating from scratch, check if any of these existing canvases covers the same type of problem. If so, build on it — extend or adjust its dials/outputs to address the new question, and keep the same title so it updates in place rather than creating a duplicate.\n\n${entries}`;
+}
+
+/**
+ * The shared context sections for prompting a canvas-generating tool call:
+ * the user's prompt, prior canvases on similar topics, the canvas
+ * instructions, and the render_canvas tool schema. Callers append their own
+ * closing instruction line before joining.
+ */
+export async function buildCanvasContextSections(prompt: string): Promise<string[]> {
+  const { system, tool } = await loadCanvasContext();
+  return [
+    `## User prompt\n${prompt}`,
+    buildPriorCanvasesSection(prompt),
+    `## Canvas instructions\n${system}`,
+    `## render_canvas tool schema\n${JSON.stringify(tool, null, 2)}`,
+  ];
 }

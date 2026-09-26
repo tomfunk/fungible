@@ -134,8 +134,12 @@ export function ChatDrawer() {
   if (!open) {
     return (
       <button className={styles.collapsed} onClick={() => setOpen(true)} title="Toggle with `">
-        <span className={styles.dot}>●</span> agent
-        {provider ? <span className="dim"> · ask anything ({provider})</span> : <span className="warn"> · no API key set</span>}
+        <span className={styles.dot}>●</span> agent <span className={styles.keyHint}>[`]</span>{' '}
+        {provider ? (
+          <span className="dim">ask anything about your finances ({provider})</span>
+        ) : (
+          <span className="warn">no API key set</span>
+        )}
         {streaming && <span className={styles.thinking}> ⟳</span>}
       </button>
     );

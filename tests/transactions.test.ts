@@ -19,6 +19,7 @@ import {
   setTransactionCategoryBulk,
   clearOverridesBulk,
   setIgnoredBulk,
+  addTransaction,
 } from '../core/transactions.js';
 
 let txId = 0;
@@ -35,10 +36,12 @@ async function insertTx(opts: { name?: string; category?: string; manual_categor
 
 beforeEach(async () => {
   txId = 0;
+  // transaction_tags before transactions: makeTestDb now runs with
+  // PRAGMA foreign_keys = ON, so the child row has to go first.
+  await db.execute('DELETE FROM transaction_tags');
   await db.execute('DELETE FROM transactions');
   await db.execute('DELETE FROM category_rules');
   await db.execute('DELETE FROM name_rules');
-  await db.execute('DELETE FROM transaction_tags');
   await db.execute('DELETE FROM tags');
 });
 
@@ -116,6 +119,111 @@ describe('deleteTransaction', () => {
 
     expect((await db.execute({ sql: 'SELECT id FROM transactions WHERE id = ?', args: [id] })).rows[0]).toBeUndefined();
     expect((await db.execute({ sql: 'SELECT * FROM transaction_tags WHERE transaction_id = ?', args: [id] })).rows[0]).toBeUndefined();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('addTransaction', () => {
+  beforeEach(async () => {
+    await db.execute({
+      sql: "INSERT OR IGNORE INTO accounts (id, name, type) VALUES ('acct1', 'Test Account', 'credit')",
+    });
+  });
+
+  it('inserts a manual row, pinning the given category and stamping source/manual_category', async () => {
+    const id = await addTransaction({
+      accountId: 'acct1',
+      date: '2026-08-24',
+      name: 'Bill Payment',
+      amount: 2914,
+      category: 'Childcare',
+    });
+    expect(id).toMatch(/^manual-/);
+    const row = (await db.execute({
+      sql: `SELECT account_id, date, name, amount, category, manual_category, raw_category,
+                   pending, source, import_id, dedup_key
+            FROM transactions WHERE id = ?`,
+      args: [id],
+    })).rows[0] as unknown as {
+      account_id: string; date: string; name: string; amount: number; category: string;
+      manual_category: string | null; raw_category: string | null; pending: number;
+      source: string; import_id: number | null; dedup_key: string | null;
+    };
+    expect(row.account_id).toBe('acct1');
+    expect(row.date).toBe('2026-08-24');
+    expect(row.name).toBe('Bill Payment');
+    expect(Number(row.amount)).toBe(2914);
+    expect(row.category).toBe('Childcare');
+    expect(row.manual_category).toBe('Childcare');
+    expect(row.raw_category).toBeNull();
+    expect(row.pending).toBe(0);
+    expect(row.source).toBe('manual');
+    expect(row.import_id).toBeNull();
+    expect(row.dedup_key).toBeNull();
+  });
+
+  it('trims name and optional merchant_name', async () => {
+    const id = await addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: '  Bill Payment  ',
+      amount: 2914, category: 'Childcare', merchantName: '  Albany Childrens Center  ',
+    });
+    const row = (await db.execute({
+      sql: 'SELECT name, merchant_name FROM transactions WHERE id = ?', args: [id],
+    })).rows[0] as unknown as { name: string; merchant_name: string | null };
+    expect(row.name).toBe('Bill Payment');
+    expect(row.merchant_name).toBe('Albany Childrens Center');
+  });
+
+  it('applies name rules to set display_name, same as a synced row', async () => {
+    await db.execute({
+      sql: "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'Bill Payment', 'Childcare Bill')",
+    });
+    const id = await addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: 'Bill Payment', amount: 2914, category: 'Childcare',
+    });
+    const row = (await db.execute({ sql: 'SELECT display_name FROM transactions WHERE id = ?', args: [id] }))
+      .rows[0] as unknown as { display_name: string | null };
+    expect(row.display_name).toBe('Childcare Bill');
+  });
+
+  it('applies tag rules, same as a synced row', async () => {
+    await db.execute({ sql: "INSERT INTO tags (name) VALUES ('recurring')" });
+    const tag = (await db.execute({ sql: "SELECT id FROM tags WHERE name = 'recurring'" }))
+      .rows[0] as unknown as { id: number };
+    await db.execute({
+      sql: "INSERT INTO tag_rules (priority, match_type, pattern, tag_id) VALUES (0, 'name', 'Bill Payment', ?)",
+      args: [tag.id],
+    });
+    const id = await addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: 'Bill Payment', amount: 2914, category: 'Childcare',
+    });
+    const links = (await db.execute({ sql: 'SELECT tag_id FROM transaction_tags WHERE transaction_id = ?', args: [id] }))
+      .rows as unknown as { tag_id: number }[];
+    expect(links.map((l) => l.tag_id)).toEqual([tag.id]);
+  });
+
+  it('rejects a malformed date', async () => {
+    await expect(addTransaction({
+      accountId: 'acct1', date: '08/24/2026', name: 'X', amount: 1, category: 'Shopping',
+    })).rejects.toThrow(/YYYY-MM-DD/);
+  });
+
+  it('rejects an empty name', async () => {
+    await expect(addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: '   ', amount: 1, category: 'Shopping',
+    })).rejects.toThrow(/name is required/i);
+  });
+
+  it('rejects an empty category', async () => {
+    await expect(addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: 'X', amount: 1, category: '',
+    })).rejects.toThrow(/category is required/i);
+  });
+
+  it('rejects an account that does not exist', async () => {
+    await expect(addTransaction({
+      accountId: 'no-such-account', date: '2026-08-24', name: 'X', amount: 1, category: 'Shopping',
+    })).rejects.toThrow(/no account/i);
   });
 });
 

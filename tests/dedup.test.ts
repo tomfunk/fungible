@@ -27,6 +27,15 @@ async function plaidTx(opts: { name: string; amount: number; date?: string; acco
   });
   return id;
 }
+async function manualTx(opts: { name: string; amount: number; date?: string; accountId?: string }) {
+  seq++;
+  const id = `manual-${seq}`;
+  await db.execute({
+    sql: "INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source) VALUES (?, ?, ?, ?, ?, 0, 0, 'manual')",
+    args: [id, opts.accountId ?? 'acct1', opts.date ?? '2025-01-15', opts.name, opts.amount],
+  });
+  return id;
+}
 async function exists(id: string) {
   return (await db.execute({ sql: 'SELECT 1 FROM transactions WHERE id = ?', args: [id] })).rows.length > 0;
 }
@@ -260,6 +269,45 @@ describe('deduplicateCsvVsPlaid', () => {
     await plaidTx({ name: 'AMAZON', amount: 10 });
     await plaidTx({ name: 'NETFLIX', amount: 15 });
     expect(await deduplicateCsvVsPlaid()).toBe(2);
+  });
+});
+
+// A manual entry standing in for a transaction Plaid's sync had missed. Once
+// Plaid catches up, the pair must surface for review — but deduplicateCsvVsPlaid
+// (the silent auto-delete pass) must never touch it, since a manual row may
+// carry a hand-picked category/tag the newly-synced Plaid row won't have.
+describe('manual rows vs the two dedup paths', () => {
+  it('getCsvPlaidDupeCandidates surfaces a manual/Plaid pair, tagged by source', async () => {
+    const manual = await manualTx({ name: 'Bill Payment', amount: 2914 });
+    await plaidTx({ name: 'Bill Payment', amount: 2914 });
+    const pairs = await getCsvPlaidDupeCandidates();
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].csvId).toBe(manual);
+    expect(pairs[0].csvSource).toBe('manual');
+  });
+
+  it('tags a plain CSV/Plaid pair as csvSource "csv"', async () => {
+    await csvTx({ name: 'AMAZON', amount: 50 });
+    await plaidTx({ name: 'AMAZON', amount: 50 });
+    const pairs = await getCsvPlaidDupeCandidates();
+    expect(pairs[0].csvSource).toBe('csv');
+  });
+
+  it('deduplicateCsvVsPlaid never deletes a manual row, even when it matches Plaid', async () => {
+    const manual = await manualTx({ name: 'Bill Payment', amount: 2914 });
+    await plaidTx({ name: 'Bill Payment', amount: 2914 });
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+    expect(await exists(manual)).toBe(true);
+  });
+
+  it('deduplicateCsvVsPlaid still removes CSV rows when a manual row is also present', async () => {
+    const csv = await csvTx({ name: 'NETFLIX', amount: 15 });
+    const manual = await manualTx({ name: 'Bill Payment', amount: 2914 });
+    await plaidTx({ name: 'NETFLIX', amount: 15 });
+    await plaidTx({ name: 'Bill Payment', amount: 2914 });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(csv)).toBe(false);
+    expect(await exists(manual)).toBe(true);
   });
 });
 

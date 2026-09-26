@@ -48,18 +48,21 @@ describe('GUI Trends', () => {
     expect(screen.getByText('Avg / month')).toBeTruthy();
   });
 
+  // Search now lives in the shared FilterBar (mounted once above
+  // Dashboard/Transactions/Trends in the real app), not in Trends itself —
+  // renderScreen's filterBar:true mounts it here too so these can drive it.
   it('search shows live transaction match count', async () => {
-    renderScreen(<Trends />);
+    renderScreen(<Trends />, { filterBar: true });
     await screen.findByRole('combobox');
     await userEvent.type(screen.getByPlaceholderText('Search transactions…'), 'Whole');
     await waitFor(() => expect(screen.getByText(/2 txns/)).toBeTruthy());
   });
 
-  it('committed search switches to matching periods', async () => {
-    renderScreen(<Trends />);
+  it('search switches to matching periods', async () => {
+    renderScreen(<Trends />, { filterBar: true });
     await screen.findByRole('combobox');
     const input = screen.getByPlaceholderText('Search transactions…');
-    await userEvent.type(input, 'Whole{Enter}');
+    await userEvent.type(input, 'Whole');
     await waitFor(() => expect(screen.getByText(/2 periods/)).toBeTruthy());
     await userEvent.click(screen.getByText('clear'));
     await waitFor(() => expect(screen.queryByText(/2 periods/)).toBeNull());
@@ -83,5 +86,35 @@ describe('GUI Trends', () => {
       const selected = (select as HTMLSelectElement).selectedOptions[0]?.textContent;
       expect(selected).toBe('Grocery');
     });
+  });
+
+  it('chart type toggle defaults to Bars and switches to Line, updating the hint', async () => {
+    renderScreen(<Trends />);
+    await screen.findByRole('combobox');
+    const barsBtn = await screen.findByRole('button', { name: 'Bars' });
+    const lineBtn = screen.getByRole('button', { name: 'Line' });
+    expect(barsBtn.className).toContain('pillActive');
+    expect(lineBtn.className).not.toContain('pillActive');
+    await waitFor(() => expect(screen.getByText(/Click a bar/)).toBeTruthy());
+
+    await userEvent.click(lineBtn);
+    expect(lineBtn.className).toContain('pillActive');
+    expect(barsBtn.className).not.toContain('pillActive');
+    await waitFor(() => expect(screen.getByText(/Click a point/)).toBeTruthy());
+  });
+
+  it('hides the chart type toggle for the stacked Flexibility breakdown view', async () => {
+    renderScreen(<Trends />);
+    const select = await screen.findByRole('combobox');
+    expect(screen.getByRole('button', { name: 'Line' })).toBeTruthy();
+
+    await userEvent.selectOptions(select, 'Flexibility');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Line' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Bars' })).toBeNull();
+
+    // Switching back to a non-stacked view brings the toggle back, defaulted to Bars.
+    await userEvent.selectOptions(select, 'Expenses');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Line' })).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Bars' }).className).toContain('pillActive');
   });
 });

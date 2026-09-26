@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useFilter } from '../hooks/useFilter.js';
+import { useSync } from '../hooks/useSync.js';
+import { useStatus } from '../hooks/useStatus.js';
 import { Modal } from './Modal.js';
+import { SyncControl } from './SyncControl.js';
 import {
   EMPTY_FILTER,
   isFilterActive,
@@ -15,6 +18,16 @@ import {
   type TagPredicate,
 } from '../../../../core/filters.js';
 import type { FilterOptions } from '../../../../core/queries.js';
+
+// core/queries.ts's UNCATEGORIZED constant (= 'Uncategorized') is deliberately
+// NOT imported here: it's a real (non-type) export, and the renderer must
+// never pull a runtime value out of core/queries.ts — that module imports
+// core/db.ts, dragging the whole @libsql/client (Node-only) dependency graph
+// into the browser bundle (it fails at runtime with "process is not
+// defined" in the sandboxed renderer, and fails the production build
+// outright). Dashboard.tsx already hardcodes this same literal for its
+// KPI-tile drill-in; mirrored here for the same reason.
+const UNCATEGORIZED = 'Uncategorized';
 import styles from './FilterBar.module.css';
 
 // Debounce window for publishing the live preview. Toggling many checkboxes in
@@ -23,29 +36,80 @@ import styles from './FilterBar.module.css';
 // instead of one per keystroke. Mirrors PREVIEW_DEBOUNCE_MS in tui/FilterPanel.
 const PREVIEW_DEBOUNCE_MS = 120;
 
+// Shared by Dashboard, Transactions, and Trends: the Filter button, search
+// box, and sync control all live here once instead of being duplicated three
+// times. Search and the filter-panel-open flag are lifted into useFilter's
+// context so each screen's own '/' and 'u'/'a' shortcuts can still drive
+// them (focusSearch / setFilterPanelOpen) without a prop-drilled ref.
 export function FilterBar() {
-  const { filter, committed, setFilter } = useFilter();
-  const [open, setOpen] = useState(false);
+  const {
+    filter, committed, setFilter,
+    search, setSearch, registerSearchInput,
+    filterPanelOpen, setFilterPanelOpen,
+  } = useFilter();
   const active = isFilterActive(filter);
+  const { syncing, lastSynced, forceSync } = useSync();
+  const { showStatus, statusEl } = useStatus();
+
+  async function onSync() {
+    const result = await forceSync();
+    if (result) showStatus(result.message, result.ok ? 4000 : 8000);
+  }
 
   return (
     <div className={styles.bar}>
-      <button className={active ? styles.filterBtnActive : styles.filterBtn} onClick={() => setOpen(true)}>
-        ⚲ Filter{active ? `: ${filterSummary(filter)}` : ''}
-      </button>
-      {active && (
-        <button className={styles.clearBtn} onClick={() => setFilter(EMPTY_FILTER)}>
-          clear
+      <div className={styles.left}>
+        <button
+          className={active ? `chip chipActive ${styles.filterBtnActive}` : `chip ${styles.filterBtn}`}
+          onClick={() => setFilterPanelOpen(true)}
+        >
+          ⌕ filter{active ? `: ${filterSummary(filter)}` : ''}
         </button>
-      )}
-      <span className={`dim ${styles.hint}`}>applies to Dashboard, Transactions & Trends</span>
-      {open && (
+        {active && (
+          <button className={styles.clearBtn} onClick={() => setFilter(EMPTY_FILTER)}>
+            clear
+          </button>
+        )}
+        <span className={styles.searchWrap}>
+          <input
+            ref={registerSearchInput}
+            className={`underline ${styles.search}`}
+            placeholder="Search transactions…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSearch('');
+                e.currentTarget.blur();
+              }
+            }}
+          />
+          {search && (
+            <button className={styles.clearBtn} onClick={() => setSearch('')}>
+              clear
+            </button>
+          )}
+        </span>
+        <span className={styles.hint}>
+          {active ? 'applies to' : 'no filters ·'} dashboard, transactions, trends
+        </span>
+      </div>
+      <div className={styles.right}>
+        <SyncControl
+          syncing={syncing}
+          lastSynced={lastSynced}
+          onSync={() => void onSync()}
+          statusClassName={styles.synced}
+        />
+      </div>
+      {filterPanelOpen && (
         <FilterPanel
           committed={committed}
-          onApply={(f) => { setFilter(f); setOpen(false); }}
-          onClose={() => setOpen(false)}
+          onApply={(f) => { setFilter(f); setFilterPanelOpen(false); }}
+          onClose={() => setFilterPanelOpen(false)}
         />
       )}
+      {statusEl}
     </div>
   );
 }
@@ -75,10 +139,20 @@ function FilterPanel({
   // constraint) per core/filters.ts semantics. We hydrate from `committed`,
   // not the live `filter` (== preview ?? committed) — reading the live value
   // would re-seed the draft from the panel's own preview, a feedback loop.
+  // The Categories checkbox universe is opts.categories (real, configured
+  // categories) plus the Uncategorized sentinel prepended — Uncategorized
+  // isn't a row in the categories table (core/queries.ts getFilterOptions),
+  // it's assigned to transactions with no category match, but the filter
+  // SQL treats `categories` as a plain IN-list match against t.category
+  // (core/filters.ts buildFilterConditions), so it works as a filter value
+  // with no core changes needed — this used to be Transactions' dedicated
+  // "Uncategorized" quick-filter button, now folded in here instead.
+  const categoryUniverse = opts ? [UNCATEGORIZED, ...opts.categories] : [];
+
   useEffect(() => {
     void api.queries.getFilterOptions().then((o) => {
       setOpts(o);
-      setSelCats(selectionFromDim(committed.categories, o.categories));
+      setSelCats(selectionFromDim(committed.categories, [UNCATEGORIZED, ...o.categories]));
       setSelAccts(selectionFromDim(committed.accounts, o.accounts.map((a) => a.id)));
       setSelOwners(selectionFromDim(committed.owners, o.owners));
       setTagModes(new Map((committed.tags ?? []).map((t: TagPredicate) => [t.name, t.mode])));
@@ -95,7 +169,7 @@ function FilterPanel({
     const tags: TagPredicate[] = [...tagModes.entries()]
       .filter(([, mode]) => mode !== null)
       .map(([name, mode]) => ({ name, mode: mode as 'has' | 'lacks' }));
-    const cats = selectionToDim(selCats, opts.categories);
+    const cats = selectionToDim(selCats, categoryUniverse);
     const accts = selectionToDim(selAccts, opts.accounts.map((a) => a.id));
     const owners = selectionToDim(selOwners, opts.owners);
     return {
@@ -171,7 +245,7 @@ function FilterPanel({
         <p className="dim">Loading…</p>
       ) : (
         <>
-          {section('Categories', opts.categories, selCats, setSelCats, (c) => c)}
+          {section('Categories', categoryUniverse, selCats, setSelCats, (c) => c)}
           {opts.accounts.length > 0 &&
             section('Accounts', opts.accounts.map((a) => a.id), selAccts, setSelAccts,
               (id) => opts.accounts.find((a) => a.id === id)?.name ?? id)}
@@ -212,11 +286,11 @@ function FilterPanel({
             </div>
           )}
 
-          <div className={styles.actions}>
-            <button className={styles.btnSecondary} onClick={onClose}>
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={onClose}>
               Cancel
             </button>
-            <button className={styles.btnPrimary} onClick={apply}>
+            <button className="btnPrimary" onClick={apply}>
               Apply
             </button>
           </div>

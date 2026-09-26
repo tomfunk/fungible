@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getAccountsWithBalances, getNetWorthHistory, type AccountBalance, type NetWorthPeriod } from '../core/queries.js';
+import {
+  getAccountsWithBalances, getNetWorthHistory, groupAccountsByType, buildTypeToAccountIds,
+  type AccountBalance, type NetWorthPeriod, type TypeBalance,
+} from '../core/queries.js';
 import { isAssetAccount, isLiabilityAccount } from '../core/account-class.js';
 import type { Screen } from './App.js';
-import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
+import {
+  fmt, fmtSigned, bar, truncate, Divider,
+  periodLabel, periodLabelWidth, HISTORY_RANGES, HISTORY_RANGE_LABELS, type HistoryRange,
+} from './fmt.js';
 import { handleNavKey } from './nav.js';
-import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
+import { useTerminalWidth, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } from './ui.js';
 import { usePagination, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
@@ -14,54 +20,15 @@ const BAR_WIDTH = 32;
 const PAGE = 20;
 
 type ViewMode = 'accounts' | 'types';
-type NWRange = 'week' | 'month' | 'quarter' | 'year';
-const NW_RANGES: NWRange[] = ['week', 'month', 'quarter', 'year'];
-const NW_RANGE_LABELS: Record<NWRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
-type TypeBalance = { label: string; balance: number };
-
-function groupByType(accs: AccountBalance[]): TypeBalance[] {
-  const map = new Map<string, number>();
-  for (const a of accs) {
-    const raw = a.subtype ?? a.type;
-    const key = SUBTYPE_DISPLAY[raw] ?? raw;
-    map.set(key, (map.get(key) ?? 0) + a.balance);
-  }
-  return [...map.entries()]
-    .map(([label, balance]) => ({ label, balance }))
-    .sort((a, b) => b.balance - a.balance);
-}
-
-function buildTypeToIds(accs: AccountBalance[]): Map<string, string[]> {
-  const map = new Map<string, string[]>();
-  for (const a of accs) {
-    const key = SUBTYPE_DISPLAY[a.subtype ?? a.type] ?? (a.subtype ?? a.type);
-    const existing = map.get(key);
-    if (existing) existing.push(a.id); else map.set(key, [a.id]);
-  }
-  return map;
-}
-
-function periodLabel(period: string, range: NWRange): string {
-  if (range === 'year') return period;
-  if (range === 'quarter') {
-    const [y, q] = period.split('-');
-    return `${q} ${y}`;
-  }
-  if (range === 'month') {
-    const [y, m] = period.split('-');
-    return `${MONTHS[parseInt(m) - 1]} ${y}`;
-  }
-  const [y, w] = period.split('-');
-  return `${w} ${y}`;
-}
+const typeLabel = (raw: string) => SUBTYPE_DISPLAY[raw] ?? raw;
 
 export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
   const [accounts, setAccounts] = useState<AccountBalance[]>([]);
   const [rows,     setRows]     = useState<NetWorthPeriod[]>([]);
   const [view,         setView]        = useState<ViewMode>('accounts');
-  const [range,        setRange]       = useState<NWRange>('month');
+  const [range,        setRange]       = useState<HistoryRange>('month');
   const [cursor,       setCursor]      = useState(0);
   const [filterMode,   setFilterMode]  = useState(false);
   const [tableCursor,  setTableCursor] = useState(0);
@@ -95,9 +62,9 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const excluded = accounts.filter((a) => a.excluded);
   const assets      = included.filter(isAssetAccount);
   const liabilities = included.filter(isLiabilityAccount);
-  const assetTypes      = groupByType(assets);
-  const liabilityTypes  = groupByType(liabilities);
-  const typeToIds = buildTypeToIds(included);
+  const assetTypes      = groupAccountsByType(assets, typeLabel);
+  const liabilityTypes  = groupAccountsByType(liabilities, typeLabel);
+  const typeToIds = buildTypeToAccountIds(included, typeLabel);
 
   const navigableItems = view === 'accounts'
     ? [...assets, ...liabilities]
@@ -165,7 +132,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(rows.length - 1, c + 1)); return; }
     if (input === 'r') {
-      setRange((r) => NW_RANGES[(NW_RANGES.indexOf(r) + 1) % NW_RANGES.length]);
+      setRange((r) => HISTORY_RANGES[(HISTORY_RANGES.indexOf(r) + 1) % HISTORY_RANGES.length]);
       return;
     }
     if (input === 'f') { setFilterMode(true); setTableCursor(0); return; }
@@ -195,7 +162,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const NAME_W = Math.max(14, inner - AMT_W - 16 - LEAD_W);
 
   const { visible, pageStart } = usePagination(rows, cursor, PAGE);
-  const labelW = range === 'year' ? 4 : range === 'quarter' ? 7 : range === 'month' ? 8 : 12;
+  const labelW = periodLabelWidth(range);
 
   const isFiltered = selectedIds !== null;
 
@@ -357,9 +324,9 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box justifyContent="space-between">
                 <Text bold>History</Text>
                 <Box gap={2}>
-                  {NW_RANGES.map((r) => (
+                  {HISTORY_RANGES.map((r) => (
                     <Text key={r} color={r === range ? C_ACCENT : undefined} dimColor={r !== range} bold={r === range}>
-                      {NW_RANGE_LABELS[r]}
+                      {HISTORY_RANGE_LABELS[r]}
                     </Text>
                   ))}
                   {showHints && <Text dimColor>[r]</Text>}
