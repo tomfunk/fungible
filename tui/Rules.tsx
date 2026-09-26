@@ -10,7 +10,7 @@ import { getTagOptions, type TagOption } from '../core/tags.js';
 import { mergeRules, type MergedRule } from '../core/rules-merge.js';
 import { countTagRuleMatches, type TagMatchType } from '../core/tag-rules.js';
 import type { Screen, TxFilter } from './App.js';
-import { truncate, Divider } from './fmt.js';
+import { padTruncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_ACCENT, C_DIM, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -29,11 +29,6 @@ const TAG_MATCH_TYPES: TagMatchType[] = ['all', 'name', 'regex'];
 type Section = 'rules' | 'tags' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'tags', 'categories'];
-
-/** Fixed-width list cell: truncated with an ellipsis, or padded to keep columns aligned. */
-function cell(text: string, width: number): string {
-  return text.length > width ? text.slice(0, width - 1) + '…' : text.padEnd(width);
-}
 
 /** "$50" / "$10-$50" / "≥$10" / "≤$50" / "" for a rule's amount bounds. */
 function amountLabel(min: number | null, max: number | null): string {
@@ -583,13 +578,13 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                 return (
                   <SelectableRow key={`${rule.categoryRuleId ?? '-'}:${rule.nameRuleId ?? '-'}`} selected={isSelected}>
                     <Text color={C_WARNING} dimColor={!isSelected}>{rule.matchType.padEnd(5)}</Text>
-                    <Text dimColor={!isSelected}>{cell(rule.pattern, rulePatW)}</Text>
-                    {amt ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amt, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
+                    <Text dimColor={!isSelected}>{padTruncate(rule.pattern, rulePatW)}</Text>
+                    {amt ? <Text color={C_MANUAL} dimColor={!isSelected}>{padTruncate(amt, 10)}</Text> : <Text>{' '.repeat(10)}</Text>}
                     {rule.category
-                      ? <Text color={C_ACCENT} dimColor={!isSelected}>{cell(rule.category, ruleCatW)}</Text>
+                      ? <Text color={C_ACCENT} dimColor={!isSelected}>{padTruncate(rule.category, ruleCatW)}</Text>
                       : <Text>{' '.repeat(ruleCatW)}</Text>}
                     {rule.replacement
-                      ? <Text color={C_POSITIVE} dimColor={!isSelected}>{cell(rule.replacement, ruleNameW)}</Text>
+                      ? <Text color={C_POSITIVE} dimColor={!isSelected}>{padTruncate(rule.replacement, ruleNameW)}</Text>
                       : <Text>{' '.repeat(ruleNameW)}</Text>}
                     {rule.accountId && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.accountId)}</Text>}
                   </SelectableRow>
@@ -621,10 +616,10 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                   <SelectableRow key={rule.id} selected={isSelected}>
                     <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                     <Text dimColor={rule.match_type === 'all' || !isSelected}>
-                      {cell(patLabel, tagPatW)}
+                      {padTruncate(patLabel, tagPatW)}
                     </Text>
-                    {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
-                    <Text color={C_ACCENT} dimColor={!isSelected}>{cell(rule.tag_name, tagNameW)}</Text>
+                    {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{padTruncate(amtLabel, 10)}</Text> : <Text>{' '.repeat(10)}</Text>}
+                    <Text color={C_ACCENT} dimColor={!isSelected}>{padTruncate(rule.tag_name, tagNameW)}</Text>
                     {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
                   </SelectableRow>
                 );

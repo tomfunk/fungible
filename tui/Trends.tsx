@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { type TrendsRange } from '../core/dateUtils.js';
-import { buildTrendViews, generateAllPeriods, getPeriodTotals, getSearchMatchingPeriods, getSearchPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
+import { buildTrendViews, getPeriodTotals, getSearchMatchingPeriods, getSearchPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
 import { getLastSyncedAt } from '../core/queries.js';
 import { syncAll } from '../core/sync.js';
 import { notifyChange } from '../core/refresh.js';

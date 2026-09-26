@@ -2,24 +2,13 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'ink-testing-library';
 import type { HealthData } from '../../core/health.js';
+import { makeHealthData } from '../helpers/makeHealthData.js';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 // The DEBT section splits credit-card debt (HealthData.totalDebt) from loan debt
 // (HealthData.loanDebt, added when loan accounts started counting as liabilities).
 
-const BASE: HealthData = {
-  avgMonthlyExpenses: 4000,
-  monthlyIncome: 8000,
-  monthlySavings: 2000,
-  cash: 30000,
-  liquid: 50000,
-  retirement: 100000,
-  totalDebt: 0,
-  loanDebt: 0,
-  netWorth: 150000,
-  basis: 'trailing-365d',
-  basisLabel: 'trailing 12mo',
-};
+const BASE: HealthData = makeHealthData();
 
 let health: HealthData = { ...BASE };
 
