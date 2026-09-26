@@ -459,6 +459,13 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
 
 // ─── Pure tool executor ───────────────────────────────────────────────────────
 
+/** Looks up a transaction's name by id, or null if no such transaction exists. */
+async function requireTransactionName(id: string): Promise<string | null> {
+  const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [id] });
+  const tx = txResult.rows[0] as unknown as { name: string } | undefined;
+  return tx ? tx.name : null;
+}
+
 /**
  * Execute a tool by name and return a plain-text result string.
  * Does not handle `show` (agent-only), confirmation, or MCP wrapping.
@@ -827,11 +834,10 @@ async function executeToolImpl(
     // ── Write tools ───────────────────────────────────────────────────────────
 
     case 'edit_transaction': {
-      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
-      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
+      const txName = await requireTransactionName(str('id'));
+      if (txName === null) return `No transaction with id ${str('id')}.`;
       await setTransactionCategory(str('id'), str('category'));
-      return `Set "${tx.name}" → ${str('category')} (pinned)`;
+      return `Set "${txName}" → ${str('category')} (pinned)`;
     }
 
     case 'set_transaction_date': {
@@ -860,21 +866,19 @@ async function executeToolImpl(
     }
 
     case 'clear_edit': {
-      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
-      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
+      const txName = await requireTransactionName(str('id'));
+      if (txName === null) return `No transaction with id ${str('id')}.`;
       await clearTransactionOverride(str('id'));
       const revertedResult = await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [str('id')] });
       const reverted = (revertedResult.rows[0] as unknown as { category: string }).category;
-      return `Cleared override on "${tx.name}" — reverted to ${reverted}`;
+      return `Cleared override on "${txName}" — reverted to ${reverted}`;
     }
 
     case 'ignore_transaction': {
-      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
-      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
+      const txName = await requireTransactionName(str('id'));
+      if (txName === null) return `No transaction with id ${str('id')}.`;
       await setTransactionIgnored(str('id'), bool('ignore'));
-      return `"${tx.name}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
+      return `"${txName}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
     }
 
     case 'add_transaction': {
@@ -933,18 +937,17 @@ async function executeToolImpl(
     }
 
     case 'tag_transaction': {
-      const txResult = await db.execute({ sql: 'SELECT name FROM transactions WHERE id = ?', args: [str('id')] });
-      const tx = txResult.rows[0] as unknown as { name: string } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
+      const txName = await requireTransactionName(str('id'));
+      if (txName === null) return `No transaction with id ${str('id')}.`;
       if (bool('add')) {
         const tagId = await getOrCreateTag(str('tag'));
         await addTagToTransaction(str('id'), tagId);
-        return `Tagged "${tx.name}" with #${str('tag')}`;
+        return `Tagged "${txName}" with #${str('tag')}`;
       } else {
         const tagRowResult = await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [str('tag')] });
         const tagRow = tagRowResult.rows[0] as unknown as { id: number } | undefined;
         if (tagRow) await removeTagFromTransaction(str('id'), tagRow.id);
-        return `Removed #${str('tag')} from "${tx.name}"`;
+        return `Removed #${str('tag')} from "${txName}"`;
       }
     }
 

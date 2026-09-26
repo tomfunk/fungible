@@ -141,16 +141,32 @@ export async function getImportImpact(importId: number): Promise<ImportImpact> {
 }
 
 /**
- * Undoes an import: every transaction it created, and the record of it.
- *
- * Rows already removed by CSV-vs-Plaid deduplication are simply not there to
- * delete, which is the right outcome — the Plaid row they were folded into is
- * not this import's to remove.
+ * Statements that delete a set of transactions and their dependent rows, in
+ * the order that satisfies the schema.
  *
  * Child rows go first: transaction_tags has a foreign key to transactions, so
  * deleting a tagged transaction directly fails the constraint.
  * tag_rule_suppressions is keyed by transaction id too (no FK, but leaving it
  * behind orphans rows that would re-suppress a future import's tags).
+ *
+ * Returns statements to splice into a caller's own db.batch() rather than
+ * running them itself, so callers can keep them atomic with sibling writes.
+ */
+export function cascadeDeleteTransactionsSql(ids: string[]): { sql: string; args: string[] }[] {
+  const placeholders = ids.map(() => '?').join(',');
+  return [
+    { sql: `DELETE FROM transaction_tags        WHERE transaction_id IN (${placeholders})`, args: ids },
+    { sql: `DELETE FROM tag_rule_suppressions   WHERE transaction_id IN (${placeholders})`, args: ids },
+    { sql: `DELETE FROM transactions            WHERE id IN (${placeholders})`, args: ids },
+  ];
+}
+
+/**
+ * Undoes an import: every transaction it created, and the record of it.
+ *
+ * Rows already removed by CSV-vs-Plaid deduplication are simply not there to
+ * delete, which is the right outcome — the Plaid row they were folded into is
+ * not this import's to remove.
  */
 export async function deleteImport(importId: number): Promise<number> {
   const ids = (await db.execute({
@@ -164,11 +180,8 @@ export async function deleteImport(importId: number): Promise<number> {
   }
 
   const args = ids.map((r) => r.id);
-  const placeholders = args.map(() => '?').join(',');
   await db.batch([
-    { sql: `DELETE FROM transaction_tags        WHERE transaction_id IN (${placeholders})`, args },
-    { sql: `DELETE FROM tag_rule_suppressions   WHERE transaction_id IN (${placeholders})`, args },
-    { sql: `DELETE FROM transactions            WHERE id IN (${placeholders})`, args },
+    ...cascadeDeleteTransactionsSql(args),
     { sql: 'DELETE FROM imports WHERE id = ?', args: [importId] },
   ], 'write');
   return args.length;
@@ -213,12 +226,7 @@ export async function moveImport(importId: number, toAccountId: string): Promise
 
   const statements: { sql: string; args: (string | number)[] }[] = [];
   if (colliding.length > 0) {
-    const ph = colliding.map(() => '?').join(',');
-    statements.push(
-      { sql: `DELETE FROM transaction_tags      WHERE transaction_id IN (${ph})`, args: colliding },
-      { sql: `DELETE FROM tag_rule_suppressions WHERE transaction_id IN (${ph})`, args: colliding },
-      { sql: `DELETE FROM transactions          WHERE id IN (${ph})`, args: colliding },
-    );
+    statements.push(...cascadeDeleteTransactionsSql(colliding));
   }
   if (moving.length > 0) {
     const ph = moving.map(() => '?').join(',');

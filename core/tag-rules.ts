@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { inAmountRange, matchesPattern } from './rule-utils.js';
+import { inAmountRange, matchesPattern, matchesNameOrMerchant } from './rule-utils.js';
 
 export type TagMatchType = 'name' | 'regex' | 'all';
 
@@ -129,7 +129,7 @@ export async function countTagRuleMatches(
     const sql = `SELECT name, merchant_name FROM transactions${where.length ? ' WHERE ' + where.join(' AND ') : ''}`;
     const res = await db.execute({ sql, args });
     const rows = res.rows as unknown as { name: string; merchant_name: string | null }[];
-    return rows.filter((r) => re.test(r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).length;
+    return rows.filter((r) => matchesNameOrMerchant(re, r)).length;
   } catch {
     return 0;
   }

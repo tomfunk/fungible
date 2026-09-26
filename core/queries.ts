@@ -77,11 +77,6 @@ export const TRAILING_12MO_AVERAGES_SQL = `
   )
 `;
 
-export async function getHiddenCategories(): Promise<Set<string>> {
-  const result = await db.execute('SELECT category FROM hidden_categories');
-  return new Set((result.rows as unknown as { category: string }[]).map((r) => r.category));
-}
-
 export async function getMonthlySummary(year: number, month: number): Promise<MonthlySummary> {
   const from = `${year}-${String(month).padStart(2, '0')}-01`;
   const to   = `${year}-${String(month).padStart(2, '0')}-31`;

@@ -264,7 +264,11 @@ export type CanvasContext = {
   tool: typeof CANVAS_TOOL;
 };
 
-export async function loadCanvasContext(): Promise<CanvasContext> {
+// Shared by loadCanvasContext and resolveCanvasBindings, which each fetch the
+// same live health/settings/profile data and derive the same few values from
+// it. Callers keep their own error-handling boundary around the call — this
+// only removes the duplicated fetch+derive lines themselves.
+async function loadLiveFinancialSnapshot() {
   const [health, pretaxRaw, profile] = await Promise.all([
     loadHealthData(),
     getSetting(PRETAX_MONTHLY_KEY),
@@ -274,6 +278,11 @@ export async function loadCanvasContext(): Promise<CanvasContext> {
   const pretaxMonthly = pretaxRaw ? parseFloat(pretaxRaw) : 0;
   const savingsRate = computeSavingsRate(health.monthlyIncome, health.monthlySavings, pretaxMonthly);
   const currentYear = new Date().getFullYear();
+  return { health, taxableBrokerage, pretaxMonthly, savingsRate, currentYear, profile };
+}
+
+export async function loadCanvasContext(): Promise<CanvasContext> {
+  const { health, taxableBrokerage, savingsRate, currentYear, profile } = await loadLiveFinancialSnapshot();
 
   const householdLines: string[] = [];
   if (profile?.self.birthYear) {
@@ -347,15 +356,7 @@ function roundForBinding(key: BindingKey, value: number): number {
 export async function resolveCanvasBindings(spec: CanvasSpec): Promise<CanvasSpec> {
   let values: Partial<Record<BindingKey, number>> = {};
   try {
-    const [health, pretaxRaw, profile] = await Promise.all([
-      loadHealthData(),
-      getSetting(PRETAX_MONTHLY_KEY),
-      loadProfile(),
-    ]);
-    const taxableBrokerage = health.liquid - health.cash;
-    const pretaxMonthly = pretaxRaw ? parseFloat(pretaxRaw) : 0;
-    const savingsRate = computeSavingsRate(health.monthlyIncome, health.monthlySavings, pretaxMonthly);
-    const currentYear = new Date().getFullYear();
+    const { health, taxableBrokerage, savingsRate, currentYear, profile } = await loadLiveFinancialSnapshot();
     const selfAge = profile?.self.birthYear ? currentYear - profile.self.birthYear : undefined;
     const spouseAge = profile?.spouse?.birthYear ? currentYear - profile.spouse.birthYear : undefined;
 

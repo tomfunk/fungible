@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { MONTHS, addDays, weekLabel, type TrendsRange } from './dateUtils.js';
+import { MONTHS, addDays, weekLabel, generatePeriods, type TrendsRange } from './dateUtils.js';
 import { buildSearchMatcher, UNCATEGORIZED } from './queries.js';
 import { buildFilterClause, type Filter } from './filters.js';
 
@@ -43,46 +43,17 @@ export async function generateAllPeriods(range: TrendsRange): Promise<Array<{ la
   const bounds = boundsResult.rows[0] as unknown as { minDate: string | null; maxDate: string | null };
   if (!bounds.minDate || !bounds.maxDate) return [];
 
-  const result: Array<{ label: string; from: string; to: string }> = [];
-
-  if (range === 'month') {
-    let y = parseInt(bounds.minDate.slice(0, 4));
-    let m = parseInt(bounds.minDate.slice(5, 7));
-    const endY = parseInt(bounds.maxDate.slice(0, 4));
-    const endM = parseInt(bounds.maxDate.slice(5, 7));
-    while (y < endY || (y === endY && m <= endM)) {
-      result.push({ label: `${MONTHS[m - 1]} ${y}`, from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-31` });
-      if (++m > 12) { m = 1; y++; }
-    }
-  } else if (range === 'quarter') {
-    let y = parseInt(bounds.minDate.slice(0, 4));
-    let q = Math.floor((parseInt(bounds.minDate.slice(5, 7)) - 1) / 3) + 1;
-    const endY = parseInt(bounds.maxDate.slice(0, 4));
-    const endQ = Math.floor((parseInt(bounds.maxDate.slice(5, 7)) - 1) / 3) + 1;
-    while (y < endY || (y === endY && q <= endQ)) {
-      result.push({ label: `Q${q} ${y}`, from: `${y}-${Q_FROM[q - 1]}-01`, to: `${y}-${Q_TO[q - 1]}-31` });
-      if (++q > 4) { q = 1; y++; }
-    }
-  } else if (range === 'year') {
-    let y = parseInt(bounds.minDate.slice(0, 4));
-    const endY = parseInt(bounds.maxDate.slice(0, 4));
-    while (y <= endY) {
-      result.push({ label: `${y}`, from: `${y}-01-01`, to: `${y}-12-31` });
-      y++;
-    }
-  } else {
+  if (range === 'week') {
+    // Align the start to the most recent Monday on/before the earliest transaction date,
+    // so week buckets match calendar weeks rather than starting mid-week.
     const startResult = await db.execute({
       sql: `SELECT date(?, '-' || ((CAST(strftime('%w', ?) AS INTEGER)+6)%7) || ' days') as ws`,
       args: [bounds.minDate, bounds.minDate],
     });
-    let current = (startResult.rows[0] as unknown as { ws: string }).ws;
-    while (current <= bounds.maxDate) {
-      const to = addDays(current, 6);
-      result.push({ label: weekLabel(current, to), from: current, to });
-      current = addDays(current, 7);
-    }
+    const start = (startResult.rows[0] as unknown as { ws: string }).ws;
+    return generatePeriods(range, start, bounds.maxDate);
   }
-  return result;
+  return generatePeriods(range, bounds.minDate, bounds.maxDate);
 }
 
 export async function getPeriodTotals(view: View, range: TrendsRange, filter?: Filter): Promise<PeriodRow[]> {

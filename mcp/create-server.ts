@@ -1,8 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { executeTool, WRITE_TOOLS } from '../core/tools.js';
-import { loadCanvasContext } from '../core/canvas-agent.js';
-import { buildPriorCanvasesSection } from '../core/canvas-history.js';
+import { buildCanvasContextSections } from '../core/canvas-history.js';
 
 export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServer {
   async function run(name: string, input: Record<string, unknown>) {
@@ -420,12 +419,9 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       prompt: z.string().describe('Natural language question or scenario, e.g. "how long to pay off my mortgage?" or "what if I save $500 more per month?"'),
     },
     async ({ prompt }) => {
-      const { system, tool } = await loadCanvasContext();
+      const sections = await buildCanvasContextSections(prompt);
       const text = [
-        `## User prompt\n${prompt}`,
-        buildPriorCanvasesSection(prompt),
-        `## Canvas instructions\n${system}`,
-        `## render_canvas tool schema\n${JSON.stringify(tool, null, 2)}`,
+        ...sections,
         `Now generate the CanvasSpec JSON by calling render_canvas.`,
       ].filter(Boolean).join('\n\n');
       return { content: [{ type: 'text' as const, text }] };

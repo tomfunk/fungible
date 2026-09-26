@@ -2,6 +2,9 @@ import { db } from './db.js';
 import { calcN } from './calculator.js';
 import { TRAILING_12MO_AVERAGES_SQL } from './queries.js';
 import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
+import { LIQUID_SUBTYPES, RETIREMENT_SUBTYPES } from './account-class.js';
+
+const inClause = (vals: readonly string[]) => vals.map((v) => `'${v}'`).join(', ');
 
 export type HealthData = {
   avgMonthlyExpenses: number;
@@ -68,7 +71,7 @@ export async function loadHealthData(): Promise<HealthData> {
       WHERE (
         a.type = 'depository'
         OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, ''))
-            IN ('brokerage', 'cash isa', 'non-taxable brokerage account'))
+            IN (${inClause(LIQUID_SUBTYPES)}))
       )
       AND a.excluded = 0
       AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
@@ -79,8 +82,7 @@ export async function loadHealthData(): Promise<HealthData> {
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE a.type = 'investment'
         AND LOWER(COALESCE(a.subtype, '')) IN (
-          'ira', '401k', 'roth', '403b', '457b', 'hsa',
-          'roth 401k', 'simple ira', 'sep ira', 'pension'
+          ${inClause(RETIREMENT_SUBTYPES)}
         )
         AND a.excluded = 0
         AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)

@@ -168,7 +168,7 @@ export async function importCsvTransactions(
 }
 
 export async function deleteDuplicate(csvId: string): Promise<void> {
-  await db.execute({ sql: 'DELETE FROM transactions WHERE id = ?', args: [csvId] });
+  await deleteAllDuplicates([csvId]);
 }
 
 export async function deleteAllDuplicates(csvIds: string[]): Promise<void> {
