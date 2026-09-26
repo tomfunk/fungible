@@ -89,8 +89,24 @@ export async function categorize(
   return categorizeWithRules(rules, name, merchant, plaidCategory, amount, accountId);
 }
 
-/** Re-categorize all transactions without a manual override. Returns count updated. */
-export async function applyCategoriesToAll(): Promise<number> {
+/**
+ * Re-categorize all transactions without a manual override. Returns count updated.
+ *
+ * `allowDowngradeToUncategorized` controls what happens to a transaction whose
+ * recomputed category comes back 'Uncategorized' (no rule matched, and no Plaid
+ * category fallback applies) while it currently holds some other category:
+ *
+ *  - false (default): leave it alone. This is the "a rule was just added or
+ *    edited" case (add_rule, upsertCategoryRule, saveCategoryRule without
+ *    deletion) — reapplying rules should only pick up new matches, not blank
+ *    out unrelated rows that happen not to match anything right now.
+ *  - true: apply the downgrade like any other change. This is the "a rule was
+ *    just deleted" case (deleteCategoryRule) — rows that relied on the
+ *    now-gone rule should revert to Uncategorized (or whatever lower-priority
+ *    rule now applies) rather than keep showing a category nothing justifies
+ *    anymore.
+ */
+export async function applyCategoriesToAll(allowDowngradeToUncategorized = false): Promise<number> {
   const rules = await loadCategoryRules();
 
   const txRes = await db.execute(
@@ -104,7 +120,7 @@ export async function applyCategoriesToAll(): Promise<number> {
   const updates: { sql: string; args: (string | number | null)[] }[] = [];
   for (const tx of rows) {
     const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id);
-    if (cat !== 'Uncategorized' && cat !== tx.category) {
+    if (cat !== tx.category && (allowDowngradeToUncategorized || cat !== 'Uncategorized')) {
       updates.push({ sql: 'UPDATE transactions SET category = ? WHERE id = ?', args: [cat, tx.id] });
     }
   }
