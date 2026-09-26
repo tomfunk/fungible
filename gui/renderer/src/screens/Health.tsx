@@ -4,9 +4,9 @@ import { useQuery } from '../hooks/useQuery.js';
 import { fmt, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
 import { computeSavingsRate } from '../../../../core/savings-rate.js';
 import { computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity } from '../../../../core/health-metrics.js';
-import type { SeverityLevel } from '../../../../core/severity.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { DialRow } from '../components/DialRow.js';
+import { severityToClass } from '../lib/severity.js';
 import styles from './Health.module.css';
 
 const DEFAULT_WITHDRAWAL = 4.0;
@@ -14,16 +14,6 @@ const DEFAULT_GROWTH = 7.0;
 const SPEND_STEP = 100;
 const WITHDRAWAL_STEP = 0.5;
 const GROWTH_STEP = 1.0;
-
-// SeverityLevel -> this screen's existing pos/warn/neg/(neutral) class names.
-function severityToClass(level: SeverityLevel): string {
-  switch (level) {
-    case 'good': return 'pos';
-    case 'caution': return 'warn';
-    case 'bad': return 'neg';
-    case 'neutral': return '';
-  }
-}
 
 function roundToStep(n: number): number {
   return Math.round(n / SPEND_STEP) * SPEND_STEP;

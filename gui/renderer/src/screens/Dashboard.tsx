@@ -18,10 +18,10 @@ import {
 } from '../../../../core/dateUtils.js';
 import type { AccountRow, CategoryDrift, DriftSlice, FlexSummary } from '../../../../core/queries.js';
 import { bucketDrift, driftSeverity, ratioLabel } from '../../../../core/scorecard.js';
-import type { SeverityLevel } from '../../../../core/severity.js';
 import { mergeFilters, type Filter } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import type { TxFilter } from '../../../shared/nav.js';
+import { severityToClass } from '../lib/severity.js';
 import styles from './Dashboard.module.css';
 
 type DashView = 'categories' | 'flex' | 'account' | 'owner';
@@ -35,16 +35,6 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; cssVar: string 
 
 function pct(part: number, total: number) {
   return total === 0 ? '0%' : `${Math.round((part / total) * 100)}%`;
-}
-
-// SeverityLevel -> this screen's existing pos/warn/neg/(neutral) class names.
-function severityToClass(level: SeverityLevel): string {
-  switch (level) {
-    case 'good': return 'pos';
-    case 'caution': return 'warn';
-    case 'bad': return 'neg';
-    case 'neutral': return '';
-  }
 }
 
 /**

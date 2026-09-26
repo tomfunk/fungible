@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { Modal } from '../components/Modal.js';
+import { NameModal } from '../components/NameModal.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { fmt } from '../../../../core/fmt.js';
@@ -345,9 +346,10 @@ export function Rules() {
       )}
 
       {addCatOpen && (
-        <CatNameModal
+        <NameModal
           title="New category"
           initial=""
+          placeholder="Category name"
           onClose={() => setAddCatOpen(false)}
           onSave={async (name) => {
             await api.rules.createCategory(name);
@@ -359,9 +361,10 @@ export function Rules() {
       )}
 
       {renameCat && (
-        <CatNameModal
+        <NameModal
           title={`Rename "${renameCat}"`}
           initial={renameCat}
+          placeholder="Category name"
           onClose={() => setRenameCat(null)}
           onSave={async (name) => {
             await api.rules.renameCategory(renameCat, name);
@@ -631,44 +634,6 @@ function TagRuleFormModal({
           Cancel
         </button>
         <button className="btnPrimary" onClick={() => void save()} disabled={!canSave}>
-          Save
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-// ── Category name modal (add / rename) ──────────────────────────────────────
-
-function CatNameModal({
-  title,
-  initial,
-  onClose,
-  onSave,
-}: {
-  title: string;
-  initial: string;
-  onClose: () => void;
-  onSave: (name: string) => void;
-}) {
-  const [name, setName] = useState(initial);
-  return (
-    <Modal title={title} onClose={onClose}>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && name.trim()) onSave(name.trim());
-        }}
-        placeholder="Category name"
-        autoFocus
-        className={styles.modalInput}
-      />
-      <div className="modalActions">
-        <button className="btnSecondary" onClick={onClose}>
-          Cancel
-        </button>
-        <button className="btnPrimary" onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
           Save
         </button>
       </div>
