@@ -138,45 +138,27 @@
   color: var(--text);
 }
 
+/* No flushEdges: several of this screen's tables (category/merchant rows,
+   drift breakdown) paint a hover background on the row
+   (.rowClickable:hover), and a flush-left first column left that highlight
+   with no inset — the same problem Tags' selected-row background had.
+   Composing cellPadding without flushEdges keeps every column, including
+   the first, at the normal 10px inset so the hover/active background never
+   touches the table's edge. */
 .table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13.5px;
+  composes: tableBase cellPadding rowDividers from '../styles/table.module.css';
 }
 
 .table td,
 .table th {
-  padding: var(--table-row-padding) 10px;
   text-align: right;
-  white-space: nowrap;
-}
-
-.table td:first-child,
-.table th:first-child {
-  padding-left: 0;
-}
-.table td:last-child,
-.table th:last-child {
-  padding-right: 0;
-}
-
-.table tbody tr {
-  border-bottom: 1px solid var(--rule-soft);
-}
-.table tbody tr:last-child {
-  border-bottom: none;
 }
 
 .th,
 .thActive {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
-  font-weight: 400;
+  composes: headerLabel from '../styles/table.module.css';
   cursor: pointer;
   user-select: none;
-  border-bottom: 1px solid var(--rule);
 }
 
 .th:hover {

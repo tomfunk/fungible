@@ -115,9 +115,7 @@
 }
 
 .table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13.5px;
+  composes: tableBase rowDividers from '../styles/table.module.css';
 }
 
 .table td {
@@ -126,11 +124,8 @@
   white-space: nowrap;
 }
 
-.table tbody tr {
-  border-bottom: 1px solid var(--rule-soft);
-}
-.table tbody tr:last-child {
-  border-bottom: none;
+.table td:last-child {
+  padding-right: 10px;
 }
 
 .tdName {

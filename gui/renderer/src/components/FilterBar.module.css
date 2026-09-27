@@ -127,8 +127,9 @@
   color: var(--text);
 }
 
+/* Checkbox itself is flattened globally — see theme.css's
+   input[type='checkbox'] rules. */
 .check input {
-  accent-color: var(--accent);
   margin: 0;
 }
 

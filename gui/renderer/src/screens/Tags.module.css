@@ -73,41 +73,16 @@
    table's min-content width is comfortably under the .columns grid's 1fr
    share at every width down to the app's 900px minimum — verified live. */
 .table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13.5px;
+  composes: tableBase cellPadding rowDividers from '../styles/table.module.css';
 }
 
 .table td,
 .table th {
-  padding: var(--table-row-padding) 10px;
   text-align: right;
-  white-space: nowrap;
-}
-
-.table td:first-child,
-.table th:first-child {
-  padding-left: 0;
-}
-.table td:last-child,
-.table th:last-child {
-  padding-right: 0;
-}
-
-.table tbody tr {
-  border-bottom: 1px solid var(--rule-soft);
-}
-.table tbody tr:last-child {
-  border-bottom: none;
 }
 
 .th {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-faint);
-  font-weight: 400;
-  border-bottom: 1px solid var(--rule);
+  composes: headerLabel from '../styles/table.module.css';
 }
 
 .th:first-child {
