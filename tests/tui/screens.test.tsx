@@ -2495,6 +2495,10 @@ describe('Accounts', () => {
   // linkMsg slot. It has to be captured from the chunk and pinned separately —
   // on Linux there is no `open`, so it is the only way into the Plaid flow.
   describe('link URL capture', () => {
+    it('pins an https origin when an OAuth redirect is configured', () => {
+      expect(extractLinkUrl('Opening https://localhost:4747 …')).toBe('https://localhost:4747');
+    });
+
     it('extracts the URL from the line link.ts prints', () => {
       expect(extractLinkUrl('Opening http://localhost:4747 …')).toBe('http://localhost:4747');
     });

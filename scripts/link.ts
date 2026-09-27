@@ -1,10 +1,12 @@
 import 'dotenv/config';
-import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { initDb } from '../core/db.js';
 import {
-  clampDaysRequested, completeLink, createFlowLinkToken, linkPage, successPage,
+  clampDaysRequested, completeLink, createFlowLinkToken, linkPage, oauthReturnPage, successPage,
 } from '../core/plaid-link-flow.js';
+import {
+  createLinkServer, linkRoute, linkServerOrigin, loadLinkTls, resolveOAuthRedirect,
+} from '../core/plaid-oauth.js';
 
 const PORT = 4747;
 
@@ -30,18 +32,31 @@ async function main() {
   // place rather than link a new one.
   const updateItemId = process.env.PLAID_UPDATE_ITEM_ID || undefined;
   const daysRequested = resolveDaysRequested();
+  // The optional OAuth redirect and its certificate are checked before Plaid is
+  // contacted, so a bad setting fails here rather than halfway through linking.
+  const redirect = resolveOAuthRedirect();
+  const tls = loadLinkTls(redirect);
+  const port = redirect?.port ?? PORT;
 
   log(updateItemId ? 'Creating Plaid update-mode link token…' : 'Creating Plaid link token…');
-  const linkToken = await createFlowLinkToken({ updateItemId, daysRequested });
+  const linkToken = await createFlowLinkToken({ updateItemId, daysRequested, redirectUri: redirect?.uri });
 
-  const server = http.createServer(async (req, res) => {
-    if (req.method === 'GET' && req.url === '/') {
+  const server = createLinkServer(async (req, res) => {
+    const route = linkRoute(req.method, req.url, redirect);
+    if (route === 'page') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(linkPage(linkToken, { updateMode: !!updateItemId }));
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/callback') {
+    // An OAuth bank that could not use a popup sends the whole tab back here.
+    if (route === 'oauth-return') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(oauthReturnPage(linkToken, { updateMode: !!updateItemId }));
+      return;
+    }
+
+    if (route === 'callback') {
       let body = '';
       req.on('data', (chunk) => { body += chunk; });
       req.on('end', async () => {
@@ -80,20 +95,20 @@ async function main() {
 
     res.writeHead(404);
     res.end();
-  });
+  }, tls);
 
   // listen() reports failure as an async 'error' event, which main().catch never
   // sees — without this an EADDRINUSE surfaces to the user as a raw stack trace
   // in the link panel.
   server.on('error', (err: NodeJS.ErrnoException) => {
     console.error(err.code === 'EADDRINUSE'
-      ? `Link failed: port ${PORT} is already in use — another link is still running. Close it, then try again.`
+      ? `Link failed: port ${port}${redirect ? ' (set by PLAID_REDIRECT_URI)' : ''} is already in use — another link is still running. Close it, then try again.`
       : `Link failed: ${err.message}`);
     process.exit(1);
   });
 
-  server.listen(PORT, '127.0.0.1', () => {
-    const url = `http://localhost:${PORT}`;
+  server.listen(port, '127.0.0.1', () => {
+    const url = linkServerOrigin(redirect, port);
     log(`Opening ${url} …`);
     execFile('open', [url]);
     log('Waiting for you to connect in the browser…');
