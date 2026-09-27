@@ -134,6 +134,16 @@ describe('link pages', () => {
     expect(html).not.toContain("addEventListener('click'");
   });
 
+  // The shared shell must not change what the existing Link page says.
+  it('the Link page keeps its title and wording in both modes', () => {
+    expect(linkPage('t')).toContain('<title>Fungible — Connect Bank</title>');
+    expect(linkPage('t')).toContain('<button id="connect-btn">Connect Bank</button>');
+    const update = linkPage('t', { updateMode: true });
+    expect(update).toContain('<title>Fungible — Update Link</title>');
+    expect(update).toContain('Your existing accounts and transactions are kept.');
+    expect(update).toContain('<button id="connect-btn">Update Credentials</button>');
+  });
+
   it('the OAuth return page keeps update-mode wording', () => {
     expect(oauthReturnPage('link-tok', { updateMode: true })).toContain('Link updated');
   });
