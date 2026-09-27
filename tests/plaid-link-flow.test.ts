@@ -38,7 +38,7 @@ beforeEach(async () => {
 describe('createFlowLinkToken', () => {
   it('sends no access token when adding a bank', async () => {
     await createFlowLinkToken({ daysRequested: 365 });
-    expect(createLinkToken).toHaveBeenCalledWith('local-user', 365, undefined);
+    expect(createLinkToken).toHaveBeenCalledWith('local-user', 365, undefined, undefined);
   });
 
   it('sends the stored access token in update mode, decrypted', async () => {
@@ -47,7 +47,12 @@ describe('createFlowLinkToken', () => {
       args: ['item-1', 'enc(access-existing)', 'Tartan Bank', 365],
     });
     await createFlowLinkToken({ updateItemId: 'item-1' });
-    expect(createLinkToken).toHaveBeenCalledWith('local-user', undefined, 'access-existing');
+    expect(createLinkToken).toHaveBeenCalledWith('local-user', undefined, 'access-existing', undefined);
+  });
+
+  it('forwards the redirect URI', async () => {
+    await createFlowLinkToken({ daysRequested: 365, redirectUri: 'https://localhost:4747/oauth-return' });
+    expect(createLinkToken).toHaveBeenCalledWith('local-user', 365, undefined, 'https://localhost:4747/oauth-return');
   });
 
   it('refuses to update an item that is not in the database', async () => {

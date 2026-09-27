@@ -33,9 +33,10 @@ export type LinkFlowOptions = {
 /**
  * Creates the link_token for a flow, resolving the stored access token first
  * when this is an update. Throws if the item to update isn't in the database.
+ * `redirectUri` is the validated PLAID_REDIRECT_URI, when one is configured.
  */
-export async function createFlowLinkToken(opts: LinkFlowOptions = {}): Promise<string> {
-  const { updateItemId, daysRequested } = opts;
+export async function createFlowLinkToken(opts: LinkFlowOptions & { redirectUri?: string } = {}): Promise<string> {
+  const { updateItemId, daysRequested, redirectUri } = opts;
   let accessToken: string | undefined;
 
   if (updateItemId) {
@@ -47,7 +48,7 @@ export async function createFlowLinkToken(opts: LinkFlowOptions = {}): Promise<s
     accessToken = decryptToken((res.rows[0] as unknown as { access_token: string }).access_token);
   }
 
-  return createLinkToken('local-user', daysRequested, accessToken);
+  return createLinkToken('local-user', daysRequested, accessToken, redirectUri);
 }
 
 export type LinkCallbackResult = {

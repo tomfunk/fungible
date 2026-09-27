@@ -73,4 +73,22 @@ describe('createLinkToken', () => {
     await createLinkToken('local-user');
     expect(lastRequest().update).toBeUndefined();
   });
+
+  it('sends no redirect_uri unless one is configured', async () => {
+    await createLinkToken('local-user', 365);
+    expect(lastRequest().redirect_uri).toBeUndefined();
+  });
+
+  it('sends the redirect URI when adding a bank', async () => {
+    await createLinkToken('local-user', 365, undefined, 'https://localhost:4747/oauth-return');
+    expect(lastRequest().redirect_uri).toBe('https://localhost:4747/oauth-return');
+  });
+
+  // Re-authenticating an OAuth Item goes back through the bank, so update mode
+  // needs the redirect too (https://plaid.com/docs/link/update-mode/).
+  it('sends the redirect URI in update mode', async () => {
+    await createLinkToken('local-user', undefined, 'access-abc', 'https://localhost:4747/oauth-return');
+    expect(lastRequest().redirect_uri).toBe('https://localhost:4747/oauth-return');
+    expect(lastRequest().products).toBeUndefined();
+  });
 });
