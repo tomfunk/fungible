@@ -1,0 +1,87 @@
+/* Shared <table> scaffold, composed into a screen's own .table (and .th)
+   classes rather than copy-pasted. Each piece below is deliberately narrow so
+   a screen only pulls in the parts that actually match its layout — see
+   table.module.css.md-style notes inline. Getting this wrong once (a right-
+   padding rule quietly dropped from one screen's copy, then having to be
+   re-added six times across Accounts/Dashboard/NetWorth/Rules/Tags/
+   Transactions) is exactly the drift this file exists to prevent.
+
+   Usage, in a screen's own *.module.css:
+
+     .table {
+       composes: tableBase cellPadding rowDividers
+         from '../styles/table.module.css';
+     }
+     .table td,
+     .table th {
+       text-align: left; // or right -- screen-specific, not shared
+     }
+     .th {
+       composes: headerLabel from '../styles/table.module.css';
+     }
+
+   Every screen composing this keeps the first column at the same 10px inset
+   as every other column -- NOT flush against the panel edge. An earlier
+   version of this file also offered a `flushEdges` piece (zero the first
+   column's left padding, so it lines up with the page's h1/h2 instead) and
+   Accounts/Dashboard/Rules used it. That looked fine at rest, but every one
+   of those tables also paints a hover/click background on the row
+   (.row:hover, .rowClickable:hover), and a flush-left first column left
+   that highlight sitting with no inset at all -- text pressed right against
+   the highlight box's edge. Tags' selected-row background already avoided
+   this by keeping the normal inset on both sides; Accounts/Dashboard/Rules
+   were fixed the same way, and `flushEdges` was removed since nothing needs
+   it anymore. If a future table is genuinely static (no row hover/selection
+   background), flush-left could still make sense -- but re-add it as an
+   opt-in piece rather than assuming it's safe by default.
+
+   Not every table fits this shape -- don't force it:
+   - Transactions uses table-layout: fixed with per-column td classes
+     (tdDate/tdCat/tdTags/tdActions/...) handling their own padding instead of
+     first-child/last-child zeroing, so it doesn't compose from here.
+   - NetWorth's right-aligned figure table has zero horizontal td padding
+     (only .table td:last-child gets an explicit 10px) rather than the usual
+     10px-both-sides pattern, so it composes only tableBase + rowDividers and
+     keeps its own padding rules. It has the same row-hover background as
+     Accounts/Dashboard/Rules (.accountRow:hover td) but wasn't part of this
+     round's fix -- worth the same treatment if it turns out to have the
+     same flush-highlight problem. */
+
+.tableBase {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+/* Cell padding + no-wrap. Deliberately leaves text-align out -- screens
+   disagree on that (left-aligned name/pattern lists vs. right-aligned
+   figure tables), so each screen still sets it in its own `.table td,
+   .table th` rule alongside composing this. */
+.cellPadding td,
+.cellPadding th {
+  padding: var(--table-row-padding) 10px;
+  white-space: nowrap;
+}
+
+/* Row separators: every row gets a soft bottom rule, and the last one loses
+   it so the table doesn't end in a double line against the panel's own
+   border/next element. */
+.rowDividers tbody tr {
+  border-bottom: 1px solid var(--rule-soft);
+}
+.rowDividers tbody tr:last-child {
+  border-bottom: none;
+}
+
+/* Column header label look: small caps, faint, with the header/body divider
+   rule. Compose this into a screen's own .th (and add cursor/user-select
+   there too, for a sortable header -- those aren't universal so they stay
+   local). */
+.headerLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 400;
+  border-bottom: 1px solid var(--rule);
+}

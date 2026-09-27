@@ -176,6 +176,48 @@ select:focus {
   border-color: var(--accent);
 }
 
+/* Checkboxes are native `appearance: auto` elements by default, which means
+   they ignore the border/background/padding rules above entirely and render
+   as the OS/Chromium widget instead — a filled white box with a hard border
+   in dark theme, clashing with the app's flat chrome (this is what
+   `accent-color` alone, set ad hoc in a couple of screens, doesn't fix: it
+   only recolors the native widget, it doesn't flatten it). `appearance: none`
+   here opts every checkbox in the app into the same flat, minimal box,
+   colored from the same tokens as everything else, in one place instead of
+   per-screen. */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-raised);
+  vertical-align: middle;
+  cursor: pointer;
+  flex: none;
+}
+
+input[type='checkbox']:hover {
+  border-color: var(--text-dim);
+}
+
+input[type='checkbox']:checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3 3 7-7' fill='none' stroke='%2306281f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 10px 10px;
+}
+
+input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
