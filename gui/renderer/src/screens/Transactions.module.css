@@ -105,7 +105,7 @@
 }
 
 .colCheck {
-  width: 22px;
+  width: 30px;
 }
 .colDate {
   width: 110px;
@@ -126,6 +126,17 @@
 .table thead th {
   padding: 0 0 var(--table-header-padding-bottom);
   text-align: left;
+}
+
+/* Every other edge of a row already has breathing room from the table's
+   true boundary -- tdTags/tdActions get an explicit padding-right so
+   content (and a hovered row's highlight) never touches the right edge.
+   The checkbox column had no equivalent on the left: it sat flush against
+   the table's true left edge, so a hovered/selected row's background butted
+   right up against it while the same row's right edge had a clear inset.
+   Match the right side's treatment here instead of leaving the left flush. */
+.table thead th:first-child {
+  padding-left: 10px;
 }
 
 .table tbody td {
@@ -187,6 +198,11 @@
 
 .tdCheck {
   vertical-align: middle;
+  /* !important for the same reason tdTags/tdActions need it on
+     padding-right: `.table tbody td` is more specific (class + 2 elements)
+     than a single class selector, so its padding shorthand (which zeroes
+     every side) would otherwise win over this. */
+  padding-left: 10px !important;
 }
 /* Checkbox itself is flattened globally — see theme.css's
    input[type='checkbox'] rules. */
