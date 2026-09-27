@@ -51,12 +51,14 @@ export function resolveOAuthRedirect(env: NodeJS.ProcessEnv = process.env): OAut
     refuse(`must point at localhost, because the bank sends you back to fungible's link server on this machine. Example: ${EXAMPLE}`);
   }
   if (url.port === '') refuse(`must include an explicit port other than 80 or 443. Example: ${EXAMPLE}`);
+  const port = Number(url.port);
+  if (port < 1024) refuse(`must use a port between 1024 and 65535, which fungible can listen on. Example: ${EXAMPLE}`);
+  if (url.pathname === '/' || url.pathname === '/callback') {
+    refuse(`needs its own path (not "/" or "/callback"). Example: ${EXAMPLE}`);
+  }
   const canonical = url.origin + url.pathname;
   if (raw !== canonical) {
     refuse(`must be written exactly as the browser will see it, so it matches what you register with Plaid: ${canonical}`);
-  }
-  if (url.pathname === '/' || url.pathname === '/callback') {
-    refuse(`needs its own path (not "/" or "/callback"). Example: ${EXAMPLE}`);
   }
 
   const plaidEnv = env.PLAID_ENV ?? 'sandbox';
@@ -74,7 +76,7 @@ export function resolveOAuthRedirect(env: NodeJS.ProcessEnv = process.env): OAut
     tls = { certPath, keyPath };
   }
 
-  return { uri: raw, pathname: url.pathname, port: Number(url.port), tls };
+  return { uri: raw, pathname: url.pathname, port, tls };
 }
 
 /**

@@ -106,11 +106,11 @@ These banks send you to their own site to sign in. In a desktop browser Plaid op
 If popups are not an option, fungible can take the bank's full-page redirect instead. Plaid accepts `http://localhost` redirect URIs only in sandbox; in production the redirect must be HTTPS, so the local link server needs a certificate for `localhost`, for example from [mkcert](https://github.com/FiloSottile/mkcert):
 
 ```bash
-mkcert -install
+mkcert -install   # adds mkcert's local CA to your system trust store (once)
 mkcert -cert-file ~/.fungible/localhost.pem -key-file ~/.fungible/localhost-key.pem localhost
 ```
 
-Then add to `~/.fungible/.env`:
+Then add to `~/.fungible/.env`, using full paths (`~` is not expanded there):
 
 ```
 PLAID_REDIRECT_URI=https://localhost:4747/oauth-return

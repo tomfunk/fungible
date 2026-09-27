@@ -41,7 +41,9 @@ describe('resolveOAuthRedirect', () => {
     ['http://localhost/r', /explicit port/],
     ['https://localhost:443/r', /explicit port/],
     ['http://LOCALHOST:4747/r', /http:\/\/localhost:4747\/r/],
-    ['http://localhost:4747', /http:\/\/localhost:4747\//],
+    ['http://localhost:4747', /own path/],
+    ['http://localhost:0/r', /between 1024 and 65535/],
+    ['http://localhost:1023/r', /between 1024 and 65535/],
     ['http://localhost:4747/', /own path/],
     ['http://localhost:4747/callback', /own path/],
   ])('rejects %s', (uri, msg) => {
@@ -75,7 +77,11 @@ describe('loadLinkTls', () => {
     fs.writeFileSync(path.join(dir, 'k.pem'), 'not a key');
     const cfg = resolve({ PLAID_REDIRECT_URI: 'https://localhost:4747/r',
       FUNGIBLE_LINK_TLS_CERT: path.join(dir, 'c.pem'), FUNGIBLE_LINK_TLS_KEY: path.join(dir, 'k.pem') });
-    expect(() => loadLinkTls(cfg)).toThrow(/could not be loaded/);
+    try {
+      expect(() => loadLinkTls(cfg)).toThrow(/could not be loaded/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

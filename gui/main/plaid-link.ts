@@ -148,8 +148,9 @@ export function runPlaidLink(
         const port = typeof addr === 'object' && addr ? addr.port : 0;
         // 127.0.0.1, not localhost: the server listens IPv4-only, and on some
         // systems localhost resolves to ::1 first and the connection fails.
-        // With a redirect configured the browser must use its origin instead, so
-        // the certificate and the bank's return address both match.
+        // A configured redirect is the exception: Plaid's allowlist and the
+        // certificate name localhost, so the browser has to use that name and
+        // rely on falling back from ::1 to 127.0.0.1, as scripts/link.ts does.
         void shell.openExternal(linkServerOrigin(redirect, port, '127.0.0.1'));
       });
 

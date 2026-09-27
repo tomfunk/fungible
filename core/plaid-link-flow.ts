@@ -177,7 +177,11 @@ function linkScript(linkToken: string, updateMode: boolean, resume: boolean): st
       handler.open();
     }
 
-    ${resume ? 'openLink();' : "btn.addEventListener('click', openLink);"}
+    ${resume
+      // An oauth_state_id is single-use, so if Link exits here the way forward is
+      // a fresh start from the Link page rather than re-opening this one.
+      ? "btn.addEventListener('click', () => { location.href = '/'; });\n    openLink();"
+      : "btn.addEventListener('click', openLink);"}
   </script>`;
 }
 
@@ -203,7 +207,7 @@ export function oauthReturnPage(linkToken: string, opts: { updateMode?: boolean 
   return linkShell(
     'Fungible: Finishing connection',
     'Finishing your bank connection...',
-    '<button id="connect-btn" disabled>Resuming...</button>',
+    '<button id="connect-btn">Start over</button>',
     linkScript(linkToken, updateMode, true),
   );
 }

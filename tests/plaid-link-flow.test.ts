@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../core/db.js', async () => {
@@ -116,22 +117,61 @@ describe('completeLink', () => {
   });
 });
 
+/**
+ * Runs a page's inline Link script against a stand-in Plaid and DOM, so the tests
+ * exercise what the browser would do rather than what the source text contains.
+ */
+function runPage(html: string, href = 'http://localhost:4747/') {
+  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
+  const el = () => ({ textContent: '', className: '', disabled: false, listeners: {} as Record<string, () => void>,
+    addEventListener(type: string, fn: () => void) { this.listeners[type] = fn; } });
+  const btn = el();
+  const status = el();
+  const created: Record<string, any>[] = [];
+  let opened = 0;
+  const location = { href };
+  const context = {
+    document: { getElementById: (id: string) => (id === 'connect-btn' ? btn : status) },
+    Plaid: { create: (cfg: Record<string, any>) => { created.push(cfg); return { open: () => { opened++; } }; } },
+    window: { location },
+    location,
+    fetch: async () => ({ ok: true, text: async () => '' }),
+  };
+  vm.runInNewContext(script, context);
+  return { btn, status, created, opened: () => opened, location };
+}
+
 describe('link pages', () => {
-  it('the Link page waits for a click and does not claim an OAuth return', () => {
-    const html = linkPage('link-tok');
-    expect(html).toContain("token: 'link-tok'");
-    expect(html).toContain("btn.addEventListener('click', openLink)");
-    expect(html).not.toContain('receivedRedirectUri');
+  it('the Link page opens Link on click, without an OAuth return', () => {
+    const page = runPage(linkPage('link-tok'));
+    expect(page.opened()).toBe(0);
+    page.btn.listeners.click();
+    expect(page.opened()).toBe(1);
+    expect(page.created[0].token).toBe('link-tok');
+    expect(page.created[0]).not.toHaveProperty('receivedRedirectUri');
   });
 
   // Plaid requires the same link token plus the full URL the bank returned to.
-  it('the OAuth return page resumes Link at once with the same token', () => {
-    const html = oauthReturnPage('link-tok');
-    expect(html).toContain("token: 'link-tok'");
-    expect(html).toContain('receivedRedirectUri: window.location.href');
-    expect(html).toContain("fetch('/callback'");
-    expect(html).toMatch(/\n\s*openLink\(\);/);
-    expect(html).not.toContain("addEventListener('click'");
+  it('the OAuth return page resumes Link at once with the same token and the returned URL', () => {
+    const href = 'https://localhost:4747/oauth-return?oauth_state_id=abc';
+    const page = runPage(oauthReturnPage('link-tok'), href);
+    expect(page.opened()).toBe(1);
+    expect(page.created[0].token).toBe('link-tok');
+    expect(page.created[0].receivedRedirectUri).toBe(href);
+  });
+
+  // An oauth_state_id can only be used once, so after an exit the way forward is
+  // a fresh start from the Link page, not re-opening this one.
+  it('the OAuth return page offers a way back to the start', () => {
+    const page = runPage(oauthReturnPage('link-tok'), 'https://localhost:4747/oauth-return?oauth_state_id=abc');
+    page.btn.listeners.click();
+    expect(page.location.href).toBe('/');
+  });
+
+  it('the OAuth return page completes through the same callback', async () => {
+    const page = runPage(oauthReturnPage('link-tok', { updateMode: true }));
+    await page.created[0].onSuccess('public-abc', { institution: { name: 'Tartan Bank' } });
+    expect(page.status.textContent).toBe('Link updated! You can close this window.');
   });
 
   // The shared shell must not change what the existing Link page says.
@@ -144,15 +184,24 @@ describe('link pages', () => {
     expect(update).toContain('<button id="connect-btn">Update Credentials</button>');
   });
 
-  it('the OAuth return page keeps update-mode wording', () => {
-    expect(oauthReturnPage('link-tok', { updateMode: true })).toContain('Link updated');
-  });
-
   // The error code is what separates a registration gap (INSTITUTION_REGISTRATION_REQUIRED)
   // from a bug, and the session id is what Plaid's Dashboard logs are searched by.
   it.each([['link page', linkPage('t')], ['return page', oauthReturnPage('t')]])(
     'the %s shows the error code and Link session on exit', (_name, html) => {
-      expect(html).toContain('err.error_code');
-      expect(html).toContain('metadata.link_session_id');
+      const page = runPage(html);
+      if (!page.created.length) page.btn.listeners.click();
+      page.created[0].onExit(
+        { error_code: 'INSTITUTION_REGISTRATION_REQUIRED', error_message: 'not registered', display_message: null },
+        { link_session_id: 'sess-1' },
+      );
+      expect(page.status.textContent).toBe('not registered (INSTITUTION_REGISTRATION_REQUIRED) Link session: sess-1');
+      expect(page.status.className).toBe('status error');
     });
+
+  it('prefers Plaid\'s user-facing message when there is one', () => {
+    const page = runPage(linkPage('t'));
+    page.btn.listeners.click();
+    page.created[0].onExit({ error_code: 'X', error_message: 'dev text', display_message: 'Try again later.' }, {});
+    expect(page.status.textContent).toBe('Try again later. (X)');
+  });
 });
