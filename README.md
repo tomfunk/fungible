@@ -99,6 +99,27 @@ For first-launch caveats on the un-notarized installers (Gatekeeper, SmartScreen
 
 Data and config live at `~/.fungible/` (override with `$FUNGIBLE_DATA_DIR`). Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your accounts. A free [Plaid](https://plaid.com) developer account (sandbox tier) is enough.
 
+### Banks that use OAuth (Chase, Amex, Wells Fargo, ...)
+
+These banks send you to their own site to sign in. In a desktop browser Plaid opens that site in a popup, which needs no setup. If Link fails before you reach the bank, the page shows Plaid's error code and Link session ID. In production, a code like `INSTITUTION_REGISTRATION_REQUIRED` means your Plaid team is not yet enabled for that bank: check [US OAuth institutions](https://dashboard.plaid.com/settings/compliance/us-oauth-institutions) in the Plaid Dashboard (Chase also requires the security questionnaire).
+
+If popups are not an option, fungible can take the bank's full-page redirect instead. Plaid accepts `http://localhost` redirect URIs only in sandbox; in production the redirect must be HTTPS, so the local link server needs a certificate for `localhost`, for example from [mkcert](https://github.com/FiloSottile/mkcert):
+
+```bash
+mkcert -install
+mkcert -cert-file ~/.fungible/localhost.pem -key-file ~/.fungible/localhost-key.pem localhost
+```
+
+Then add to `~/.fungible/.env`:
+
+```
+PLAID_REDIRECT_URI=https://localhost:4747/oauth-return
+FUNGIBLE_LINK_TLS_CERT=/Users/you/.fungible/localhost.pem
+FUNGIBLE_LINK_TLS_KEY=/Users/you/.fungible/localhost-key.pem
+```
+
+and register the same URI, exactly as written, under Allowed redirect URIs on the Plaid Dashboard's [Developers > API](https://dashboard.plaid.com/developers/api) page. The link server then listens on that port, over HTTPS. Leave `PLAID_REDIRECT_URI` unset to keep the default behaviour.
+
 ## Running
 
 | Command | What starts |
