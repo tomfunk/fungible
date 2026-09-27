@@ -11,7 +11,8 @@ import { MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from './settings.js';
  * server and reports progress on stdout for the TUI to parse, while
  * `gui/main/plaid-link.ts` uses an ephemeral port, a timeout and a cancel hook.
  * Those stay with their callers; everything below is shared so the two can't
- * drift apart on the details that actually matter.
+ * drift apart on the details that actually matter. The optional OAuth redirect
+ * (validation, TLS, routes) lives in core/plaid-oauth.ts.
  */
 
 /** Clamp a requested history window to Plaid's accepted bounds. */
@@ -86,14 +87,16 @@ export async function completeLink(body: string, opts: LinkFlowOptions = {}): Pr
   return { itemId, institutionName, updateMode: false };
 }
 
-/** The page that hosts Plaid Link itself, served at the flow's root URL. */
-export function linkPage(linkToken: string, opts: { updateMode?: boolean } = {}): string {
-  const updateMode = !!opts.updateMode;
+/**
+ * The page chrome shared by the Link page and the OAuth return page. Both keep
+ * the `connect-btn` and `status` elements, which the shared Link script drives.
+ */
+function linkShell(title: string, message: string, button: string, script: string): string {
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Fungible — ${updateMode ? 'Update Link' : 'Connect Bank'}</title>
+  <title>${title}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; display: flex; align-items: center; justify-content: center; height: 100vh; }
@@ -110,21 +113,33 @@ export function linkPage(linkToken: string, opts: { updateMode?: boolean } = {})
 <body>
   <div class="card">
     <h1>fungible</h1>
-    <p>${updateMode
-      ? 'Sign in again to update the credentials for this link. Your existing accounts and transactions are kept.'
-      : 'Connect your bank account to start tracking expenses.'}</p>
-    <button id="connect-btn">${updateMode ? 'Update Credentials' : 'Connect Bank'}</button>
+    <p>${message}</p>
+    ${button}
     <div class="status" id="status"></div>
   </div>
 
-  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  ${script}
+</body>
+</html>`;
+}
+
+/**
+ * The Plaid Link script shared by both pages, so success and exit handling can't
+ * drift between them. `resume` is the OAuth return leg: Plaid requires the same
+ * link token plus the full URL the bank sent the browser back to, and Link opens
+ * straight away instead of waiting for a click.
+ * See https://plaid.com/docs/link/oauth/
+ */
+function linkScript(linkToken: string, updateMode: boolean, resume: boolean): string {
+  return `<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
   <script>
     const btn = document.getElementById('connect-btn');
     const status = document.getElementById('status');
 
-    btn.addEventListener('click', () => {
+    function openLink() {
       const handler = Plaid.create({
-        token: '${linkToken}',
+        token: '${linkToken}',${resume ? `
+        receivedRedirectUri: window.location.href,` : ''}
         onSuccess: async (publicToken, metadata) => {
           btn.disabled = true;
           status.textContent = '${updateMode ? 'Updating' : 'Connecting'}...';
@@ -147,18 +162,50 @@ export function linkPage(linkToken: string, opts: { updateMode?: boolean } = {})
             btn.disabled = false;
           }
         },
-        onExit: (err) => {
+        onExit: (err, metadata) => {
           if (err) {
+            // The error code tells a registration gap (e.g. INSTITUTION_REGISTRATION_REQUIRED)
+            // apart from a bug; the session id finds this attempt in Plaid's Dashboard logs.
+            let msg = err.display_message || err.error_message || 'Exited without connecting.';
+            if (err.error_code) msg += ' (' + err.error_code + ')';
+            if (metadata && metadata.link_session_id) msg += ' Link session: ' + metadata.link_session_id;
             status.className = 'status error';
-            status.textContent = err.display_message || 'Exited without connecting.';
+            status.textContent = msg;
           }
         },
       });
       handler.open();
-    });
-  </script>
-</body>
-</html>`;
+    }
+
+    ${resume ? 'openLink();' : "btn.addEventListener('click', openLink);"}
+  </script>`;
+}
+
+/** The page that hosts Plaid Link itself, served at the flow's root URL. */
+export function linkPage(linkToken: string, opts: { updateMode?: boolean } = {}): string {
+  const updateMode = !!opts.updateMode;
+  return linkShell(
+    `Fungible — ${updateMode ? 'Update Link' : 'Connect Bank'}`,
+    updateMode
+      ? 'Sign in again to update the credentials for this link. Your existing accounts and transactions are kept.'
+      : 'Connect your bank account to start tracking expenses.',
+    `<button id="connect-btn">${updateMode ? 'Update Credentials' : 'Connect Bank'}</button>`,
+    linkScript(linkToken, updateMode, false),
+  );
+}
+
+/**
+ * The page an OAuth bank sends the browser back to (PLAID_REDIRECT_URI's path),
+ * used when the bank could not open in a popup. It resumes the same Link session.
+ */
+export function oauthReturnPage(linkToken: string, opts: { updateMode?: boolean } = {}): string {
+  const updateMode = !!opts.updateMode;
+  return linkShell(
+    'Fungible: Finishing connection',
+    'Finishing your bank connection...',
+    '<button id="connect-btn" disabled>Resuming...</button>',
+    linkScript(linkToken, updateMode, true),
+  );
 }
 
 /** Confirmation page served once the callback has been handled. */

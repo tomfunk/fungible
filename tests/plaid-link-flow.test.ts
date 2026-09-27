@@ -17,7 +17,7 @@ vi.mock('../core/crypto.js', () => ({
 
 import { db } from '../core/db.js';
 import { createLinkToken, exchangePublicToken } from '../core/plaid.js';
-import { completeLink, createFlowLinkToken } from '../core/plaid-link-flow.js';
+import { completeLink, createFlowLinkToken, linkPage, oauthReturnPage } from '../core/plaid-link-flow.js';
 
 const CALLBACK_BODY = JSON.stringify({
   public_token: 'public-abc',
@@ -114,4 +114,35 @@ describe('completeLink', () => {
     const all = await db.execute('SELECT item_id FROM plaid_items');
     expect(all.rows.map((r) => (r as unknown as { item_id: string }).item_id)).toEqual(['item-1']);
   });
+});
+
+describe('link pages', () => {
+  it('the Link page waits for a click and does not claim an OAuth return', () => {
+    const html = linkPage('link-tok');
+    expect(html).toContain("token: 'link-tok'");
+    expect(html).toContain("btn.addEventListener('click', openLink)");
+    expect(html).not.toContain('receivedRedirectUri');
+  });
+
+  // Plaid requires the same link token plus the full URL the bank returned to.
+  it('the OAuth return page resumes Link at once with the same token', () => {
+    const html = oauthReturnPage('link-tok');
+    expect(html).toContain("token: 'link-tok'");
+    expect(html).toContain('receivedRedirectUri: window.location.href');
+    expect(html).toContain("fetch('/callback'");
+    expect(html).toMatch(/\n\s*openLink\(\);/);
+    expect(html).not.toContain("addEventListener('click'");
+  });
+
+  it('the OAuth return page keeps update-mode wording', () => {
+    expect(oauthReturnPage('link-tok', { updateMode: true })).toContain('Link updated');
+  });
+
+  // The error code is what separates a registration gap (INSTITUTION_REGISTRATION_REQUIRED)
+  // from a bug, and the session id is what Plaid's Dashboard logs are searched by.
+  it.each([['link page', linkPage('t')], ['return page', oauthReturnPage('t')]])(
+    'the %s shows the error code and Link session on exit', (_name, html) => {
+      expect(html).toContain('err.error_code');
+      expect(html).toContain('metadata.link_session_id');
+    });
 });
