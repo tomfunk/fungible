@@ -5,7 +5,7 @@ import {
   clampDaysRequested, completeLink, createFlowLinkToken, linkPage, oauthReturnPage, successPage,
 } from '../core/plaid-link-flow.js';
 import {
-  createLinkServer, linkRoute, linkServerOrigin, loadLinkTls, resolveOAuthRedirect,
+  createLinkServer, linkListenErrorMessage, linkRoute, linkServerOrigin, loadLinkTls, resolveOAuthRedirect,
 } from '../core/plaid-oauth.js';
 
 const PORT = 4747;
@@ -101,9 +101,7 @@ async function main() {
   // sees — without this an EADDRINUSE surfaces to the user as a raw stack trace
   // in the link panel.
   server.on('error', (err: NodeJS.ErrnoException) => {
-    console.error(err.code === 'EADDRINUSE'
-      ? `Link failed: port ${port}${redirect ? ' (set by PLAID_REDIRECT_URI)' : ''} is already in use — another link is still running. Close it, then try again.`
-      : `Link failed: ${err.message}`);
+    console.error(`Link failed: ${linkListenErrorMessage(err, port, redirect)}`);
     process.exit(1);
   });
 

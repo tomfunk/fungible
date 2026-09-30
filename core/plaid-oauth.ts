@@ -61,7 +61,7 @@ export function resolveOAuthRedirect(env: NodeJS.ProcessEnv = process.env): OAut
     refuse(`must be written exactly as the browser will see it, so it matches what you register with Plaid: ${canonical}`);
   }
 
-  const plaidEnv = env.PLAID_ENV ?? 'sandbox';
+  const plaidEnv = env.PLAID_ENV?.trim() || 'sandbox';
   if (url.protocol === 'http:' && plaidEnv !== 'sandbox') {
     refuse(`must use https when PLAID_ENV=${plaidEnv}: Plaid accepts http://localhost only in sandbox. Use ${EXAMPLE} with FUNGIBLE_LINK_TLS_CERT and FUNGIBLE_LINK_TLS_KEY.`);
   }
