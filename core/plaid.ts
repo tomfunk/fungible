@@ -61,13 +61,20 @@ export function getPlaidClient(): PlaidApi {
  * institutions in the US always show their own picker regardless of this flag;
  * the ones that need it are the non-OAuth institutions, where without it the
  * button is a no-op for exactly the failure it looks like it should fix.
+ *
+ * `redirectUri` is the optional OAuth return address (PLAID_REDIRECT_URI, see
+ * core/plaid-oauth.ts). Plaid needs it when an OAuth bank cannot open in a popup
+ * and sends the whole tab back instead. It applies to update mode too, since
+ * re-authenticating an OAuth Item goes back through the bank. Omitted, the
+ * request is exactly what it was without OAuth redirect support.
  */
-export async function createLinkToken(userId: string, daysRequested?: number, accessToken?: string) {
+export async function createLinkToken(userId: string, daysRequested?: number, accessToken?: string, redirectUri?: string) {
   const response = await getPlaidClient().linkTokenCreate({
     user: { client_user_id: userId },
     client_name: 'Fungible',
     country_codes: [CountryCode.Us],
     language: 'en',
+    ...(redirectUri ? { redirect_uri: redirectUri } : {}),
     ...(accessToken
       ? { access_token: accessToken, update: { account_selection_enabled: true } }
       : {
