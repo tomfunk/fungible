@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
+import { useSyncProgress } from '../hooks/useSyncProgress.js';
 import { useKeyStatus } from '../hooks/useKeyStatus.js';
 import { Modal } from '../components/Modal.js';
 import type { LinkedAccount, ImportTarget, LinkedItem } from '../../../../core/queries.js';
@@ -76,7 +77,12 @@ export function Accounts() {
   // The item whose poll is in flight, held in a ref so the unmount cleanup can
   // read it without re-subscribing on every refresh.
   const refreshingItemIdRef = useRef<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const [localSyncing, setLocalSyncing] = useState(false);
+  // Also true while ANY sync is running, including the startup sync or a
+  // click on FilterBar's sync button on another screen — so this screen's
+  // own disabled-state/label stay accurate regardless of what triggered it.
+  const globalSyncing = useSyncProgress();
+  const syncing = localSyncing || globalSyncing;
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
   // user-triggered path), pushed from main — used to badge account rows.
@@ -88,7 +94,7 @@ export function Accounts() {
 
   async function forceSync() {
     if (syncing) return;
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const results = await api.sync.syncAll(true);
       const failed = results.filter((r) => r.error);
@@ -108,7 +114,7 @@ export function Accounts() {
     } catch {
       showStatus('Sync failed', 3000);
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
     }
   }
 
@@ -122,7 +128,7 @@ export function Accounts() {
     const accts = await api.queries.getLinkedAccounts();
     const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
     if (itemIds.length === 0) return;
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const results = await api.sync.syncAll(true, itemIds);
       const failed = results.filter((r) => r.error);
@@ -136,7 +142,7 @@ export function Accounts() {
     } catch {
       showStatus('Sync failed', 3000);
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
     }
   }
 
@@ -147,7 +153,7 @@ export function Accounts() {
     if (syncing) return;
     const label = item.institution_name ?? 'connection';
     setCursorItem(null);
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const result = await api.sync.deleteCursorAndResync(item.item_id);
       if (result?.error) {
@@ -162,7 +168,7 @@ export function Accounts() {
     } catch {
       showStatus(`Resync failed: ${label}`, 3000);
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
     }
   }
 

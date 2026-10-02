@@ -8,9 +8,12 @@ import { rebuildDisplayNames } from '../../core/rename.js';
 import { syncAll } from '../../core/sync.js';
 import { setSyncResult } from '../../core/sync-status.js';
 import { plaidErrorMessage } from '../../core/plaid.js';
+import { notifyChange } from '../../core/refresh.js';
 import { registerBridge } from './bridge.js';
 import { registerRefreshPush } from './refresh-ipc.js';
 import { registerSyncStatusPush } from './sync-status-ipc.js';
+import { registerSyncProgressPush } from './sync-progress-ipc.js';
+import { syncProgressStart, syncProgressEnd } from './sync-progress.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
 import { registerSyncIpc } from './sync-ipc.js';
 import { cancelActivePlaidLink } from './plaid-link.js';
@@ -51,19 +54,33 @@ if (!app.requestSingleInstanceLock()) {
     registerBridge();
     registerRefreshPush();
     registerSyncStatusPush();
+    registerSyncProgressPush();
     registerAgentIpc();
     registerSyncIpc();
     buildMenu();
     createWindow();
 
     // Background startup sync: record its outcome in the shared store so failures
-    // surface (banner + badges) instead of only logging to the main console.
+    // surface (banner + badges) instead of only logging to the main console, and
+    // notify the renderer so a screen already mounted (and so already past its
+    // initial fetch) picks up whatever this sync just wrote — without this, new
+    // transactions/balances land in the DB but the open window keeps showing
+    // what it had at launch until something else happens to trigger a refetch.
+    // Also bracketed with syncProgressStart/End so the same "Syncing…" UI that a
+    // manual Sync button drives also lights up for this unattended run — the
+    // only sync entry point with no button a user could watch instead.
     if (!isDemo) {
+      syncProgressStart();
       syncAll()
-        .then(setSyncResult)
+        .then((results) => {
+          setSyncResult(results);
+          notifyChange();
+          syncProgressEnd();
+        })
         .catch((err) => {
           console.error('[gui] background sync failed:', err);
           setSyncResult([{ itemId: '', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: plaidErrorMessage(err) }]);
+          syncProgressEnd();
         });
     }
 
