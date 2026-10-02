@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from './useQuery.js';
 import { useBumpRefresh } from './useRefresh.js';
+import { useSyncProgress } from './useSyncProgress.js';
 
 export type SyncResult = { ok: boolean; message: string };
 
@@ -19,13 +20,19 @@ export type SyncResult = { ok: boolean; message: string };
  * the sync or which screen is currently mounted.
  */
 export function useSync() {
-  const [syncing, setSyncing] = useState(false);
+  const [localSyncing, setLocalSyncing] = useState(false);
+  // Also true while ANY sync is running, including one this hook didn't
+  // start itself — the startup sync, a Plaid-link follow-up, or a click on
+  // Accounts' own sync button — so this screen's "Syncing…" stays accurate
+  // no matter what triggered it.
+  const globalSyncing = useSyncProgress();
+  const syncing = localSyncing || globalSyncing;
   const bump = useBumpRefresh();
   const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), []);
 
   const forceSync = useCallback(async (): Promise<SyncResult | undefined> => {
     if (syncing) return undefined;
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const results = await api.sync.syncAll(true);
       const failed = results.filter((r) => r.error);
@@ -37,7 +44,7 @@ export function useSync() {
     } catch {
       return { ok: false, message: 'Sync failed' };
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
       bump();
     }
   }, [syncing, bump]);

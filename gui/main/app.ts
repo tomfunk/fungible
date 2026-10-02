@@ -12,6 +12,8 @@ import { notifyChange } from '../../core/refresh.js';
 import { registerBridge } from './bridge.js';
 import { registerRefreshPush } from './refresh-ipc.js';
 import { registerSyncStatusPush } from './sync-status-ipc.js';
+import { registerSyncProgressPush } from './sync-progress-ipc.js';
+import { syncProgressStart, syncProgressEnd } from './sync-progress.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
 import { registerSyncIpc } from './sync-ipc.js';
 import { cancelActivePlaidLink } from './plaid-link.js';
@@ -52,6 +54,7 @@ if (!app.requestSingleInstanceLock()) {
     registerBridge();
     registerRefreshPush();
     registerSyncStatusPush();
+    registerSyncProgressPush();
     registerAgentIpc();
     registerSyncIpc();
     buildMenu();
@@ -63,15 +66,21 @@ if (!app.requestSingleInstanceLock()) {
     // initial fetch) picks up whatever this sync just wrote — without this, new
     // transactions/balances land in the DB but the open window keeps showing
     // what it had at launch until something else happens to trigger a refetch.
+    // Also bracketed with syncProgressStart/End so the same "Syncing…" UI that a
+    // manual Sync button drives also lights up for this unattended run — the
+    // only sync entry point with no button a user could watch instead.
     if (!isDemo) {
+      syncProgressStart();
       syncAll()
         .then((results) => {
           setSyncResult(results);
           notifyChange();
+          syncProgressEnd();
         })
         .catch((err) => {
           console.error('[gui] background sync failed:', err);
           setSyncResult([{ itemId: '', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: plaidErrorMessage(err) }]);
+          syncProgressEnd();
         });
     }
 
