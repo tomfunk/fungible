@@ -796,7 +796,36 @@ export type LinkedAccount = {
   // plaid_items.last_synced_at (epoch ms) — when we last successfully talked to
   // this institution. NULL for CSV/manual accounts, which have no item.
   item_last_synced_at: number | null;
+  // Display-only age of the latest balance for manual/CSV accounts; null for
+  // Plaid-linked accounts and placeholders. See getBalanceAge.
+  balance_age: BalanceAge | null;
 };
+
+export type BalanceAge = { days: number; isStale: boolean };
+
+const STALE_DAYS_DEFAULT = 45;   // depository/credit and any CSV account
+const STALE_DAYS_SLOW    = 120;  // manual investment/retirement and manual 'other' assets
+
+/**
+ * Days since an account's balance was last recorded, and whether that is
+ * stale. Plaid-linked accounts return null (they refresh themselves).
+ * `now` is injectable for tests; dates are compared as calendar days.
+ */
+export function getBalanceAge(
+  account: { id: string; type: string; item_id: string | null },
+  latestBalanceDate: string | null,
+  now: Date = new Date(),
+): BalanceAge | null {
+  if (account.item_id !== null) return null;
+  if (!latestBalanceDate) return null;
+  const then = Date.parse(latestBalanceDate.slice(0, 10) + 'T00:00:00Z');
+  if (Number.isNaN(then)) return null;
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.max(0, Math.round((today - then) / 86_400_000));
+  const isManual = account.id.startsWith('manual-');
+  const slow = isManual && (account.type === 'investment' || account.type === 'other');
+  return { days, isStale: days > (slow ? STALE_DAYS_SLOW : STALE_DAYS_DEFAULT) };
+}
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   // Two queries rather than a UNION ALL: the shapes barely overlap and this
@@ -836,11 +865,12 @@ export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
     `),
   ]);
 
-  const accounts = (result.rows as unknown as (Omit<LinkedAccount, 'excluded' | 'awaitingFirstSync' | 'item_last_synced_at'> & { excluded: number; item_last_synced_at: number | null })[]).map((r) => ({
+  const accounts = (result.rows as unknown as (Omit<LinkedAccount, 'excluded' | 'awaitingFirstSync' | 'item_last_synced_at' | 'balance_age'> & { excluded: number; item_last_synced_at: number | null })[]).map((r) => ({
     ...r,
     excluded: toBool(r.excluded),
     item_last_synced_at: r.item_last_synced_at === null ? null : Number(r.item_last_synced_at),
     awaitingFirstSync: false,
+    balance_age: getBalanceAge(r, r.last_synced),
   }));
 
   // Placeholders sort first — there are at most one or two and their whole
@@ -861,6 +891,7 @@ export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
       excluded: false,
       awaitingFirstSync: true,
       item_last_synced_at: null,
+      balance_age: null,
     }));
 
   return [...placeholders, ...accounts];

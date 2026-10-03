@@ -2953,20 +2953,31 @@ describe('Accounts', () => {
       expect(flat(r)).toContain('Chase');
     });
 
-    // A manual account has no Plaid item, so its balance-snapshot date is the
-    // only sync signal it has — the fallback branch must keep working.
-    it('a manual account still renders its balance-snapshot date', async () => {
-      await db.execute({
-        sql: `INSERT INTO accounts (id, name, type, subtype) VALUES ('manual-house', 'House', 'other', null)`,
-        args: [],
-      });
-      await db.execute({
-        sql: `INSERT INTO balance_history (account_id, balance, date) VALUES ('manual-house', 500000, '2026-06-12')`,
-        args: [],
-      });
+    // A manual account has no Plaid item; its balance age (computed by core)
+    // is the only freshness signal, rendered as "updated Nd ago".
+    const daysAgo = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - n);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const addManual = async (id: string, name: string, n: number) => {
+      await db.execute({ sql: `INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, 'other', null)`, args: [id, name] });
+      await db.execute({ sql: `INSERT INTO balance_history (account_id, balance, date) VALUES (?, 500000, ?)`, args: [id, daysAgo(n)] });
+    };
+
+    it('a manual account renders "updated Nd ago" from its balance age', async () => {
+      await addManual('manual-house', 'House', 52);
       const r = accounts();
       await waitFor(() => expect(flat(r)).toContain('House'));
-      expect(flat(r)).toContain('synced Jun 12');
+      expect(flat(r)).toContain('updated 52d ago');
+      expect(flat(r)).not.toContain('synced');
+    });
+
+    it('a manual account updated today renders "updated today"', async () => {
+      await addManual('manual-boat', 'Boat', 0);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Boat'));
+      expect(flat(r)).toContain('updated today');
     });
   });
 

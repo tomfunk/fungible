@@ -1178,6 +1178,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         ? <Text color={C_WARNING}>◷ awaiting first sync</Text>
                         : acct.item_last_synced_at !== null
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(acct.item_last_synced_at)}</Text></Text>
+                        : acct.balance_age
+                        ? <Text color={acct.balance_age.isStale ? C_WARNING : undefined}>{acct.balance_age.days === 0 ? 'updated today' : `updated ${acct.balance_age.days}d ago`}</Text>
                         : acct.last_synced
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
                         : <Text color={C_WARNING}>not synced</Text>

@@ -292,6 +292,10 @@ export function Accounts() {
                           <span className="neg">⚠ sync failed</span>
                         ) : awaiting ? (
                           <span className="warn">◷ awaiting first sync</span>
+                        ) : acct.balance_age ? (
+                          <span className={acct.balance_age.isStale ? 'warn' : 'dim'}>
+                            {acct.balance_age.days === 0 ? 'updated today' : `updated ${acct.balance_age.days}d ago`}
+                          </span>
                         ) : acct.item_last_synced_at !== null ? (
                           <span className="dim">synced <span className="pos">{fmtSyncedAt(acct.item_last_synced_at)}</span></span>
                         ) : acct.last_synced ? (

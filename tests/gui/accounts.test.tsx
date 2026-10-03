@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('../../core/db.js', async () => {
@@ -136,6 +136,52 @@ describe('GUI Accounts', () => {
     const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
     expect(row.textContent).toContain('synced 5 min ago');
     expect(row.textContent).not.toContain('not synced');
+  });
+
+  describe('balance age (manual/CSV accounts)', () => {
+    const isoDaysAgo = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - n);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    async function makeManual(daysAgo: number) {
+      await db.execute('DELETE FROM balance_history');
+      await db.execute("UPDATE accounts SET item_id = NULL WHERE id = 'test-checking'");
+      await db.execute({
+        sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('test-checking', 100, ?)",
+        args: [isoDaysAgo(daysAgo)],
+      });
+    }
+
+    it('shows "updated Nd ago" in the warning style when stale', async () => {
+      await makeManual(52);
+      renderScreen(<Accounts />);
+      const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
+      const label = within(row).getByText('updated 52d ago');
+      expect(label.className).toContain('warn');
+      expect(row.textContent).not.toContain('not synced');
+    });
+
+    it('shows "updated today" in the muted style when fresh', async () => {
+      await makeManual(0);
+      renderScreen(<Accounts />);
+      const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
+      const label = within(row).getByText('updated today');
+      expect(label.className).toContain('dim');
+      expect(label.className).not.toContain('warn');
+    });
+
+    it('keeps the "synced" display for Plaid rows', async () => {
+      await db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+        args: ['item-p', 'tok', 'Test Bank', Date.now() - 5 * 60_000],
+      });
+      await db.execute("UPDATE accounts SET item_id = 'item-p' WHERE id = 'test-checking'");
+      renderScreen(<Accounts />);
+      const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
+      expect(row.textContent).not.toContain('updated');
+      expect(row.textContent).toContain('synced 5 min ago');
+    });
   });
 
   it('dupes tab shows the empty state', async () => {
