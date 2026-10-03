@@ -8,13 +8,14 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
-import { waitFor, flatFrame as flat } from '../helpers/waitFor.js';
 import { importCsvTransactions } from '../../core/accounts.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
 import { makeCsvRow } from '../helpers/makeCsvRow.js';
-
+import { waitFor, flatFrame as flat, pressAndWait } from '../helpers/waitFor.js';
+import { useTempCsv } from '../helpers/tempCsv.js';
+import { CSV_SKIP_COPY } from '../../core/csv-import-copy.js';
 
 function renderAccounts() {
   return render(
@@ -204,5 +205,107 @@ describe('TUI Accounts — import history', () => {
 
       await waitFor(() => expect(flat(r)).toContain('1 already there'));
     });
+  });
+});
+
+describe('TUI Accounts — CSV import skips bad rows', () => {
+  const { csv } = useTempCsv('csv-skips-');
+  // File lines (header is line 1): 2 good, 3 $4.50, 4 bad amount, 5 blank amount,
+  // 6 bad date, 7 missing name. Only the first five rows are previewed.
+  const MIXED = [
+    'Date,Description,Amount',
+    '2025-01-02,AMAZON,25.00',
+    '2025-01-03,COFFEE,$4.50',
+    '2025-01-04,GARBAGE,12abc',
+    '2025-01-05,BLANKAMT,',
+    'notadate,BADDATE,9.00',
+    '2025-01-07,,3.00',
+  ].join('\n') + '\n';
+
+  async function toPreview(r: ReturnType<typeof render>, path: string) {
+    await addAccount('chk', 'Checking');
+    await pressAndWait(r, '\t', 'Links');
+    await pressAndWait(r, '\t', 'Import CSV file');
+    await pressAndWait(r, 'c', 'path to your CSV file');
+    for (const ch of path) r.stdin.write(ch);
+    await waitFor(() => expect(flat(r)).toContain(path.slice(-10)));
+    await pressAndWait(r, '\r', 'Which column is the DATE?');
+    await pressAndWait(r, '\r', 'Which column is the DESCRIPTION');
+    await pressAndWait(r, '\r', 'How is the amount structured?');
+    await pressAndWait(r, 's', 'Which column is the AMOUNT?');
+    await pressAndWait(r, '\u001b[B', '▶ Description');
+    await pressAndWait(r, '\u001b[B', '▶ Amount');
+    await pressAndWait(r, '\r', 'does a positive number mean');
+    await pressAndWait(r, 'o', 'Which account do these');
+    await pressAndWait(r, '\r', 'Ready to import');
+  }
+
+  const txNames = async () =>
+    (await db.execute('SELECT name, amount FROM transactions ORDER BY date')).rows.map((x) => [x.name, Number(x.amount)]);
+
+  it('previews a good row and a $-prefixed amount as real amounts', async () => {
+    const r = renderAccounts();
+    await toPreview(r, csv(MIXED));
+    expect(flat(r)).toMatch(/2025-01-02 AMAZON\s+\$25\.00/);
+    expect(flat(r)).toMatch(/2025-01-03 COFFEE\s+\$4\.50/);
+  });
+
+  it('marks unreadable, blank and bad-date rows instead of showing $0.00 or a raw date', async () => {
+    const r = renderAccounts();
+    await toPreview(r, csv(MIXED));
+    const f = flat(r);
+    expect(f).toMatch(/GARBAGE\s+invalid\b/);
+    expect(f).toMatch(/BLANKAMT\s+blank\b/);
+    expect(f).toMatch(/invalid date\s+BADDATE/);
+    expect(f).not.toContain('$0.00');
+    expect(f).not.toContain('notadate');
+  });
+
+  it('counts every row that will be skipped, including ones past the preview', async () => {
+    const r = renderAccounts();
+    await toPreview(r, csv(MIXED));
+    expect(flat(r)).toContain('4 rows will be skipped');
+  });
+
+  it('shows no skip footer when every row is good', async () => {
+    const r = renderAccounts();
+    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n'));
+    expect(flat(r)).not.toContain('will be skipped');
+  });
+
+  it('reports skips with file line numbers after import and writes only the good rows', async () => {
+    const r = renderAccounts();
+    await toPreview(r, csv(MIXED));
+    r.stdin.write('y');
+    await waitFor(() => expect(flat(r)).toContain('Import complete'));
+    const f = flat(r);
+    expect(f).toContain('Imported: 2');
+    expect(f).toContain(`1 ${CSV_SKIP_COPY.bad_amount}, 1 ${CSV_SKIP_COPY.empty_amount}, 1 ${CSV_SKIP_COPY.bad_date}, 1 ${CSV_SKIP_COPY.missing_name}`);
+    expect(f).toContain(`line 4: ${CSV_SKIP_COPY.bad_amount}`);
+    expect(f).toContain(`line 5: ${CSV_SKIP_COPY.empty_amount}`);
+    expect(f).toContain(`line 6: ${CSV_SKIP_COPY.bad_date}`);
+    expect(f).toContain(`line 7: ${CSV_SKIP_COPY.missing_name}`);
+    expect(await txNames()).toEqual([['AMAZON', 25], ['COFFEE', 4.5]]);
+  });
+
+  it('says "1 row will be skipped" for a single bad row', async () => {
+    const r = renderAccounts();
+    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n2025-01-03,GARBAGE,12abc\n'));
+    expect(flat(r)).toContain('1 row will be skipped');
+    expect(flat(r)).not.toContain('1 rows');
+  });
+
+  it('lists at most 5 skipped lines and counts the rest', async () => {
+    const bad = Array.from({ length: 7 }, (_, i) => `2025-02-0${i + 1},BAD${i},xx`);
+    const r = renderAccounts();
+    await toPreview(r, csv(['Date,Description,Amount', '2025-01-02,AMAZON,25.00', ...bad].join('\n') + '\n'));
+    r.stdin.write('y');
+    await waitFor(() => expect(flat(r)).toContain('Import complete'));
+    const f = flat(r);
+    expect(f.match(/line \d+:/g)).toHaveLength(5);
+    expect(f).toContain('line 3:');
+    expect(f).toContain('line 7:');
+    expect(f).not.toContain('line 8:');
+    expect(f).toContain('…and 2 more');
   });
 });

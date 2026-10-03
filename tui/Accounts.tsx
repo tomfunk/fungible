@@ -13,6 +13,7 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
+import { summarizeCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../core/csv-import-copy.js';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { previewBalanceImport, commitBalanceImport, BALANCE_IMPORT_SKIP_COPY, BALANCE_IMPORT_MAX_BYTES, summarizeSkips, type BalanceImportPreview, type BalanceImportResult } from '../core/balance-import.js';
@@ -196,7 +197,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [positiveIsInflow, setPositiveIsInflow] = useState(false);
   const [csvAccountCursor, setCsvAccountCursor] = useState(0);
   const [csvAccounts, setCsvAccounts] = useState<ImportTarget[]>([]);
-  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number; skippedRows: CsvSkippedRow[] } | null>(null);
 
   // Manual asset state
   const [manualName, setManualName] = useState('');
@@ -752,16 +753,36 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     });
   }
 
+  // Preview cells for one row. `bad` marks a value the import will refuse, so the
+  // preview never shows a raw date or a $0.00 the import would not write.
   function previewRow(row: string[]) {
-    const date = dateCol !== null ? parseDate(row[dateCol] ?? '') : '—';
+    let date = '—', dateBad = false;
+    if (dateCol !== null) {
+      const d = parseDate(row[dateCol] ?? '');
+      if (d === null) { date = 'invalid date'; dateBad = true; } else date = d;
+    }
     const name = nameCol !== null ? truncate(row[nameCol] ?? '', 28) : '—';
-    let amount = '—';
+    let amount = '—', amountBad = false;
     const columnsChosen = amountMode === 'single' ? amountCol !== null : (debitCol !== null && creditCol !== null);
     if (columnsChosen) {
       const v = resolveCsvAmount(row, { amountMode, amountCol, debitCol, creditCol, positiveIsInflow });
-      amount = `$${Math.abs(v).toFixed(2)}`;
+      if (v.ok) amount = `$${Math.abs(v.amount).toFixed(2)}`;
+      else { amount = v.reason === 'empty_amount' ? 'blank' : 'invalid'; amountBad = true; }
     }
-    return { date, name, amount };
+    return { date, name, amount, dateBad, amountBad };
+  }
+
+  // Rows the import will skip for being unreadable, judged by the same core
+  // functions the import uses (duplicates are only known at import time).
+  function countSkippedRows(): number {
+    if (dateCol === null || nameCol === null) return 0;
+    const columnsChosen = amountMode === 'single' ? amountCol !== null : (debitCol !== null && creditCol !== null);
+    if (!columnsChosen) return 0;
+    return csvRows.filter((row) =>
+      !(row[nameCol] ?? '').trim()
+      || parseDate(row[dateCol] ?? '') === null
+      || !resolveCsvAmount(row, { amountMode, amountCol, debitCol, creditCol, positiveIsInflow }).ok,
+    ).length;
   }
 
   // ─── Input handling ──────────────────────────────────────────────────────────
@@ -1870,7 +1891,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             </Box>
           )}
 
-          {addStep === 'confirm' && (
+          {addStep === 'confirm' && (() => { const skipCount = countSkippedRows(); return (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Ready to import</Text>
               <Text>File: <Text color={C_WARNING}>{filePath}</Text></Text>
@@ -1883,28 +1904,42 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text dimColor>AMOUNT</Text>
                 </Box>
                 {csvRows.slice(0, 5).map((row, i) => {
-                  const { date, name, amount } = previewRow(row);
+                  const { date, name, amount, dateBad, amountBad } = previewRow(row);
                   return (
                     <Box key={i} gap={2}>
-                      <Text>{date.padEnd(12)}</Text>
+                      <Text color={dateBad ? C_WARNING : undefined}>{date.padEnd(12)}</Text>
                       <Text>{name.padEnd(30)}</Text>
                       <Text color={C_WARNING}>{amount}</Text>
                     </Box>
                   );
                 })}
               </Box>
+              {skipCount > 0 && (
+                <Text color={C_WARNING}>{skipCount} row{skipCount === 1 ? '' : 's'} will be skipped (invalid date, unreadable or blank amount, or missing description)</Text>
+              )}
               <Box marginTop={1} gap={4}>
                 <Text color={C_ACCENT}>[y] Import</Text>
                 <Text color={C_NEGATIVE}>[n] Cancel</Text>
               </Box>
             </Box>
-          )}
+          ); })()}
 
           {addStep === 'done' && importResult && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold color={C_POSITIVE}>Import complete</Text>
               <Text>Imported: <Text color={C_POSITIVE}>{importResult.imported}</Text></Text>
-              <Text dimColor>Skipped (duplicates/invalid): {importResult.skipped}</Text>
+              <Text dimColor>Skipped: {importResult.skipped}</Text>
+              {importResult.skippedRows.length > 0 && (
+                <Box flexDirection="column">
+                  <Text color={C_WARNING}>{summarizeCsvSkips(importResult.skippedRows)}</Text>
+                  {importResult.skippedRows.slice(0, 5).map((s) => (
+                    <Text key={s.rowIndex} dimColor>  line {s.rowIndex + 2}: {CSV_SKIP_COPY[s.reason]}</Text>
+                  ))}
+                  {importResult.skippedRows.length > 5 && (
+                    <Text dimColor>  …and {importResult.skippedRows.length - 5} more</Text>
+                  )}
+                </Box>
+              )}
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
           )}

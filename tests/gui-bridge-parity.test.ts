@@ -21,7 +21,8 @@ const SKIP_FILES = new Set(['Setup.tsx', 'index.tsx']);
 const EXPECTED_UNBRIDGED: Record<string, string> = {
   // Handled differently in the GUI
   parseCSV: 'covered by files.pickCsv (native dialog + parse in main)',
-  parseDate: 'CSV preview shows raw values; real parsing happens during import in main',
+  parseDate: 'renderer imports pure core/csv-date.ts directly',
+  summarizeCsvSkips: 'renderer imports pure core/csv-import-copy.ts directly',
   householdMembers: 'exposed as profile.getHouseholdMembers',
   spawn: 'node builtin used by TUI Plaid flow; GUI will use gui/main/plaid-link.ts',
   onRefresh: 'main process subscribes and pushes refresh events over IPC (gui/main/refresh-ipc.ts)',
