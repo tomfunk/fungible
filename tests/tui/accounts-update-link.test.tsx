@@ -28,24 +28,12 @@ vi.mock('node:child_process', () => ({
 vi.mock('../../core/sync.js', () => ({ syncAll: vi.fn().mockResolvedValue([]) }));
 
 import { db } from '../../core/db.js';
+import { waitFor, flatFrame as flat } from '../helpers/waitFor.js';
 import { syncAll } from '../../core/sync.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
 
-const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
-const flat = (r: ReturnType<typeof render>) =>
-  (r.lastFrame() ?? '').replace(ANSI_RE, '').replace(/\s+/g, ' ');
-
-async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  let lastErr: unknown;
-  while (Date.now() < deadline) {
-    try { assertion(); return; } catch (e) { lastErr = e; }
-    await new Promise((res) => setTimeout(res, 30));
-  }
-  throw lastErr;
-}
 
 function renderAccounts() {
   return render(

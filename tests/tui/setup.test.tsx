@@ -41,21 +41,10 @@ vi.mock('node:child_process', async (importActual) => {
 });
 
 import { db } from '../../core/db.js';
+import { waitFor, frame } from '../helpers/waitFor.js';
 import { Setup } from '../../tui/Setup.js';
 import { daysFromStartDate, MAX_DAYS_REQUESTED } from '../../core/settings.js';
 
-const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
-const frame = (r: ReturnType<typeof render>) => (r.lastFrame() ?? '').replace(ANSI_RE, '');
-
-async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  let lastErr: unknown;
-  while (Date.now() < deadline) {
-    try { assertion(); return; } catch (e) { lastErr = e; }
-    await new Promise((res) => setTimeout(res, 30));
-  }
-  throw lastErr;
-}
 
 /** YYYY-MM-DD for a date `n` days before today, in local time. */
 function daysAgo(n: number): string {

@@ -12,44 +12,29 @@ vi.mock('../core/plaid.js', () => ({
 
 import { db } from '../core/db.js';
 import { getPlaidClient } from '../core/plaid.js';
+import { makeFakePlaid } from './helpers/makeFakeProvider.js';
+import { makePlaidTx, makePlaidAccount } from './helpers/makePlaidTx.js';
+import { seedPlaidItem, seedTx } from './helpers/seedDb.js';
+import { useFixedClock } from './helpers/fakeClock.js';
 import { syncTransactions, syncAll, deleteSyncCursor, describeSyncProgress, type SyncProgress } from '../core/sync.js';
 
-type PlaidStub = { transactionsSync: ReturnType<typeof vi.fn>; accountsGet: ReturnType<typeof vi.fn> };
+type PlaidStub = ReturnType<typeof makeFakePlaid>;
 
-function installPlaid(transactionsSync: ReturnType<typeof vi.fn>): PlaidStub {
-  const client: PlaidStub = {
-    transactionsSync,
-    accountsGet: vi.fn().mockResolvedValue({ data: { accounts: [] } }),
-  };
-  vi.mocked(getPlaidClient).mockReturnValue(client as never);
-  return client;
+function installPlaid(plaid: PlaidStub): PlaidStub {
+  vi.mocked(getPlaidClient).mockReturnValue(plaid as never);
+  return plaid;
 }
 
 /** Single-response Plaid stub. Returns it so a test can assert which calls were made. */
 const mockPlaid = (removed: string[] = [], added: object[] = []): PlaidStub =>
-  installPlaid(vi.fn().mockResolvedValue({
-    data: {
-      added,
-      modified: [],
-      removed: removed.map((id) => ({ transaction_id: id })),
-      has_more: false,
-      next_cursor: 'cursor-1',
-    },
-  }));
+  installPlaid(makeFakePlaid({ pages: [{ removed, added, next_cursor: 'cursor-1' }] }));
 
 /** Multi-response stub: one entry per page, has_more flipping false on the last. */
-function mockPlaidPages(pages: object[][]): PlaidStub {
-  let call = 0;
-  return installPlaid(vi.fn().mockImplementation(() => {
-    const added = pages[call++];
-    return Promise.resolve({
-      data: { added, modified: [], removed: [], has_more: call < pages.length, next_cursor: `cursor-${call}` },
-    });
-  }));
-}
+const mockPlaidPages = (pages: object[][]): PlaidStub =>
+  installPlaid(makeFakePlaid({ pages: pages.map((added) => ({ added })) }));
 
 beforeEach(async () => {
-  for (const t of ['transaction_tags', 'tag_rule_suppressions', 'tag_rules', 'tags', 'transactions', 'accounts', 'sync_state', 'balance_history', 'plaid_items']) {
+  for (const t of ['transaction_tags', 'tag_rule_suppressions', 'tag_rules', 'name_rules', 'category_rules', 'tags', 'transactions', 'accounts', 'sync_state', 'balance_history', 'plaid_items']) {
     await db.execute(`DELETE FROM ${t}`);
   }
 });
@@ -395,5 +380,266 @@ describe('syncTransactions — reattributed dates survive re-sync', () => {
     await syncTransactions('token', 'item-1');
 
     expect(await dateOf('tx-pay')).toEqual({ date: '2025-07-03', original_date: null });
+  });
+});
+
+
+// ─── Re-sync semantics ───────────────────────────────────────────────────────
+
+const q = async <T = Record<string, unknown>>(sql: string, args: (string | number)[] = []) =>
+  (await db.execute({ sql, args })).rows as unknown as T[];
+const txById = async (id: string) =>
+  (await q<Record<string, string | number | null>>('SELECT * FROM transactions WHERE id = ?', [id]))[0];
+const cursorOf = async (itemId: string) =>
+  (await q<{ cursor: string }>('SELECT cursor FROM sync_state WHERE account_id = ?', [itemId]))[0]?.cursor;
+
+describe('re-sync preserves user edits', () => {
+  it('keeps manual_category and ignored when Plaid re-sends the row', async () => {
+    await seedTx(db, { id: 'p1', category: 'Travel', manual_category: 'Travel', ignored: true });
+    mockPlaid([], [makePlaidTx({ transaction_id: 'p1', primaryCategory: 'FOOD_AND_DRINK' })]);
+    await syncTransactions('tok', 'item-1');
+    const row = await txById('p1');
+    expect(row.category).toBe('Travel');
+    expect(row.manual_category).toBe('Travel');
+    expect(row.ignored).toBe(1);
+    expect(row.raw_category).toBe('FOOD_AND_DRINK');
+  });
+
+  it('keeps manual_category on a modified row too', async () => {
+    await seedTx(db, { id: 'p1', manual_category: 'Gifts', category: 'Gifts' });
+    plaid_modified([makePlaidTx({ transaction_id: 'p1', amount: 99, primaryCategory: 'TRAVEL' })]);
+    await syncTransactions('tok', 'item-1');
+    expect(await txById('p1')).toMatchObject({ category: 'Gifts', amount: 99 });
+  });
+
+  it('modified pending -> posted flips pending to 0 and updates the amount', async () => {
+    mockPlaid([], [makePlaidTx({ transaction_id: 'p1', pending: true, amount: 10 })]);
+    await syncTransactions('tok', 'item-1');
+    expect((await txById('p1')).pending).toBe(1);
+
+    plaid_modified([makePlaidTx({ transaction_id: 'p1', pending: false, amount: 12.34 })]);
+    await syncTransactions('tok', 'item-1');
+    expect(await txById('p1')).toMatchObject({ pending: 0, amount: 12.34 });
+  });
+
+  it('keeps the reattributed date on a modified row when original_date is set', async () => {
+    await seedTx(db, { id: 'p1', date: '2025-06-30', original_date: '2025-07-01' });
+    plaid_modified([makePlaidTx({ transaction_id: 'p1', date: '2025-07-02', amount: 7 })]);
+    await syncTransactions('tok', 'item-1');
+    expect(await txById('p1')).toMatchObject({ date: '2025-06-30', original_date: '2025-07-01', amount: 7 });
+  });
+});
+
+function plaid_modified(modified: object[]): PlaidStub {
+  return installPlaid(makeFakePlaid({ pages: [{ modified }] }));
+}
+
+describe('rules apply on add and on modify', () => {
+  async function seedRules() {
+    await db.execute("INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'starbucks', 'Coffee Shop')");
+    await db.execute("INSERT INTO tags (name) VALUES ('caffeine')");
+    const tagId = Number((await q<{ id: number }>("SELECT id FROM tags WHERE name = 'caffeine'"))[0].id);
+    await db.execute({ sql: "INSERT INTO tag_rules (priority, match_type, pattern, tag_id) VALUES (0, 'name', 'starbucks', ?)", args: [tagId] });
+    return tagId;
+  }
+  const tagsOf = async (id: string) =>
+    (await q<{ name: string }>('SELECT t.name FROM transaction_tags tt JOIN tags t ON t.id = tt.tag_id WHERE tt.transaction_id = ?', [id])).map((r) => r.name);
+
+  it('renames and tags a newly added transaction', async () => {
+    await seedRules();
+    mockPlaid([], [makePlaidTx({ transaction_id: 'n1', name: 'STARBUCKS #12' })]);
+    await syncTransactions('tok', 'item-1');
+    expect((await txById('n1')).display_name).toBe('Coffee Shop');
+    expect(await tagsOf('n1')).toEqual(['caffeine']);
+  });
+
+  it('applies name and tag rules when a transaction is modified into a match', async () => {
+    mockPlaid([], [makePlaidTx({ transaction_id: 'm1', name: 'PENDING CHARGE' })]);
+    await syncTransactions('tok', 'item-1');
+    expect((await txById('m1')).display_name).toBeNull();
+    expect(await tagsOf('m1')).toEqual([]);
+
+    await seedRules();
+    plaid_modified([makePlaidTx({ transaction_id: 'm1', name: 'STARBUCKS #12' })]);
+    await syncTransactions('tok', 'item-1');
+    expect((await txById('m1')).display_name).toBe('Coffee Shop');
+    expect(await tagsOf('m1')).toEqual(['caffeine']);
+  });
+});
+
+describe('cursor handling', () => {
+  it('a multi-page sync stores the final cursor and every page of rows', async () => {
+    installPlaid(makeFakePlaid({ pages: [
+      { added: [makePlaidTx({ transaction_id: 'a' })], next_cursor: 'c1' },
+      { added: [makePlaidTx({ transaction_id: 'b' })], next_cursor: 'c2' },
+      { added: [makePlaidTx({ transaction_id: 'c' })], next_cursor: 'c3' },
+    ] }));
+    await syncTransactions('tok', 'item-1');
+    expect(await cursorOf('item-1')).toBe('c3');
+    expect((await q<{ id: string }>('SELECT id FROM transactions ORDER BY id')).map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('page 2 failure leaves the cursor unchanged and writes nothing, and the next sync resumes from the old cursor', async () => {
+    await seedPlaidItem(db, 'item-1');
+    await db.execute("INSERT INTO sync_state (account_id, cursor) VALUES ('item-1', 'old')");
+    installPlaid(makeFakePlaid({
+      pages: [{ added: [makePlaidTx({ transaction_id: 'a' })], next_cursor: 'c1' }, new Error('plaid down')],
+      accounts: [makePlaidAccount({ current: 50 })],
+    }));
+    await expect(syncTransactions('tok', 'item-1')).rejects.toThrow('plaid down');
+    expect(await cursorOf('item-1')).toBe('old');
+    expect(await q('SELECT id FROM transactions')).toHaveLength(0);
+    expect(await q('SELECT * FROM balance_history')).toHaveLength(0);
+
+    const retry = installPlaid(makeFakePlaid({ pages: [{ added: [makePlaidTx({ transaction_id: 'a' })], next_cursor: 'c9' }] }));
+    await syncTransactions('tok', 'item-1');
+    expect(retry.transactionsSync.mock.calls[0][0]?.cursor).toBe('old');
+    expect(await cursorOf('item-1')).toBe('c9');
+  });
+
+  it('an accountsGet failure after the pages leaves cursor and rows untouched (so the feed is replayed)', async () => {
+    await seedPlaidItem(db, 'item-1');
+    await db.execute("INSERT INTO sync_state (account_id, cursor) VALUES ('item-1', 'old')");
+    installPlaid(makeFakePlaid({
+      pages: [{ added: [makePlaidTx({ transaction_id: 'a' })] }],
+      accountsError: new Error('accounts down'),
+    }));
+    await expect(syncTransactions('tok', 'item-1')).rejects.toThrow('accounts down');
+    expect(await cursorOf('item-1')).toBe('old');
+    expect(await q('SELECT id FROM transactions')).toHaveLength(0);
+    expect((await q<{ last_synced_at: number | null }>('SELECT last_synced_at FROM plaid_items'))[0].last_synced_at).toBeNull();
+  });
+});
+
+describe('balance snapshots', () => {
+  it('writes no balance_history row when current is null or undefined', async () => {
+    installPlaid(makeFakePlaid({ accounts: [
+      makePlaidAccount({ account_id: 'a-null', current: null }),
+      makePlaidAccount({ account_id: 'a-undef', current: undefined }),
+      makePlaidAccount({ account_id: 'a-ok', current: 5 }),
+    ] }));
+    await syncTransactions('tok', 'item-1');
+    expect((await q<{ account_id: string }>('SELECT account_id FROM balance_history')).map((r) => r.account_id)).toEqual(['a-ok']);
+    expect(await q('SELECT id FROM accounts')).toHaveLength(3);
+  });
+
+  describe('same day', () => {
+    useFixedClock('2026-10-02T12:00:00Z');
+    it('two syncs on one day with different balances leave one row holding the last value', async () => {
+      installPlaid(makeFakePlaid({ accountsPerSync: [[makePlaidAccount({ current: 100 })], [makePlaidAccount({ current: 250 })]] }));
+      await syncTransactions('tok', 'item-1');
+      await syncTransactions('tok', 'item-1');
+      expect(await q('SELECT balance, date FROM balance_history')).toEqual([{ balance: 250, date: '2026-10-02' }]);
+    });
+  });
+
+  describe('late evening UTC', () => {
+    useFixedClock('2026-10-02T23:30:00Z');
+    it('dates the snapshot by the UTC calendar day, not the local one', async () => {
+      const prev = process.env.TZ;
+      process.env.TZ = 'Pacific/Auckland'; // local date is already Oct 3
+      try {
+        installPlaid(makeFakePlaid({ accounts: [makePlaidAccount({ current: 1 })] }));
+        await syncTransactions('tok', 'item-1');
+      } finally {
+        if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev;
+      }
+      expect((await q<{ date: string }>('SELECT date FROM balance_history'))[0].date).toBe('2026-10-02');
+    });
+  });
+});
+
+describe('account upsert on re-sync', () => {
+  it('renames and relinks an existing account to the synced item but keeps the user nickname', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type, nickname, item_id) VALUES ('acct-1', 'Old Name', 'depository', 'My Checking', 'old-item')");
+    installPlaid(makeFakePlaid({ accounts: [makePlaidAccount({ account_id: 'acct-1', name: 'New Name' })] }));
+    await syncTransactions('tok', 'new-item');
+    expect(await q('SELECT name, item_id, nickname FROM accounts WHERE id = ?', ['acct-1']))
+      .toEqual([{ name: 'New Name', item_id: 'new-item', nickname: 'My Checking' }]);
+  });
+});
+
+describe('dupes flow out', () => {
+  async function seedCsvTwin() {
+    await seedTx(db, { id: 'csv-1-0', source: 'csv', account_id: 'acct-1', date: '2025-01-01', name: 'COFFEE', amount: 4.5 });
+  }
+  const plaidCoffee = () => makePlaidTx({ transaction_id: 'pl-1', account_id: 'acct-1', date: '2025-01-01', name: 'COFFEE', amount: 4.5 });
+
+  it('syncTransactions reports the CSV rows it removed as dupes', async () => {
+    await seedCsvTwin();
+    installPlaid(makeFakePlaid({ pages: [{ added: [plaidCoffee()] }], accounts: [makePlaidAccount()] }));
+    expect(await syncTransactions('tok', 'item-1')).toMatchObject({ added: 1, dupes: 1 });
+    expect((await q<{ id: string }>('SELECT id FROM transactions')).map((r) => r.id)).toEqual(['pl-1']);
+  });
+
+  it('syncAll carries dupes into the per-item result', async () => {
+    await seedPlaidItem(db, 'item-1');
+    await seedCsvTwin();
+    installPlaid(makeFakePlaid({ pages: [{ added: [plaidCoffee()] }], accounts: [makePlaidAccount()] }));
+    const [r] = await syncAll(true);
+    expect(r).toMatchObject({ itemId: 'item-1', added: 1, dupes: 1, skipped: false });
+  });
+});
+
+describe('syncAll debounce and failure isolation', () => {
+  const NOW = Date.parse('2026-10-02T12:00:00Z');
+  const MIN = 60_000;
+  useFixedClock('2026-10-02T12:00:00Z');
+
+  const run = async (agoMin: number, force = false) => {
+    await seedPlaidItem(db, 'item-1', { lastSyncedAt: NOW - agoMin * MIN });
+    const plaid = installPlaid(makeFakePlaid());
+    const [r] = await syncAll(force);
+    return { r, plaid };
+  };
+
+  it('skips an item synced 14 minutes ago and contacts nobody', async () => {
+    const { r, plaid } = await run(14);
+    expect(r).toMatchObject({ itemId: 'item-1', skipped: true, added: 0 });
+    expect(plaid.transactionsSync).not.toHaveBeenCalled();
+  });
+
+  it('syncs an item last synced 16 minutes ago and stamps last_synced_at', async () => {
+    const { r } = await run(16);
+    expect(r.skipped).toBe(false);
+    expect((await q<{ last_synced_at: number }>('SELECT last_synced_at FROM plaid_items'))[0].last_synced_at).toBe(NOW);
+  });
+
+  it('exactly 15 minutes ago is no longer debounced (boundary is exclusive)', async () => {
+    expect((await run(15)).r.skipped).toBe(false);
+  });
+
+  it('force overrides the debounce', async () => {
+    const { r, plaid } = await run(1, true);
+    expect(r.skipped).toBe(false);
+    expect(plaid.transactionsSync).toHaveBeenCalled();
+  });
+
+  it('an item that has never synced is not debounced', async () => {
+    await seedPlaidItem(db, 'item-1');
+    installPlaid(makeFakePlaid());
+    expect((await syncAll())[0].skipped).toBe(false);
+  });
+
+  it('one item throwing reports its error while the others still sync', async () => {
+    await seedPlaidItem(db, 'item-bad', { accessToken: 'tok-bad' });
+    await seedPlaidItem(db, 'item-ok', { accessToken: 'tok-ok' });
+    const plaid = makeFakePlaid({ pages: [{ added: [makePlaidTx({ transaction_id: 'ok-tx' })] }] });
+    const real = plaid.transactionsSync.getMockImplementation()!;
+    plaid.transactionsSync.mockImplementation(async (req) => {
+      if (req?.access_token === 'tok-bad') throw new Error('ITEM_LOGIN_REQUIRED');
+      return real(req);
+    });
+    installPlaid(plaid);
+
+    const results = await syncAll(true);
+    const bad = results.find((r) => r.itemId === 'item-bad')!;
+    const ok = results.find((r) => r.itemId === 'item-ok')!;
+    expect(bad.error).toBe('ITEM_LOGIN_REQUIRED');
+    expect(bad).toMatchObject({ added: 0, skipped: false });
+    expect(ok.error).toBeUndefined();
+    expect(ok.added).toBe(1);
+    expect(await cursorOf('item-bad')).toBeUndefined();
+    expect(await cursorOf('item-ok')).toBe('cursor-1');
   });
 });

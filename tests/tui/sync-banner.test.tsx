@@ -8,21 +8,10 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
+import { waitFor, frame } from '../helpers/waitFor.js';
 import { App } from '../../tui/App.js';
 import { setSyncResult, clearSyncFailures } from '../../core/sync-status.js';
 
-const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
-const frame = (r: ReturnType<typeof render>) => (r.lastFrame() ?? '').replace(ANSI_RE, '');
-
-async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  let lastErr: unknown;
-  while (Date.now() < deadline) {
-    try { assertion(); return; } catch (e) { lastErr = e; }
-    await new Promise((res) => setTimeout(res, 30));
-  }
-  throw lastErr;
-}
 
 afterEach(() => { cleanup(); clearSyncFailures(); });
 
@@ -42,7 +31,7 @@ describe('global sync-failure banner', () => {
 
   it('renders no banner when the store has no failures', async () => {
     const r = render(<App />);
-    await new Promise((res) => setTimeout(res, 50)); // let effects settle
+    await waitFor(() => expect(frame(r)).toContain('Dashboard')); // screen mounted and settled
     expect(frame(r)).not.toContain('Sync failed');
   });
 });

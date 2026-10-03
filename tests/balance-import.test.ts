@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 vi.mock('../core/db.js', async () => {
   const { makeTestDb } = await import('./helpers/makeTestDb.js');
@@ -459,5 +462,74 @@ describe('tools', () => {
     expect(await executeTool('import_balance_history', { csv: big })).toMatch(/nothing was written.*too large/);
     const many = 'date,account,balance\n' + 'a,b,c\n'.repeat(50_001);
     expect(await executeTool('import_balance_history', { csv: many })).toMatch(/too many/);
+  });
+});
+
+// The blocks below swap out or reset the module registry, so they come last
+// and each puts the shared in-memory db mock back when done.
+function restoreDbMock() {
+  vi.doMock('../core/db.js', async () => {
+    const { makeTestDb } = await import('./helpers/makeTestDb.js');
+    return { db: await makeTestDb() };
+  });
+}
+
+// The production schema (autoincrement id + unique index) differs from the
+// test helper schema (composite PK); the upsert must work on both.
+describe('balance import on the production schema', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bal-import-'));
+  const prevDir = process.env.FUNGIBLE_DATA_DIR;
+
+  afterAll(() => {
+    if (prevDir === undefined) delete process.env.FUNGIBLE_DATA_DIR;
+    else process.env.FUNGIBLE_DATA_DIR = prevDir;
+    vi.resetModules();
+    restoreDbMock();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('upserts against the real initDb schema', async () => {
+    process.env.FUNGIBLE_DATA_DIR = dir;
+    vi.resetModules();
+    vi.doUnmock('../core/db.js');
+    const { db: realDb, initDb } = await import('../core/db.js');
+    await initDb();
+    await realDb.execute("INSERT INTO accounts (id, name, type) VALUES ('a', 'Checking', 'depository')");
+    await realDb.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('a', 9, '2026-05-20')");
+    const { commitBalanceImport: commit } = await import('../core/balance-import.js');
+    await commit('date,account,balance\n2026-01-01,Checking,1\n', { today: '2026-06-01' });
+    const r2 = await commit('date,account,balance\n2026-01-01,Checking,2\n', { today: '2026-06-01' });
+    expect(r2.overwritten).toBe(1);
+    const rows = (await realDb.execute("SELECT balance FROM balance_history WHERE account_id='a' AND date='2026-01-01'")).rows;
+    expect(rows.length).toBe(1);
+    expect(Number(rows[0].balance)).toBe(2);
+  });
+});
+
+describe('balance-import-copy', () => {
+  afterAll(() => {
+    vi.resetModules();
+    restoreDbMock();
+  });
+
+  it('loads with db and refresh mocked to throw (no imports/side effects)', async () => {
+    vi.resetModules();
+    vi.doMock('../core/db.js', () => { throw new Error('db must not load'); });
+    vi.doMock('../core/refresh.js', () => { throw new Error('refresh must not load'); });
+    const copy = await import('../core/balance-import-copy.js');
+    expect(copy.summarizeSkips([{ reason: 'invalid_date' }, { reason: 'invalid_amount' }])).toBe('2 invalid date or amount');
+    expect(copy.BALANCE_IMPORT_SKIP_REASONS.length).toBe(8);
+    vi.doUnmock('../core/db.js');
+    vi.doUnmock('../core/refresh.js');
+  });
+
+  it('balance-import re-exports identical values', async () => {
+    vi.resetModules();
+    restoreDbMock();
+    const copy = await import('../core/balance-import-copy.js');
+    const main = await import('../core/balance-import.js');
+    expect(main.BALANCE_IMPORT_SKIP_REASONS).toBe(copy.BALANCE_IMPORT_SKIP_REASONS);
+    expect(main.BALANCE_IMPORT_SKIP_COPY).toBe(copy.BALANCE_IMPORT_SKIP_COPY);
+    expect(main.summarizeSkips).toBe(copy.summarizeSkips);
   });
 });

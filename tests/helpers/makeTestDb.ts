@@ -54,7 +54,7 @@ const SCHEMA = `
   CREATE TABLE category_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     priority INTEGER NOT NULL DEFAULT 0,
-    match_type TEXT NOT NULL,
+    match_type TEXT NOT NULL CHECK(match_type IN ('name', 'regex')),
     pattern TEXT NOT NULL,
     category TEXT NOT NULL,
     min_amount REAL,
@@ -64,7 +64,7 @@ const SCHEMA = `
 
   CREATE TABLE name_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    match_type TEXT NOT NULL,
+    match_type TEXT NOT NULL CHECK(match_type IN ('name', 'regex')),
     pattern TEXT NOT NULL,
     replacement TEXT NOT NULL,
     min_amount REAL,
@@ -94,7 +94,7 @@ const SCHEMA = `
   CREATE TABLE tag_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     priority INTEGER NOT NULL DEFAULT 0,
-    match_type TEXT NOT NULL,
+    match_type TEXT NOT NULL CHECK(match_type IN ('name','regex','all')),
     pattern TEXT NOT NULL DEFAULT '',
     tag_id INTEGER NOT NULL,
     account_id TEXT,
@@ -121,11 +121,14 @@ const SCHEMA = `
   );
 
   CREATE TABLE balance_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id TEXT NOT NULL,
     balance REAL NOT NULL,
-    date TEXT NOT NULL,
-    PRIMARY KEY (account_id, date)
+    date TEXT NOT NULL
   );
+
+  CREATE UNIQUE INDEX idx_balance_history_acct_date
+    ON balance_history(account_id, date);
 
   CREATE TABLE household_members (
     id TEXT PRIMARY KEY,

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from 'ink-testing-library';
 import type { HealthData } from '../../core/health.js';
 import { makeHealthData } from '../helpers/makeHealthData.js';
+import { waitFor, frame } from '../helpers/waitFor.js';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 // The DEBT section splits credit-card debt (HealthData.totalDebt) from loan debt
@@ -31,14 +32,6 @@ vi.mock('../../core/profile.js', () => ({
 const { Health } = await import('../../tui/Health.js');
 
 const noop = () => {};
-const frame = (r: ReturnType<typeof render>) => r.lastFrame() ?? '';
-async function waitFor(fn: () => void) {
-  for (let i = 0; i < 50; i++) {
-    try { fn(); return; } catch { await new Promise((res) => setTimeout(res, 10)); }
-  }
-  fn();
-}
-
 beforeEach(() => { health = { ...BASE }; });
 
 describe('Health — DEBT section with loan debt', () => {
