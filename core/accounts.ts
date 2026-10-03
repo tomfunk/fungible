@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
 import { parseDate, assignOrdinals, dedupKey } from './csv.js';
+import { deleteDuplicatesKeepingEdits } from './dedup.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
 import { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
@@ -181,7 +182,5 @@ export async function deleteDuplicate(csvId: string): Promise<void> {
 }
 
 export async function deleteAllDuplicates(csvIds: string[]): Promise<void> {
-  if (csvIds.length === 0) return;
-  const placeholders = csvIds.map(() => '?').join(',');
-  await db.execute({ sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: csvIds });
+  await deleteDuplicatesKeepingEdits(csvIds);
 }

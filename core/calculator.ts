@@ -26,6 +26,7 @@ export function calcPV(fv: number, pmt: number, n: number, r: number): number {
 }
 
 export function calcPMT(pv: number, fv: number, n: number, r: number): number {
+  if (n === 0) throw new Error('Cannot solve PMT: number of periods (n) must not be zero.');
   if (Math.abs(r) < 1e-10) return -(pv + fv) / n;
   return -(pv * pow(r, n) + fv) / annuityFactor(r, n);
 }
