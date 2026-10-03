@@ -4,6 +4,7 @@ import {
   getPeriodDates,
   navigatePeriod,
   formatPeriodLabel,
+  generatePeriods,
 } from '../core/dateUtils.js';
 
 // Helper: create a date at noon local time to avoid DST edge cases
@@ -343,5 +344,34 @@ describe('formatPeriodLabel', () => {
 
   it('formats alltime label', () => {
     expect(formatPeriodLabel('alltime', d(2025, 1, 1))).toBe('All Time');
+  });
+});
+
+describe('generatePeriods', () => {
+  // The '-31' period ends (e.g. '2025-06-31') are intentional end-of-period sentinels
+  // for plain string comparison against ISO dates, not real calendar dates.
+  it.each([
+    ['March', '2025-03-15', 'Q1 2025', '2025-01-01', '2025-03-31'],
+    ['June', '2025-06-30', 'Q2 2025', '2025-04-01', '2025-06-31'],
+    ['September', '2025-09-01', 'Q3 2025', '2025-07-01', '2025-09-31'],
+    ['December', '2025-12-31', 'Q4 2025', '2025-10-01', '2025-12-31'],
+  ])('a date in %s falls in exactly one quarter starting on the right month', (_m, date, label, from, to) => {
+    expect(generatePeriods('quarter', date, date)).toEqual([{ label, from, to }]);
+  });
+
+  it('walks quarters across a year boundary', () => {
+    expect(generatePeriods('quarter', '2024-11-05', '2025-04-02').map((p) => p.from))
+      .toEqual(['2024-10-01', '2025-01-01', '2025-04-01']);
+  });
+
+  it('week periods include the final week when `to` is exactly a period start', () => {
+    expect(generatePeriods('week', '2025-01-06', '2025-01-13').map((p) => p.from))
+      .toEqual(['2025-01-06', '2025-01-13']);
+  });
+
+  it('a single-day range yields one week period spanning 7 days', () => {
+    expect(generatePeriods('week', '2025-01-06', '2025-01-06')).toEqual([
+      { label: 'Jan 6–12 2025', from: '2025-01-06', to: '2025-01-12' },
+    ]);
   });
 });
