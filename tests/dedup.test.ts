@@ -7,6 +7,8 @@ vi.mock('../core/db.js', async () => {
 
 import { db } from '../core/db.js';
 import { deduplicateCsvVsPlaid, getCsvPlaidDupeCandidates } from '../core/dedup.js';
+import { deleteDuplicate, deleteAllDuplicates } from '../core/accounts.js';
+import { seedTx } from './helpers/seedDb.js';
 
 let seq = 0;
 async function csvTx(opts: { name: string; amount: number; date?: string; accountId?: string }) {
@@ -42,6 +44,9 @@ async function exists(id: string) {
 
 beforeEach(async () => {
   seq = 0;
+  await db.execute('DELETE FROM transaction_tags');
+  await db.execute('DELETE FROM tag_rule_suppressions');
+  await db.execute('DELETE FROM tags');
   await db.execute('DELETE FROM transactions');
   await db.execute('DELETE FROM accounts');
 });
@@ -338,5 +343,221 @@ describe('deduplicateCsvVsPlaid with reattributed dates', () => {
 
     expect(await deduplicateCsvVsPlaid()).toBe(0);
     expect(await exists(csvId)).toBe(true);
+  });
+});
+
+// ─── Edit transfer: a deduped CSV row's user edits move to the surviving Plaid row ───
+
+describe('edit transfer on dedup', () => {
+  const row = async (id: string) =>
+    (await db.execute({ sql: 'SELECT * FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as Record<string, string | number | null>;
+  const tagNames = async (id: string) =>
+    (await db.execute({ sql: 'SELECT t.name FROM transaction_tags tt JOIN tags t ON t.id = tt.tag_id WHERE tt.transaction_id = ? ORDER BY t.name', args: [id] }))
+      .rows.map((r) => (r as unknown as { name: string }).name);
+  async function tag(name: string, ...txIds: string[]) {
+    await db.execute({ sql: 'INSERT OR IGNORE INTO tags (name) VALUES (?)', args: [name] });
+    const id = Number((await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [name] })).rows[0].id);
+    for (const t of txIds) await db.execute({ sql: 'INSERT INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)', args: [t, id] });
+  }
+  const pair = async (csv: Parameters<typeof seedTx>[1] = {}, plaid: Parameters<typeof seedTx>[1] = {}) => ({
+    csv: (await seedTx(db, { source: 'csv', name: 'LATTE', amount: 5, ...csv })).id,
+    plaid: (await seedTx(db, { source: 'plaid', name: 'LATTE', amount: 5, ...plaid })).id,
+  });
+
+  it('transfers manual_category, display_name, ignored and tags to the Plaid row', async () => {
+    const { csv, plaid } = await pair({ manual_category: 'Dining', category: 'Dining', display_name: 'My latte', ignored: true });
+    await tag('coffee', csv);
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(csv)).toBe(false);
+    expect(await row(plaid)).toMatchObject({ manual_category: 'Dining', category: 'Dining', display_name: 'My latte', ignored: 1 });
+    expect(await tagNames(plaid)).toEqual(['coffee']);
+  });
+
+  it("the Plaid row's own edits win; tags are unioned without duplicates", async () => {
+    const { csv, plaid } = await pair(
+      { manual_category: 'Dining', display_name: 'My latte' },
+      { manual_category: 'Coffee', category: 'Coffee', display_name: 'Latte!' },
+    );
+    await tag('shared', csv, plaid);
+    await tag('csv-only', csv);
+    await tag('plaid-only', plaid);
+    await deduplicateCsvVsPlaid();
+    expect(await row(plaid)).toMatchObject({ manual_category: 'Coffee', category: 'Coffee', display_name: 'Latte!', ignored: 0 });
+    expect(await tagNames(plaid)).toEqual(['csv-only', 'plaid-only', 'shared']);
+  });
+
+  it('an ignored Plaid row stays ignored when the CSV row was not', async () => {
+    const { plaid } = await pair({}, { ignored: true });
+    await deduplicateCsvVsPlaid();
+    expect((await row(plaid)).ignored).toBe(1);
+  });
+
+  it('a CSV row with no edits leaves the Plaid row untouched', async () => {
+    const { plaid } = await pair({}, { category: 'Food' });
+    await deduplicateCsvVsPlaid();
+    expect(await row(plaid)).toMatchObject({ manual_category: null, display_name: null, ignored: 0, category: 'Food' });
+  });
+
+  it('with two CSV rows competing for one Plaid row, the best-ranked pair is deleted and its edits transfer; the other keeps its own', async () => {
+    const plaid = (await seedTx(db, { source: 'plaid', name: 'LATTE', amount: 5, date: '2025-01-15' })).id;
+    const exact = (await seedTx(db, { source: 'csv', name: 'LATTE', amount: 5, date: '2025-01-15', manual_category: 'Dining' })).id;
+    const loose = (await seedTx(db, { source: 'csv', name: 'LATTE SHOP', amount: 5, date: '2025-01-15', manual_category: 'Other' })).id;
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(exact)).toBe(false);
+    expect(await exists(loose)).toBe(true);
+    expect((await row(plaid)).manual_category).toBe('Dining');
+    expect((await row(loose)).manual_category).toBe('Other');
+  });
+
+  it('never auto-deletes a manual row, so its edits stay put', async () => {
+    const manual = (await seedTx(db, { source: 'manual', name: 'LATTE', amount: 5, manual_category: 'Dining' })).id;
+    const plaid = (await seedTx(db, { source: 'plaid', name: 'LATTE', amount: 5 })).id;
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+    expect((await row(manual)).manual_category).toBe('Dining');
+    expect((await row(plaid)).manual_category).toBeNull();
+  });
+
+  describe('user-confirmed duplicate deletes (review tab)', () => {
+    it('deleteDuplicate transfers a manual row\'s edits to its Plaid twin', async () => {
+      const { csv, plaid } = await pair({ source: 'manual', manual_category: 'Dining', display_name: 'My latte' });
+      await tag('coffee', csv);
+      await deleteDuplicate(csv);
+      expect(await exists(csv)).toBe(false);
+      expect(await row(plaid)).toMatchObject({ manual_category: 'Dining', display_name: 'My latte' });
+      expect(await tagNames(plaid)).toEqual(['coffee']);
+    });
+
+    it.each([['a', 'b'], ['b', 'a']])('deleting only pair %s leaves pair %s untouched and transfers just that pair\'s edits', async (del, keep) => {
+      const mk = async (n: string) => {
+        const c = (await seedTx(db, { source: 'csv', name: `SHOP ${n}`, amount: n === 'a' ? 11 : 22, manual_category: `Cat-${n}` })).id;
+        const p = (await seedTx(db, { source: 'plaid', name: `SHOP ${n}`, amount: n === 'a' ? 11 : 22 })).id;
+        return { c, p };
+      };
+      const pairs = { a: await mk('a'), b: await mk('b') } as Record<string, { c: string; p: string }>;
+      await deleteAllDuplicates([pairs[del].c]);
+      expect(await exists(pairs[del].c)).toBe(false);
+      expect((await row(pairs[del].p)).manual_category).toBe(`Cat-${del}`);
+      expect(await exists(pairs[keep].c)).toBe(true);
+      expect((await row(pairs[keep].p)).manual_category).toBeNull();
+
+      // Same through the single-id path.
+      await deleteDuplicate(pairs[keep].c);
+      expect(await exists(pairs[keep].c)).toBe(false);
+      expect((await row(pairs[keep].p)).manual_category).toBe(`Cat-${keep}`);
+    });
+
+    it('deleteAllDuplicates still deletes ids that have no Plaid twin', async () => {
+      const lone = (await seedTx(db, { source: 'csv', name: 'LONELY', amount: 9 })).id;
+      const { csv } = await pair();
+      await deleteAllDuplicates([lone, csv]);
+      expect(await exists(lone)).toBe(false);
+      expect(await exists(csv)).toBe(false);
+    });
+  });
+});
+
+// ─── Characterisation ────────────────────────────────────────────────────────
+
+describe('dedup characterisation', () => {
+  const csv = (o: Parameters<typeof seedTx>[1] = {}) => seedTx(db, { source: 'csv', name: 'AMAZON', amount: 25, date: '2025-01-15', ...o });
+  const plaid = (o: Parameters<typeof seedTx>[1] = {}) => seedTx(db, { source: 'plaid', name: 'AMAZON', amount: 25, date: '2025-01-15', ...o });
+
+  it('opposite-sign amounts with the same magnitude do not dedupe', async () => {
+    const c = await csv({ amount: 25 }); await plaid({ amount: -25 });
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+    expect(await exists(c.id)).toBe(true);
+  });
+
+  it('a second call removes nothing more', async () => {
+    await csv(); await plaid();
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+  });
+
+  it('a pending Plaid row absorbs a CSV row (pending is not checked)', async () => {
+    const c = await csv(); await plaid({ pending: true });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(c.id)).toBe(false);
+  });
+
+  it('an ignored Plaid row absorbs a CSV row (ignored is not checked)', async () => {
+    const c = await csv(); await plaid({ ignored: true });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(c.id)).toBe(false);
+  });
+
+  it.each([
+    ['csv 3 days earlier', '2025-01-12', '2025-01-15', true],
+    ['csv 3 days later', '2025-01-18', '2025-01-15', true],
+    ['csv 4 days earlier', '2025-01-11', '2025-01-15', false],
+    ['csv 4 days later', '2025-01-19', '2025-01-15', false],
+  ])('%s', async (_n, csvDate, plaidDate, dedupes) => {
+    const c = await csv({ date: csvDate }); await plaid({ date: plaidDate });
+    expect(await deduplicateCsvVsPlaid()).toBe(dedupes ? 1 : 0);
+    expect(await exists(c.id)).toBe(!dedupes);
+  });
+
+  it('original_date takes precedence over date on the CSV side', async () => {
+    const c = await csv({ date: '2025-06-01', original_date: '2025-01-14' }); await plaid();
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(c.id)).toBe(false);
+  });
+
+  it('original_date takes precedence over date on the Plaid side', async () => {
+    const c = await csv(); await plaid({ date: '2025-06-01', original_date: '2025-01-16' });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(c.id)).toBe(false);
+  });
+
+  it('original_date can also keep a nearby displayed date from matching', async () => {
+    const c = await csv({ date: '2025-01-15', original_date: '2024-12-01' }); await plaid();
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+    expect(await exists(c.id)).toBe(true);
+  });
+
+  it.each([
+    ['csv AMAZON vs plaid AMAZON MKTP', 'AMAZON', 'AMAZON MKTP'],
+    ['csv AMAZON MKTP vs plaid AMAZON', 'AMAZON MKTP', 'AMAZON'],
+  ])('name containment is symmetric: %s', async (_n, csvName, plaidName) => {
+    const c = await csv({ name: csvName }); await plaid({ name: plaidName });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(c.id)).toBe(false);
+  });
+
+  it('with two Plaid rows competing, the exact-name Plaid row pairs and the other survives', async () => {
+    const c = await csv({ name: 'AMAZON' });
+    const exact = await plaid({ name: 'AMAZON' });
+    const loose = await plaid({ name: 'AMAZON MKTP' });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    expect(await exists(c.id)).toBe(false);
+    expect(await exists(exact.id)).toBe(true);
+    expect(await exists(loose.id)).toBe(true);
+  });
+
+  it.each([
+    ['5 chars before the star matches', 'AMAZO*XYZ123', true],
+    // The rule is INSTR(name, '*') >= 5, i.e. the star at position 5 = 4 chars before it.
+    ['4 chars before the star matches (threshold is the star at position 5)', 'AMAZ*XYZ123', true],
+    ['3 chars before the star does not', 'AMA*XYZ123', false],
+  ])('masked Plaid prefix: %s', async (_n, plaidName, dedupes) => {
+    // CSV name shares only the prefix with the Plaid name, so only the masked-prefix rule can match.
+    const c = await csv({ name: 'AMAZO ORDER 99', amount: 25 });
+    await plaid({ name: plaidName });
+    expect(await deduplicateCsvVsPlaid()).toBe(dedupes ? 1 : 0);
+    expect(await exists(c.id)).toBe(!dedupes);
+  });
+
+  it('two real $5 coffees against one Plaid row leave exactly one CSV row', async () => {
+    const a = await csv({ name: 'COFFEE', amount: 5 }); const b = await csv({ name: 'COFFEE', amount: 5 });
+    await plaid({ name: 'COFFEE', amount: 5 });
+    expect(await deduplicateCsvVsPlaid()).toBe(1);
+    const survivors = (await Promise.all([a, b].map((t) => exists(t.id)))).filter(Boolean);
+    expect(survivors).toHaveLength(1);
+  });
+
+  it('amounts are compared exactly: 29.99 vs 29.990001 do not dedupe', async () => {
+    const c = await csv({ amount: 29.99 }); await plaid({ amount: 29.990001 });
+    expect(await deduplicateCsvVsPlaid()).toBe(0);
+    expect(await exists(c.id)).toBe(true);
   });
 });
