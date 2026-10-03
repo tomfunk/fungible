@@ -439,3 +439,35 @@ describe('getAccountDriftData', () => {
     expect(acct.avg12mDelta).toBeCloseTo(200);
   });
 });
+
+describe('rolling baseline: mean vs median', () => {
+  beforeEach(async () => { await db.execute('DELETE FROM transactions'); });
+  const win = (m: number) => ({ from: `2025-${String(m).padStart(2, '0')}-01`, to: `2025-${String(m).padStart(2, '0')}-28` });
+  const empty = { from: '2024-01-01', to: '2024-01-02' };
+  const current = { from: '2025-09-01', to: '2025-09-28' };
+
+  async function run(monthly: Record<number, number>, curAmount = 50) {
+    await insertTx({ date: '2025-09-10', amount: curAmount, category: 'Food' });
+    for (const [m, amt] of Object.entries(monthly)) {
+      await insertTx({ date: `2025-${String(m).padStart(2, '0')}-10`, amount: amt, category: 'Food' });
+    }
+    const rolling = Object.keys(monthly).map((m) => win(Number(m)));
+    const [food] = await getCategoryDriftData(current, empty, empty, rolling);
+    return food;
+  }
+
+  it('odd count: median is the middle value, not the mean (10, 90, 20 -> mean 40, median 20)', async () => {
+    const f = await run({ 6: 10, 7: 90, 8: 20 });
+    expect(f.avg12m).toBeCloseTo(40, 10);
+    expect(f.median12m).toBe(20);
+    expect(f.medianDelta).toBe(30);
+    expect(f.avg12mDelta).toBeCloseTo(10, 10);
+  });
+
+  it('even count: median is the mean of the two middle values (10, 100, 20, 30 -> mean 40, median 25)', async () => {
+    const f = await run({ 5: 10, 6: 100, 7: 20, 8: 30 });
+    expect(f.avg12m).toBeCloseTo(40, 10);
+    expect(f.median12m).toBe(25);
+    expect(f.medianDelta).toBe(25);
+  });
+});
