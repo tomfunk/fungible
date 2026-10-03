@@ -14,6 +14,7 @@ import { importCsvTransactions } from '../../core/accounts.js';
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 import { makeCsvRow } from '../helpers/makeCsvRow.js';
+import { parseCsvText } from '../../core/csv.js';
 import { summarizeCsvSkips } from '../../core/csv-import-copy.js';
 
 const CFG = makeCsvRow();
@@ -198,20 +199,34 @@ describe('GUI Accounts — CSV import modal', () => {
     ['2025-13-45', 'BADDATE', '5.00'],   // line 6 bad date
   ];
 
-  /** Opens the import modal with `fileRows` as the picked file and maps Amount. */
-  async function openModal(fileRows: string[][]) {
+  /** Opens the import modal with the file `pick` returns (or throws, like a rejected bridge call). */
+  async function openWith(pick: () => unknown) {
     await addAccount('chase', 'Chase');
     const bridge = (window as unknown as { __bridge: { call: (...a: unknown[]) => Promise<unknown> } }).__bridge;
     const realCall = bridge.call;
     bridge.call = async (ns, fn, args) =>
-      ns === 'files' && fn === 'pickCsv'
-        ? { path: '/tmp/x.csv', headers, rows: fileRows, fileName: 'x.csv', fileHash: 'h-x' }
-        : realCall(ns, fn, args);
+      ns === 'files' && fn === 'pickCsv' ? pick() : realCall(ns, fn, args);
     await addData();
     await userEvent.click(await screen.findByText('Import CSV'));
-    // Selects in order: date, description, amount mode, amount column, positive-means, account.
+  }
+
+  /** Maps Amount (select order: date, description, amount mode, amount column, ...). */
+  async function mapAmount() {
     const selects = await screen.findAllByRole('combobox');
     await userEvent.selectOptions(selects[3], '2');
+  }
+
+  /** File given as parsed rows; lines are the plain header-is-line-1 positions. */
+  async function openModal(fileRows: string[][]) {
+    await openWith(() => ({
+      path: '/tmp/x.csv', headers, rows: fileRows, lines: fileRows.map((_, i) => i + 2), fileName: 'x.csv', fileHash: 'h-x',
+    }));
+    await mapAmount();
+  }
+
+  /** File given as raw text, parsed by the real core parser so lines cannot drift from it. */
+  async function openText(text: string) {
+    await openWith(() => ({ path: '/tmp/x.csv', ...parseCsvText(text), fileName: 'x.csv', fileHash: 'h-x' }));
   }
 
   const amountCells = () =>
@@ -305,5 +320,28 @@ describe('GUI Accounts — CSV import modal', () => {
     expect(msg.textContent).toContain('line 2:');
     expect(msg.textContent).toContain('and 2 more');
     expect(msg.textContent).not.toContain('line 6:');
+  });
+
+  it('reports the true file line when a blank line precedes the bad row', async () => {
+    await openText('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n\n2025-01-03,GARBLED,abc\n');
+    await mapAmount();
+    await userEvent.click(await screen.findByRole('button', { name: 'Import 2 rows' }));
+    const msg = await screen.findByText(/^Imported 1/);
+    expect(msg.textContent).toMatch(/line 4: unreadable amount/); // not line 3
+  });
+
+  it('reports the true file line after a row with an embedded newline', async () => {
+    await openText('Date,Description,Amount\n2025-01-02,"AMAZON\nPRIME",25.00\n2025-01-03,GARBLED,abc\n');
+    await mapAmount();
+    await userEvent.click(await screen.findByRole('button', { name: 'Import 2 rows' }));
+    const msg = await screen.findByText(/^Imported 1/);
+    expect(msg.textContent).toMatch(/line 4: unreadable amount/); // not line 3
+  });
+
+  it('shows an unterminated-quote error inline and does not advance', async () => {
+    await openWith(() => parseCsvText('Date,Description,Amount\n2025-01-02,"AMAZON,25.00\n'));
+    expect((await screen.findByText(/unterminated quote starting on line 2/)).textContent).toContain('line 2');
+    expect(screen.getByText('Choose a CSV file to import.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Import \d+ rows$/ })).toBeNull();
   });
 });

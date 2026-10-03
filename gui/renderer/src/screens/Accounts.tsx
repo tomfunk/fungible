@@ -1263,19 +1263,19 @@ function MoveImportModal({ imp, onClose, onDone }: {
 
 const SKIPPED_LINES_SHOWN = 3;
 
-/** Done message for a CSV import. Line numbers are file lines: rowIndex is
- *  0-based over data rows and line 1 is the header, so line = rowIndex + 2. */
+/** Done message for a CSV import. Uses the true source line core reports;
+ *  rowIndex + 2 is only a fallback (it ignores blank lines and embedded newlines). */
 export function csvDoneMessage(imported: number, skipped: number, skippedRows: CsvSkippedRow[]): string {
   let msg = `Imported ${imported} · skipped ${skipped}`;
   if (skippedRows.length === 0) return msg;
   msg += ` (${summarizeCsvSkips(skippedRows)})`;
   const shown = skippedRows.slice(0, SKIPPED_LINES_SHOWN)
-    .map((r) => `line ${r.rowIndex + 2}: ${CSV_SKIP_COPY[r.reason]}`);
+    .map((r) => `line ${r.line ?? r.rowIndex + 2}: ${CSV_SKIP_COPY[r.reason]}`);
   const more = skippedRows.length - shown.length;
   return `${msg}. ${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`;
 }
 
-type CsvData = { path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string };
+type CsvData = { path: string; headers: string[]; rows: string[][]; lines: number[]; fileName: string; fileHash: string };
 
 function PreviewDate({ raw }: { raw: string }) {
   const iso = parseDate(raw);
@@ -1316,7 +1316,13 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (res
   const [error, setError] = useState('');
 
   async function pick() {
-    const result = await api.files.pickCsv();
+    let result: Awaited<ReturnType<typeof api.files.pickCsv>>;
+    try {
+      result = await api.files.pickCsv();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read that file');
+      return;
+    }
     if (!result) return;
     if (result.headers.length === 0) {
       setError('No columns found in that file');
@@ -1398,7 +1404,7 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (res
         debitCol: amountMode === 'split' ? debitCol : null,
         creditCol: amountMode === 'split' ? creditCol : null,
         positiveIsInflow,
-      }, { name: csv.fileName, hash: csv.fileHash });
+      }, { name: csv.fileName, hash: csv.fileHash }, csv.lines);
       onDone({ imported: result.imported, skipped: result.skipped, skippedRows: result.skippedRows });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed');
