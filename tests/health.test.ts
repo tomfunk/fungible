@@ -8,7 +8,7 @@ vi.mock('../core/db.js', async () => {
 import { db } from '../core/db.js';
 import {
   yearsToFire, coastYears, loadHealthData, getHealthHistory,
-  computeFireRunwayMetrics, savingsRateSeverity, runwaySeverity, debtPayoffSeverity,
+  computeFireRunwayMetrics, computeSavingsRate, getTrailing12moAverages, savingsRateSeverity, runwaySeverity, debtPayoffSeverity,
 } from '../core/health.js';
 import { BASIS_LABEL } from '../core/dateUtils.js';
 
@@ -28,21 +28,35 @@ describe('yearsToFire', () => {
   });
 
   it('returns a reasonable estimate for known values', () => {
-    const years = yearsToFire(0, 2000, 600000, 7);
-    expect(years).not.toBeNull();
-    expect(years!).toBeGreaterThan(5);
-    expect(years!).toBeLessThan(50);
+    // Hand-derived: r = 1.07^(1/12)-1; n = ln((pmt - fv*r)/(pmt + pv*r)) / ln(1+r)
+    // = 175.9 months = 14.66 years.
+    expect(yearsToFire(0, 2000, 600000, 7)).toBeCloseTo(14.66, 1);
   });
 
   it('handles negative net worth', () => {
-    const years = yearsToFire(-50000, 3000, 600000, 7);
-    expect(years).not.toBeNull();
-    expect(years!).toBeGreaterThan(0);
+    // Same formula with pv = +50,000 (debt) and pmt = -3,000: 12.64 years.
+    expect(yearsToFire(-50000, 3000, 600000, 7)).toBeCloseTo(12.64, 1);
   });
 
   it('returns null when 100 years is not enough', () => {
     const years = yearsToFire(0, 1, 10000000000, 0);
     expect(years).toBeNull();
+  });
+});
+
+describe('yearsToFire horizon', () => {
+  it('returns exactly 100 years at the 1200-month limit and null one month past it', () => {
+    expect(yearsToFire(0, 1000, 1_200_000, 0)).toBeCloseTo(100, 6);
+    expect(yearsToFire(0, 1000, 1_201_000, 0)).toBeNull();
+  });
+});
+
+describe('coastYears horizon', () => {
+  // years = ln(fire/nw) / ln(1.01) at 1%/yr with nw = 1000. fire = 1000 * 1.01^200.5 = 7353
+  // gives 200.51 years (over the 200-year cap); 1000 * 1.01^199.5 = 7280 gives 199.50.
+  it('returns null just past 200 years and a value just under it', () => {
+    expect(coastYears(1000, 7353, 1)).toBeNull();
+    expect(coastYears(1000, 7280, 1)).toBeCloseTo(199.5, 1);
   });
 });
 
@@ -63,9 +77,8 @@ describe('coastYears', () => {
   });
 
   it('returns a positive number of years when net worth is below target', () => {
-    const years = coastYears(100000, 1000000, 7);
-    expect(years).not.toBeNull();
-    expect(years!).toBeGreaterThan(0);
+    // ln(1,000,000/100,000) / ln(1.07) = 34.03 years.
+    expect(coastYears(100000, 1000000, 7)).toBeCloseTo(34.03, 1);
   });
 
   it('returns null for extreme values (over 200 years)', () => {
@@ -334,3 +347,69 @@ describe('debtPayoffSeverity', () => {
   });
 });
 
+
+describe('computeSavingsRate', () => {
+  it('adds pretax savings to both numerator and denominator', () => {
+    // (500 + 1000) / (5000 + 1000) = 25%
+    expect(computeSavingsRate(5000, 500, 1000)).toBeCloseTo(25, 10);
+  });
+  it('is the plain ratio with no pretax', () => {
+    expect(computeSavingsRate(4000, 1000, 0)).toBeCloseTo(25, 10);
+  });
+  it('can be negative when spending exceeds income', () => {
+    expect(computeSavingsRate(4000, -400, 0)).toBeCloseTo(-10, 10);
+  });
+  it.each([[0, 0, 0], [0, 500, 0], [-100, 0, 50]])('is null when gross income is not positive (%d, %d, %d)', (i, s, p) => {
+    expect(computeSavingsRate(i, s, p)).toBeNull();
+  });
+});
+
+describe('loadHealthData — excluded accounts', () => {
+  beforeEach(async () => {
+    for (const t of ['accounts', 'balance_history', 'transactions']) await db.execute(`DELETE FROM ${t}`);
+  });
+
+  it('leaves excluded accounts out of cash, liquid and net worth', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('in', 'in', 'depository', 'checking', 0), ('out', 'out', 'depository', 'checking', 1)");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('in', 1000, '2026-05-20'), ('out', 7000, '2026-05-20')");
+    const h = await loadHealthData();
+    expect(h.cash).toBe(1000);
+    expect(h.liquid).toBe(1000);
+    expect(h.netWorth).toBe(1000);
+  });
+});
+
+describe('getTrailing12moAverages', () => {
+  // SQLite's date('now') ignores a faked JS clock, so seed relative to the real one.
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  let seq = 0;
+  const tx = (o: { date: string; amount: number; category: string; pending?: number; ignored?: number }) =>
+    db.execute({
+      sql: 'INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      args: [`avg${++seq}`, 'a', o.date, 'T', o.amount, o.category, o.pending ?? 0, o.ignored ?? 0],
+    });
+
+  beforeEach(async () => {
+    for (const t of ['transactions', 'hidden_categories']) await db.execute(`DELETE FROM ${t}`);
+  });
+
+  it('keeps income and expenses on their own sides (12,000 in vs 3,600 out)', async () => {
+    await tx({ date: daysAgo(30), amount: -12000, category: 'Income' });
+    await tx({ date: daysAgo(40), amount: 3600, category: 'Food' });
+    const a = await getTrailing12moAverages();
+    expect(a.avgIncome).toBeCloseTo(1000, 6);
+    expect(a.avgExpenses).toBeCloseTo(300, 6);
+    expect(a.avgSavings).toBeCloseTo(700, 6);
+  });
+
+  it('ignores pending, ignored, Transfer and rows older than 12 months', async () => {
+    await tx({ date: daysAgo(30), amount: 1200, category: 'Food' });
+    await tx({ date: daysAgo(30), amount: 9999, category: 'Food', pending: 1 });
+    await tx({ date: daysAgo(30), amount: 9999, category: 'Food', ignored: 1 });
+    await tx({ date: daysAgo(30), amount: 9999, category: 'Transfer' });
+    await tx({ date: daysAgo(400), amount: 9999, category: 'Food' });
+    const a = await getTrailing12moAverages();
+    expect(a.avgExpenses).toBeCloseTo(100, 6);
+    expect(a.avgIncome).toBeCloseTo(0, 6);
+  });
+});

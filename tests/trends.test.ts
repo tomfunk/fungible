@@ -6,7 +6,8 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
-import { getPeriodTotals, getSearchPeriodTotals, getSearchMatchingPeriods, type View } from '../core/trends.js';
+import { seedTx } from './helpers/seedDb.js';
+import { buildTrendViews, generateAllPeriods, getPeriodTotals, getSearchPeriodTotals, getSearchMatchingPeriods, type View } from '../core/trends.js';
 
 let seq = 0;
 /** Sign convention: positive amount = money out, negative = money in. */
@@ -202,5 +203,91 @@ describe('search matching — amount and date (getSearchMatchingPeriods / getSea
 
     const { count } = await getSearchMatchingPeriods('trader', 'month');
     expect(count).toBe(1);
+  });
+});
+
+describe('getSearchPeriodTotals — period alignment and totals', () => {
+  it.each([
+    ['quarter', '2025-03-31', '2025-01-01'],
+    ['quarter', '2025-06-30', '2025-04-01'],
+    ['quarter', '2025-09-30', '2025-07-01'],
+    ['quarter', '2025-12-31', '2025-10-01'],
+    ['week', '2025-01-12', '2025-01-06'], // a Sunday belongs to the preceding Monday's week
+    ['week', '2025-01-06', '2025-01-06'],
+    ['month', '2025-02-28', '2025-02-01'],
+    ['year', '2025-12-31', '2025-01-01'],
+  ] as const)('%s: %s lands in the period starting %s', async (range, date, from) => {
+    await tx({ date, amount: 10, category: 'Misc', name: 'Zedco' });
+    const rows = await getSearchPeriodTotals('zedco', range);
+    expect(rows.map((r) => r.from)).toEqual([from]);
+  });
+
+  it('total is income minus expenses, and negative when spending dominates', async () => {
+    await tx({ date: '2025-04-05', amount: -100, category: 'Misc', name: 'Acme refund' });
+    await tx({ date: '2025-04-06', amount: 30, category: 'Misc', name: 'Acme order' });
+    await tx({ date: '2025-05-06', amount: 45, category: 'Misc', name: 'Acme order' });
+    const [apr, may] = await getSearchPeriodTotals('acme', 'month');
+    expect(apr).toMatchObject({ income: 100, expenses: 30, total: 70 });
+    expect(may).toMatchObject({ income: 0, expenses: 45, total: -45 });
+  });
+});
+
+describe('getSearchPeriodTotals — pending', () => {
+  it('pending matches are excluded from the period totals', async () => {
+    await seedTx(db, { id: 'p1', date: '2025-03-10', amount: 15, name: 'Pendco', category: 'Food' });
+    await seedTx(db, { id: 'p2', date: '2025-03-11', amount: 500, name: 'Pendco', category: 'Food', pending: true });
+    const [mar] = await getSearchPeriodTotals('pendco', 'month');
+    expect(mar).toMatchObject({ expenses: 15, total: -15 });
+  });
+});
+
+describe('getPeriodTotals — week alignment and pending', () => {
+  it('a first transaction mid-week starts the first period on that week\'s Monday', async () => {
+    await tx({ date: '2025-01-08', amount: 20, category: 'Food' }); // Wednesday
+    const rows = await getPeriodTotals(view({ mode: 'expenses' }), 'week');
+    expect(rows[0]).toMatchObject({ from: '2025-01-06', total: 20 });
+  });
+
+  it('pending transactions are excluded from period totals', async () => {
+    await seedTx(db, { id: 'posted', date: '2025-03-10', amount: 15, category: 'Food' });
+    await seedTx(db, { id: 'pend', date: '2025-03-11', amount: 500, category: 'Food', pending: true });
+    expect(await monthTotal(view({ mode: 'expenses' }), '2025-03-01')).toBe(15);
+  });
+});
+
+describe('pending rows never leak into trends', () => {
+  it('buildTrendViews gives no view to a category that only has a pending expense', async () => {
+    await seedTx(db, { amount: 10, category: 'Food' });
+    await seedTx(db, { amount: 99, category: 'PendingOnly', pending: true });
+    const labels = (await buildTrendViews()).map((v) => v.label);
+    expect(labels).toContain('Food');
+    expect(labels).not.toContain('PendingOnly');
+  });
+
+  it.each([
+    ['before the earliest', '2024-01-05'],
+    ['after the latest', '2026-12-05'],
+  ])('generateAllPeriods ignores a pending row dated %s posted row', async (_n, pendingDate) => {
+    await seedTx(db, { date: '2025-03-10', amount: 10, category: 'Food' });
+    await seedTx(db, { date: pendingDate, amount: 99, category: 'Food', pending: true });
+    expect((await generateAllPeriods('month')).map((p) => p.from.slice(0, 7))).toEqual(['2025-03']);
+    expect((await generateAllPeriods('year')).map((p) => p.from)).toEqual(['2025-01-01']);
+  });
+
+  it.each(['month', 'quarter', 'year', 'week'] as const)('flexbreakdown (%s) excludes pending rows', async (range) => {
+    await db.execute("INSERT INTO categories (name, flexibility) VALUES ('Food', 'flexible')");
+    await seedTx(db, { date: '2025-03-10', amount: 10, category: 'Food' });
+    await seedTx(db, { date: '2025-03-11', amount: 500, category: 'Food', pending: true });
+    const rows = await getPeriodTotals(view({ mode: 'flexbreakdown' }), range);
+    expect(rows.reduce((sum, r) => sum + r.total, 0)).toBe(10);
+    expect(rows.reduce((sum, r) => sum + (r.flexible ?? 0), 0)).toBe(10);
+  });
+
+  it('getSearchMatchingPeriods reports nothing for a pending-only match', async () => {
+    await seedTx(db, { date: '2025-03-10', amount: 10, name: 'Other', category: 'Food' });
+    await seedTx(db, { date: '2025-04-10', amount: 99, name: 'Pendco', category: 'Food', pending: true });
+    const { periods, count } = await getSearchMatchingPeriods('pendco', 'month');
+    expect(count).toBe(0);
+    expect(periods.size).toBe(0);
   });
 });
