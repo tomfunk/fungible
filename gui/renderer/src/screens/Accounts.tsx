@@ -19,6 +19,8 @@ import {
   type RefreshProgress, type RefreshResult,
 } from '../../../../core/transactions-refresh-format.js';
 import { resolveCsvAmount } from '../../../../core/csv-amount.js';
+import { parseDate } from '../../../../core/csv-date.js';
+import { summarizeCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../../../../core/csv-import-copy.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
@@ -652,9 +654,9 @@ export function Accounts() {
       {csvOpen && (
         <CsvImportModal
           onClose={() => setCsvOpen(false)}
-          onDone={(imported, skipped) => {
+          onDone={({ imported, skipped, skippedRows }) => {
             setCsvOpen(false);
-            showStatus(`Imported ${imported} · skipped ${skipped}`, 4000);
+            showStatus(csvDoneMessage(imported, skipped, skippedRows), skipped > 0 ? 12000 : 4000);
             reload();
             setTab('accounts');
           }}
@@ -1259,9 +1261,40 @@ function MoveImportModal({ imp, onClose, onDone }: {
 
 // ── CSV import wizard (single-form, unlike the TUI's step flow) ─────────────
 
+const SKIPPED_LINES_SHOWN = 3;
+
+/** Done message for a CSV import. Line numbers are file lines: rowIndex is
+ *  0-based over data rows and line 1 is the header, so line = rowIndex + 2. */
+export function csvDoneMessage(imported: number, skipped: number, skippedRows: CsvSkippedRow[]): string {
+  let msg = `Imported ${imported} · skipped ${skipped}`;
+  if (skippedRows.length === 0) return msg;
+  msg += ` (${summarizeCsvSkips(skippedRows)})`;
+  const shown = skippedRows.slice(0, SKIPPED_LINES_SHOWN)
+    .map((r) => `line ${r.rowIndex + 2}: ${CSV_SKIP_COPY[r.reason]}`);
+  const more = skippedRows.length - shown.length;
+  return `${msg}. ${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`;
+}
+
 type CsvData = { path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string };
 
-function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imported: number, skipped: number) => void }) {
+function PreviewDate({ raw }: { raw: string }) {
+  const iso = parseDate(raw);
+  return iso === null
+    ? <td className="num warn" data-date-state="invalid" title={`Unreadable date: ${raw}`}>invalid date</td>
+    : <td className="num dim" data-date-state="ok">{iso}</td>;
+}
+
+function PreviewAmount({ result }: { result: ReturnType<typeof resolveCsvAmount> | null }) {
+  if (result === null) return <td className="num warn" data-amount-state="pending">—</td>;
+  if (!result.ok) {
+    return result.reason === 'empty_amount'
+      ? <td className="num warn" data-amount-state="blank">blank</td>
+      : <td className="num warn" data-amount-state="invalid">invalid</td>;
+  }
+  return <td className="num warn" data-amount-state="ok">${Math.abs(result.amount).toFixed(2)}</td>;
+}
+
+function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (result: { imported: number; skipped: number; skippedRows: CsvSkippedRow[] }) => void }) {
   const [csv, setCsv] = useState<CsvData | null>(null);
   const [dateCol, setDateCol] = useState<number>(-1);
   const [nameCol, setNameCol] = useState<number>(-1);
@@ -1325,18 +1358,33 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
     accountId !== '' &&
     (amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0);
 
-  function previewAmount(row: string[]): string {
-    const columnsChosen = amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0;
-    if (!columnsChosen) return '—';
-    const amount = resolveCsvAmount(row, {
+  const columnsChosen = amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0;
+
+  function amountOf(row: string[]) {
+    return resolveCsvAmount(row, {
       amountMode,
       amountCol: amountCol >= 0 ? amountCol : null,
       debitCol: debitCol >= 0 ? debitCol : null,
       creditCol: creditCol >= 0 ? creditCol : null,
       positiveIsInflow,
     });
-    return `$${Math.abs(amount).toFixed(2)}`;
   }
+
+  // Same checks, same order, as core importCsvTransactions, so the preview
+  // cannot promise a row that the import will then skip.
+  function skipReason(row: string[]): CsvSkippedRow['reason'] | null {
+    if (!(row[nameCol] ?? '').trim()) return 'missing_name';
+    if (parseDate(row[dateCol] ?? '') === null) return 'bad_date';
+    const amount = amountOf(row);
+    return amount.ok ? null : amount.reason;
+  }
+
+  const willSkip: CsvSkippedRow[] = valid
+    ? csv!.rows.flatMap((row, rowIndex) => {
+        const reason = skipReason(row);
+        return reason ? [{ rowIndex, reason }] : [];
+      })
+    : [];
 
   async function doImport() {
     if (!csv || !valid || importing) return;
@@ -1351,7 +1399,7 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
         creditCol: amountMode === 'split' ? creditCol : null,
         positiveIsInflow,
       }, { name: csv.fileName, hash: csv.fileHash });
-      onDone(result.imported, result.skipped);
+      onDone({ imported: result.imported, skipped: result.skipped, skippedRows: result.skippedRows });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed');
       setImporting(false);
@@ -1519,13 +1567,18 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
                 <tbody>
                   {csv.rows.slice(0, 5).map((row, i) => (
                     <tr key={i}>
-                      <td className="num dim">{row[dateCol] ?? ''}</td>
+                      <PreviewDate raw={row[dateCol] ?? ''} />
                       <td>{row[nameCol] ?? ''}</td>
-                      <td className="num warn">{previewAmount(row)}</td>
+                      <PreviewAmount result={columnsChosen ? amountOf(row) : null} />
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {willSkip.length > 0 && (
+                <p className="warn" data-testid="csv-skip-footer">
+                  {willSkip.length} {willSkip.length === 1 ? 'row' : 'rows'} will be skipped: {summarizeCsvSkips(willSkip)}
+                </p>
+              )}
             </div>
           )}
 

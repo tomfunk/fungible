@@ -10,6 +10,8 @@ import { importCsvTransactions, deleteAccount, type ImportConfig } from '../core
 import {
   getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
 } from '../core/imports.js';
+import { parseCSV } from '../core/csv.js';
+import { useTempCsv } from './helpers/tempCsv.js';
 import { getAccountsWithBalances, getNetWorthHistory } from '../core/queries.js';
 
 const CFG: ImportConfig = {
@@ -382,5 +384,108 @@ describe('deleteAccount', () => {
 
     await deleteAccount('chase');
     expect((await getImports()).map((i) => i.id)).toEqual([keep.importId]);
+  });
+});
+
+describe('importCsvTransactions bad rows are skipped and reported', () => {
+  const { csv } = useTempCsv('bad-rows-');
+  const FILE = [
+    'Date,Name,Amount',
+    '2025-01-02,GOOD ONE,$4.50',        // 0 good
+    '2025-01-03,BAD AMOUNT,abc',        // 1 bad_amount
+    '2025-01-04,EU AMOUNT,"1.234,56"',  // 2 bad_amount
+    '2025-01-05,EMPTY AMOUNT,',         // 3 empty_amount
+    '13/45/2024,BAD DATE,9.00',         // 4 bad_date
+    '2025-01-06,,9.00',                 // 5 missing_name
+    '2025-01-07,GOOD TWO,"1,234.56"',   // 6 good
+  ].join('\n');
+  const rows = () => parseCSV(csv(FILE)).rows;
+
+  it('imports only the good rows and reports every bad one with its index and reason', async () => {
+    await account('chase');
+    const result = await importFile(rows());
+    expect(result.imported).toBe(2);
+    expect(result.skippedRows).toEqual([
+      { rowIndex: 1, reason: 'bad_amount' }, { rowIndex: 2, reason: 'bad_amount' },
+      { rowIndex: 3, reason: 'empty_amount' }, { rowIndex: 4, reason: 'bad_date' },
+      { rowIndex: 5, reason: 'missing_name' },
+    ]);
+    expect(result.skipped).toBe(result.skippedRows.length);
+    const tx = await txRows('chase');
+    expect(tx.map((t) => t.name).sort()).toEqual(['GOOD ONE', 'GOOD TWO']);
+    expect(tx.every((t) => /^\d{4}-\d{2}-\d{2}$/.test(String(t.date)))).toBe(true);
+  });
+
+  it("'$4.50' is not imported as 0 and '1,234.56' is not imported as 1", async () => {
+    await account('chase');
+    await importFile(rows());
+    const byName = Object.fromEntries((await txRows('chase')).map((t) => [t.name, t.amount]));
+    expect(byName['GOOD ONE']).toBe(4.5);
+    expect(byName['GOOD TWO']).toBe(1234.56);
+  });
+
+  it('re-import reports duplicates separately from bad rows and accounts for every row', async () => {
+    await account('chase');
+    await importFile(rows());
+    const again = await importFile(rows());
+    expect(again.imported).toBe(0);
+    expect(again.skippedRows.filter((s) => s.reason === 'duplicate').map((s) => s.rowIndex)).toEqual([0, 6]);
+    expect(again.skippedRows.filter((s) => s.reason !== 'duplicate')).toHaveLength(5);
+    expect(again.imported + again.skipped).toBe(7);
+    const [latest] = await getImports();
+    expect(latest).toMatchObject({ row_count: 7, imported: 0, skipped: 7 });
+    expect(await txRows('chase')).toHaveLength(2);
+  });
+
+  it('skipped rows write nothing: balance reflects only the good rows', async () => {
+    await account('chase');
+    await importFile(rows());
+    const [b] = await balanceRows('chase');
+    expect(b.balance).toBeCloseTo(4.5 + 1234.56); // liability: balance = SUM(amount)
+  });
+
+  it('bad rows do not shift dedup ordinals of identical good rows', async () => {
+    await account('chase');
+    const clean = [['2025-01-02', 'COFFEE', '4.50'], ['2025-01-02', 'COFFEE', '4.50']];
+    const noisy = [['2025-01-02', 'COFFEE', '4.50'], ['2025-01-02', 'JUNK', 'abc'], ['2025-01-02', 'COFFEE', '4.50']];
+    expect((await importFile(clean)).imported).toBe(2);
+    const r = await importFile(noisy, 'chase', { name: 'noisy.csv', hash: 'h-noisy' });
+    expect(r.imported).toBe(0);
+    expect(r.skippedRows).toEqual([
+      { rowIndex: 0, reason: 'duplicate' }, { rowIndex: 1, reason: 'bad_amount' }, { rowIndex: 2, reason: 'duplicate' },
+    ]);
+    expect(await txRows('chase')).toHaveLength(2);
+  });
+
+  it('an all-bad file imports nothing but keeps a log row recording the skips', async () => {
+    await account('chase');
+    const r = await importFile([['nope', 'X', '1'], ['2025-01-01', 'Y', 'abc']]);
+    expect(r).toMatchObject({ imported: 0, skipped: 2 });
+    expect(await txRows('chase')).toHaveLength(0);
+    expect(await getImports()).toHaveLength(1);
+    expect((await getImports())[0]).toMatchObject({ row_count: 2, imported: 0, skipped: 2, min_date: null });
+  });
+
+  it('a row with both a missing name and a bad date reports missing_name', async () => {
+    await account('chase');
+    const r = await importFile([['13/45/2024', '', '5.00']]);
+    expect(r.skippedRows).toEqual([{ rowIndex: 0, reason: 'missing_name' }]);
+  });
+
+  it('a whitespace-only name is missing_name; surrounding whitespace is trimmed on store', async () => {
+    await account('chase');
+    const r = await importFile([['2025-01-02', '   ', '5.00'], ['2025-01-03', ' ACME ', '6.00']]);
+    expect(r.skippedRows).toEqual([{ rowIndex: 0, reason: 'missing_name' }]);
+    expect((await txRows('chase')).map((t) => t.name)).toEqual(['ACME']);
+  });
+
+  it('split mode: blank debit and credit is skipped as empty_amount, not imported as 0', async () => {
+    await account('chase');
+    const cfg = { ...CFG, amountMode: 'split' as const, amountCol: null, debitCol: 2, creditCol: 3 };
+    const r = await importCsvTransactions(
+      [['2025-01-02', 'A', '4.50', ''], ['2025-01-03', 'B', '', ''], ['2025-01-04', 'C', '', '20.00']],
+      'chase', cfg, { name: 's.csv', hash: 'h-s' });
+    expect(r.imported).toBe(2);
+    expect(r.skippedRows).toEqual([{ rowIndex: 1, reason: 'empty_amount' }]);
   });
 });

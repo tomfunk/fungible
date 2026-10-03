@@ -5,6 +5,7 @@ import { parseDate, assignOrdinals, dedupKey } from './csv.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
 import { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
+import type { CsvSkippedRow } from './csv-import-copy.js';
 
 export { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
 
@@ -112,7 +113,7 @@ export async function importCsvTransactions(
   accountId: string,
   cfg: ImportConfig,
   file: { name: string; hash: string },
-): Promise<{ imported: number; skipped: number; importId: number }> {
+): Promise<{ imported: number; skipped: number; skippedRows: CsvSkippedRow[]; importId: number }> {
   const { dateCol, nameCol } = cfg;
   const rules = await loadCategoryRules();
 
@@ -121,13 +122,17 @@ export async function importCsvTransactions(
   // the row's position in the file and becomes part of its transaction id, which
   // keeps an id traceable back to the line it came from.
   const parsed: { rowIndex: number; date: string; name: string; amount: number }[] = [];
-  let skipped = 0;
+  // Bad rows are skipped and reported, never written: ordinals are assigned on
+  // the good rows only, so a bad row cannot shift a good row's dedup key.
+  const skippedRows: CsvSkippedRow[] = [];
   csvRows.forEach((row, rowIndex) => {
-    const rawDate = row[dateCol] ?? '';
-    const name = row[nameCol] ?? '';
+    const name = (row[nameCol] ?? '').trim();
+    if (!name) { skippedRows.push({ rowIndex, reason: 'missing_name' }); return; }
+    const date = parseDate(row[dateCol] ?? '');
+    if (date === null) { skippedRows.push({ rowIndex, reason: 'bad_date' }); return; }
     const amount = resolveCsvAmount(row, cfg);
-    if (!rawDate || !name || isNaN(amount)) { skipped++; return; }
-    parsed.push({ rowIndex, date: parseDate(rawDate), name, amount });
+    if (!amount.ok) { skippedRows.push({ rowIndex, reason: amount.reason }); return; }
+    parsed.push({ rowIndex, date, name, amount: amount.amount });
   });
 
   // Opened before the rows, because its id is part of every transaction id.
@@ -154,9 +159,13 @@ export async function importCsvTransactions(
       newIds.push(id);
       if (minDate === null || row.date < minDate) minDate = row.date;
       if (maxDate === null || row.date > maxDate) maxDate = row.date;
-    } else skipped++;
+    } else skippedRows.push({ rowIndex: row.rowIndex, reason: 'duplicate' });
   }
+  skippedRows.sort((a, b) => a.rowIndex - b.rowIndex);
+  const skipped = skippedRows.length;
 
+  // An all-bad file still gets its log row (imported 0, skipped N): the attempt
+  // is recorded and re-picking the same file is recognised.
   await closeImport(importId, { imported, skipped, minDate, maxDate });
   // Tag only genuinely new rows so a tag a user removed never returns.
   await applyTagRules({ txIds: newIds });
@@ -164,7 +173,7 @@ export async function importCsvTransactions(
   // net worth/health queries inner-join on it, so the account doesn't show up
   // as zero or stale, it's just silently absent (#200).
   await recomputeAccountBalance(accountId);
-  return { imported, skipped, importId };
+  return { imported, skipped, skippedRows, importId };
 }
 
 export async function deleteDuplicate(csvId: string): Promise<void> {
