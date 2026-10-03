@@ -6,6 +6,7 @@ import { render as inkRender } from 'ink';
 import { evalExpr, fmtValue, fmtDialValue, type CanvasSpec } from '../../core/canvas-agent.js';
 import type { CanvasHistoryEntry } from '../../core/canvas-history.js';
 import { Canvas, CanvasView, type LoadedCanvasSpec } from '../../tui/Canvas.js';
+import { waitFor } from '../helpers/waitFor.js';
 
 // core/canvas-history.ts does real readFileSync/writeFileSync against
 // ~/.fungible paths — mocked here so list-row persistence tests (further below)
@@ -31,16 +32,6 @@ vi.mock('../../core/canvas-history.js', () => ({
 // between steps so each keypress is handled against the just-committed render.
 async function tick(ms = 20): Promise<void> {
   await new Promise((res) => setTimeout(res, ms));
-}
-
-async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  let lastErr: unknown;
-  while (Date.now() < deadline) {
-    try { assertion(); return; } catch (e) { lastErr = e; }
-    await new Promise((res) => setTimeout(res, 10));
-  }
-  throw lastErr;
 }
 
 // ─── generateCanvas (mocked LLM) ──────────────────────────────────────────────

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { waitFor, waitForFrame, pressAndWait } from './waitFor.js';
+import { waitFor, waitForFrame, pressAndWait, stripAnsi, frame } from './waitFor.js';
+import { makeFakePlaid, makeFakeLlm } from './makeFakeProvider.js';
+import { useFixedClock } from './fakeClock.js';
 import { useTempCsv } from './tempCsv.js';
 
 describe('waitFor', () => {
@@ -23,6 +25,15 @@ describe('waitFor', () => {
   });
 });
 
+describe('waitFor under a pinned clock', () => {
+  useFixedClock();
+  it('fails with the assertion error instead of spinning forever', async () => {
+    await expect(
+      waitFor(() => { throw new Error('still wrong'); }, { timeout: 100, interval: 10 }),
+    ).rejects.toThrow(/timed out after 100ms: still wrong/);
+  });
+});
+
 describe('useTempCsv', () => {
   const t = useTempCsv('helper-selftest-');
   it('writes unique files', () => {
@@ -37,5 +48,28 @@ describe('useTempCsv', () => {
     t2.csv('a');
     t2.dispose(); t2.dispose();
     expect(existsSync(t2.dir)).toBe(false);
+  });
+});
+
+describe('stripAnsi / frame', () => {
+  it('strips colour codes and keeps line structure', () => {
+    expect(stripAnsi('\x1b[31mred\x1b[39m\nx')).toBe('red\nx');
+    expect(frame({ lastFrame: () => '\x1b[32mok\x1b[39m\n b' })).toBe('ok\n b');
+    expect(frame({ lastFrame: () => undefined })).toBe('');
+  });
+});
+
+describe('makeFakePlaid / makeFakeLlm', () => {
+  it('pages derive has_more and cursors; Error pages reject', async () => {
+    const p = makeFakePlaid({ pages: [{ added: [{ id: 1 }] }, new Error('boom')] });
+    const first = await p.transactionsSync();
+    expect(first.data).toMatchObject({ has_more: true, next_cursor: 'cursor-1' });
+    await expect(p.transactionsSync()).rejects.toThrow('boom');
+  });
+  it('llm replays scripted replies and records requests', async () => {
+    const l = makeFakeLlm(['a', (r) => `echo:${String(r)}`]);
+    expect(await l.complete('x')).toBe('a');
+    expect(await l.complete('y')).toBe('echo:y');
+    expect(l.calls()).toEqual(['x', 'y']);
   });
 });
