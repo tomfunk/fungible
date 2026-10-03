@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { escapeLike } from './sql-like.js';
 import { inAmountRange, matchesPattern, matchesNameOrMerchant } from './rule-utils.js';
 
 export type TagMatchType = 'name' | 'regex' | 'all';
@@ -118,8 +119,8 @@ export async function countTagRuleMatches(
   }
 
   if (matchType === 'name') {
-    const sql = `SELECT COUNT(*) as c FROM transactions WHERE (name LIKE ? OR COALESCE(merchant_name, '') LIKE ?)${where.length ? ' AND ' + where.join(' AND ') : ''}`;
-    const res = await db.execute({ sql, args: [`%${pattern}%`, `%${pattern}%`, ...args] });
+    const sql = `SELECT COUNT(*) as c FROM transactions WHERE (name LIKE ? ESCAPE '\\' OR COALESCE(merchant_name, '') LIKE ? ESCAPE '\\')${where.length ? ' AND ' + where.join(' AND ') : ''}`;
+    const res = await db.execute({ sql, args: [`%${escapeLike(pattern)}%`, `%${escapeLike(pattern)}%`, ...args] });
     return Number((res.rows[0] as unknown as { c: number }).c);
   }
 

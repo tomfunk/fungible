@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { escapeLike } from './sql-like.js';
 
 /** Returns true if the transaction amount is within the rule's optional range. */
 export function inAmountRange(
@@ -41,8 +42,8 @@ export async function countPatternMatches(pattern: string, matchType: 'name' | '
   try {
     if (matchType === 'name') {
       const result = await db.execute({
-        sql: "SELECT COUNT(*) as c FROM transactions WHERE name LIKE ? OR COALESCE(merchant_name, '') LIKE ?",
-        args: [`%${pattern}%`, `%${pattern}%`],
+        sql: "SELECT COUNT(*) as c FROM transactions WHERE name LIKE ? ESCAPE '\\' OR COALESCE(merchant_name, '') LIKE ? ESCAPE '\\'",
+        args: [`%${escapeLike(pattern)}%`, `%${escapeLike(pattern)}%`],
       });
       return Number((result.rows[0] as unknown as { c: number }).c);
     }
