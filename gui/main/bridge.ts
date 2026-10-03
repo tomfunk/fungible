@@ -1,5 +1,6 @@
 import { app, dialog, ipcMain } from 'electron';
 import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { parseCSV } from '../../core/csv.js';
 import { isPlaidConfigured } from '../../core/plaid.js';
 import { getDefaultDaysRequested } from '../../core/settings.js';
@@ -26,6 +27,20 @@ const files = {
     if (result.canceled || result.filePaths.length === 0) return null;
     const path = result.filePaths[0];
     return { path, ...parseCSV(path) };
+  },
+  // Writes already-built file content to a user-chosen path. Content is built
+  // main-side (registry.transactions.exportTransactionsCsv, backed by
+  // core/export.ts) and handed here just to save — this call never reaches
+  // back into core itself.
+  saveCsv: async (content: string, suggestedName: string): Promise<boolean> => {
+    const result = await dialog.showSaveDialog({
+      title: 'Export Transactions',
+      defaultPath: suggestedName,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (result.canceled || !result.filePath) return false;
+    writeFileSync(result.filePath, content);
+    return true;
   },
 };
 

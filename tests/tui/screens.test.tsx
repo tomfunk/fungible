@@ -16,6 +16,29 @@ vi.mock('node:child_process', async (importActual) => {
   return { ...actual, spawn: vi.fn() };
 });
 
+// Transactions.tsx's export flow (Issue #18) calls real fs.writeFileSync/
+// existsSync against whatever path the user types, which defaults to a file
+// under the real os.homedir(). Left unmocked, a test that drives that flow
+// end-to-end writes an actual file into the real home directory on every
+// contributor's and CI's machine, on every run — nothing else in this file
+// touches node:fs (CSV-import-from-a-real-file tests live in
+// accounts-imports.test.tsx, not here), so overriding just these two named
+// exports is safe for every other test below.
+const { fsWriteFileSyncMock, fsExistsSyncMock } = vi.hoisted(() => ({
+  fsWriteFileSyncMock: vi.fn(),
+  fsExistsSyncMock: vi.fn(() => false),
+}));
+vi.mock('node:fs', async (importActual) => {
+  const actual = await importActual<typeof import('node:fs')>();
+  const actualDefault = (actual as unknown as { default?: typeof actual }).default ?? actual;
+  return {
+    ...actual,
+    writeFileSync: fsWriteFileSyncMock,
+    existsSync: fsExistsSyncMock,
+    default: { ...actualDefault, writeFileSync: fsWriteFileSyncMock, existsSync: fsExistsSyncMock },
+  };
+});
+
 import { db } from '../../core/db.js';
 import * as queries from '../../core/queries.js';
 import { useLoadGuard } from '../../tui/useLoadGuard.js';
@@ -1248,6 +1271,141 @@ describe('Transactions', () => {
       "SELECT ignored FROM transactions WHERE id = 'tx-manual-1'",
     )).rows[0] as unknown as { ignored: number };
     expect(row.ignored).toBe(0);
+  });
+
+  // ── Export (Issue #18) ───────────────────────────────────────────────────
+  // All assertions here go through fsWriteFileSyncMock/fsExistsSyncMock (set
+  // up near the top of this file) rather than a real path under a real
+  // tmpdir/homedir — see that mock's comment for why. existsSyncMock defaults
+  // to false (acts like a fresh destination) and is overridden per-test via
+  // mockReturnValue for the overwrite-confirm case.
+  describe('export', () => {
+    beforeEach(() => {
+      fsWriteFileSyncMock.mockClear();
+      fsExistsSyncMock.mockClear();
+      fsExistsSyncMock.mockReturnValue(false);
+    });
+
+    /** Clears whatever's in the export path field — used instead of counting
+     *  exact backspaces since the real default embeds os.homedir(), whose
+     *  length isn't fixed across machines. */
+    function clearPathField(r: ReturnType<typeof render>) {
+      for (let i = 0; i < 200; i++) r.stdin.write('\x7f');
+    }
+
+    it('e opens the export panel prefilled with a homedir default path', async () => {
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+      r.stdin.write('e');
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Export transactions to CSV');
+        expect(f).toContain('transactions-export-');
+        expect(f).toContain('.csv');
+      });
+      expect(fsWriteFileSyncMock).not.toHaveBeenCalled();
+    });
+
+    it('Esc cancels the export panel without writing anything', async () => {
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+      r.stdin.write('e');
+      await waitFor(() => expect(frame(r)).toContain('Export transactions to CSV'));
+      r.stdin.write('\x1b');
+      await waitFor(() => expect(frame(r)).not.toContain('Export transactions to CSV'));
+      expect(fsWriteFileSyncMock).not.toHaveBeenCalled();
+    });
+
+    it('writes every row in the current date range to the chosen path, uncapped by the 200-row screen limit', async () => {
+      const destPath = '/fake/export/out.csv';
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+      r.stdin.write('e');
+      await waitFor(() => expect(frame(r)).toContain('Export transactions to CSV'));
+      clearPathField(r);
+      for (const ch of destPath) r.stdin.write(ch);
+      r.stdin.write('\r');
+      await waitFor(() => expect(frame(r)).toContain('Exported 6 transactions'));
+      expect(frame(r)).not.toContain('Export transactions to CSV'); // panel closed
+
+      expect(fsWriteFileSyncMock).toHaveBeenCalledTimes(1);
+      const [writtenPath, csv, encoding] = fsWriteFileSyncMock.mock.calls[0];
+      expect(writtenPath).toBe(destPath);
+      expect(encoding).toBe('utf-8');
+      const lines = (csv as string).trimEnd().split('\n');
+      expect(lines[0]).toBe('date,name,display_name,amount,category,account,tags,is_ignored,is_pending');
+      expect(lines.length).toBe(7); // header + 6 May rows
+      expect(csv).toContain('Whole Foods');
+      expect(csv).toContain('Trader Joes');
+      expect(csv).toContain('Test Visa'); // account column, via COALESCE(nickname, name)
+      expect(csv).toContain('Test Checking');
+    });
+
+    it('search narrows the export to the matching rows, same as the on-screen list', async () => {
+      const destPath = '/fake/export/out.csv';
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+      r.stdin.write('/');
+      await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
+      for (const ch of 'Trader Joes') r.stdin.write(ch);
+      r.stdin.write('\r');
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Trader Joes');
+        expect(f).not.toContain('Whole Foods');
+      });
+      r.stdin.write('e');
+      await waitFor(() => expect(frame(r)).toContain('Export transactions to CSV'));
+      clearPathField(r);
+      for (const ch of destPath) r.stdin.write(ch);
+      r.stdin.write('\r');
+      await waitFor(() => expect(frame(r)).toContain('Exported 1 transaction'));
+
+      expect(fsWriteFileSyncMock).toHaveBeenCalledTimes(1);
+      const csv = fsWriteFileSyncMock.mock.calls[0][1] as string;
+      expect(csv).toContain('Trader Joes');
+      expect(csv).not.toContain('Whole Foods');
+    });
+
+    it('prompts to overwrite when the destination already exists, and [n] returns to the path step untouched', async () => {
+      const destPath = '/fake/export/existing.csv';
+      fsExistsSyncMock.mockReturnValue(true);
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+      r.stdin.write('e');
+      await waitFor(() => expect(frame(r)).toContain('Export transactions to CSV'));
+      clearPathField(r);
+      for (const ch of destPath) r.stdin.write(ch);
+      r.stdin.write('\r');
+      await waitFor(() => expect(frame(r)).toContain('already exists'));
+      // Declining leaves the file alone and returns to the editable path step.
+      r.stdin.write('n');
+      await waitFor(() => expect(frame(r)).toContain('Export transactions to CSV'));
+      expect(fsWriteFileSyncMock).not.toHaveBeenCalled();
+      // Accepting overwrites it.
+      r.stdin.write('\r');
+      await waitFor(() => expect(frame(r)).toContain('already exists'));
+      r.stdin.write('y');
+      await waitFor(() => expect(frame(r)).toContain('Exported 6 transactions'));
+      expect(fsWriteFileSyncMock).toHaveBeenCalledTimes(1);
+      expect(fsWriteFileSyncMock.mock.calls[0][0]).toBe(destPath);
+      expect(fsWriteFileSyncMock.mock.calls[0][1]).toContain('Whole Foods');
+    });
+
+    it('shows a caveat when a txType/flex drill-in filter is active, since export does not support those dimensions', async () => {
+      const r = render(
+        <W>
+          <Transactions onNavigate={noop} showHints={false} initialFilter={{ from: '2026-05-01', to: '2026-05-31', txType: 'expenses' }} />
+        </W>,
+      );
+      await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+      r.stdin.write('e');
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Export transactions to CSV');
+        expect(f).toContain("isn't applied to the exported file");
+      });
+    });
   });
 });
 

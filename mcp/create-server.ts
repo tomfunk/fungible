@@ -59,6 +59,24 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('list_transactions', input),
   );
 
+  // ── export_transactions ─────────────────────────────────────────────────────
+
+  server.tool(
+    'export_transactions',
+    'Export transactions as CSV text for a date range, with optional filters. Hidden categories are excluded unless include_hidden is set. Only "csv" is implemented.',
+    {
+      from:           z.string().describe('Start date YYYY-MM-DD'),
+      to:             z.string().describe('End date YYYY-MM-DD'),
+      format:         z.enum(['csv']).default('csv').describe("Export format (only 'csv' is implemented)"),
+      category:       z.string().optional().describe('Filter by category name'),
+      account_id:     z.string().optional().describe('Filter to a specific account ID'),
+      tag:            z.string().optional().describe('Filter to transactions carrying this tag'),
+      search:         z.string().optional().describe('Search within transaction name/display name/amount/date'),
+      include_hidden: z.boolean().default(false).describe('Include hidden categories (default false)'),
+    },
+    (input) => run('export_transactions', input),
+  );
+
   // ── edit_transaction ────────────────────────────────────────────────────────
 
   server.tool(

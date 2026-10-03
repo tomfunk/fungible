@@ -91,6 +91,44 @@ export function Transactions() {
   const [bulkTag, setBulkTag] = useState(false);
   const [bulkCat, setBulkCat] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Exports every matching row (not just the 200 shown on screen), using the
+  // same filter dimensions this screen renders with: the shared categories/
+  // accounts/owners/tags filter + search (useFilter), plus this screen's own
+  // local date range. No range picked means "no date constraint" here, but
+  // core/export.ts's ExportFilters requires concrete from/to bounds, so an
+  // unset range falls back to the full data span (getDataBounds).
+  //
+  // ExportFilters has no txType/flex field, so a txType/flex chip active here
+  // would otherwise silently widen the export beyond what's shown on screen.
+  // Surfaced as a toast before the save dialog opens, same caveat and wording
+  // as the TUI's export modal (tui/Transactions.tsx) for parity — this screen
+  // has no confirm step to hang the note on instead.
+  async function doExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      if (txType || flex) {
+        const label = [txType, flex].filter(Boolean).join('/');
+        showStatus(`Note: the ${label} filter shown above isn't applied to the exported file — it isn't supported yet.`, 6000);
+      }
+      const exportFrom = from ?? bounds?.minDate ?? '2000-01-01';
+      const exportTo = to ?? bounds?.maxDate ?? '2099-12-31';
+      const csv = await api.transactions.exportTransactionsCsv({
+        filter: sharedFilter,
+        from: exportFrom,
+        to: exportTo,
+        search,
+      });
+      const saved = await api.files.saveCsv(csv, `transactions-${exportFrom}-to-${exportTo}.csv`);
+      if (saved) showStatus('Exported transactions', 3000);
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Export failed', 3000);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function sortHeader(col: SortCol, label: string, alignRight = false) {
     const active = sort.startsWith(col);
@@ -210,6 +248,9 @@ export function Transactions() {
           </span>
         </div>
         <div className={styles.actionsRow}>
+          <button className="ghostBtn" onClick={() => void doExport()} disabled={exporting}>
+            {exporting ? 'Exporting…' : 'Export'}
+          </button>
           <button className="ghostBtn" onClick={() => setAddOpen(true)}>
             + Add
           </button>

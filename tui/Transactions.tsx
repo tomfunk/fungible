@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { writeFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
   setTransactionDisplayName, deleteTransaction, addTransaction,
@@ -8,6 +11,7 @@ import {
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
 import { suggestRuleForTransaction, saveCategoryRule, type RuleSuggestion } from '../core/rules.js';
+import { exportTransactionsCsv } from '../core/export.js';
 import { syncAll } from '../core/sync.js';
 import {
   getTagOptions, getTransactionTagIds, getOrCreateTag,
@@ -34,7 +38,7 @@ import { useSetTyping } from './TypingContext.js';
 type Tx = TxRow;
 
 
-type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all' | 'rule-prompt' | 'add';
+type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all' | 'rule-prompt' | 'add' | 'export' | 'export-confirm';
 type EditField = 'name' | 'category' | 'date' | 'pattern' | 'type';
 type AddField = 'date' | 'name' | 'amount' | 'type' | 'account' | 'category';
 
@@ -96,6 +100,22 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [addAccountCursor, setAddAccountCursor] = useState(0);
   const [addCategoryCursor, setAddCategoryCursor] = useState(0);
 
+  // Export panel state (Issue #18). The destination path is free-typed, same
+  // as the CSV-import file-path field on Accounts.tsx — Node doesn't expand
+  // "~", and nothing elsewhere in this codebase does either, so the default
+  // is built with os.homedir() rather than a literal "~" the write would
+  // otherwise choke on.
+  const [exportPath, setExportPath] = useState('');
+  // Mirrors exportPath, written synchronously inside the same setState updater
+  // that appends/trims a character. Enter reads this instead of the `exportPath`
+  // closure: several keystrokes dispatched in one tick (a terminal paste, or a
+  // scripted burst) land in the same React batch, so the Enter handler's own
+  // closure can still be the pre-batch value even though the functional
+  // updaters above it in the same batch already compose correctly — same
+  // failure mode the search-mode comment below already calls out for `search`.
+  const exportPathRef = useRef('');
+  const [exportError, setExportError] = useState('');
+
   // Tag panel state. The applied-tag set is kept together with the transaction
   // it was read for: the panel acts on whatever row the cursor is on, and that
   // row can change out from under an open panel (see the sync effect below), so
@@ -130,7 +150,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   const setTyping = useSetTyping();
   useEffect(() => {
-    const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all'
+    const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all' || mode === 'export'
       || (mode === 'edit' && (editField === 'name' || editField === 'pattern' || editField === 'date'))
       || (mode === 'add' && (addField === 'name' || addField === 'date' || addField === 'amount'));
     setTyping(isTextInput);
@@ -208,6 +228,44 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       load(search);
     } catch (e) {
       showStatus(e instanceof Error ? e.message : 'Failed to add transaction', 4000);
+    }
+  }
+
+  function openExport() {
+    const today = new Date().toISOString().slice(0, 10);
+    const def = join(homedir(), `transactions-export-${today}.csv`);
+    exportPathRef.current = def;
+    setExportPath(def);
+    setExportError('');
+    setMode('export');
+  }
+
+  /** Writes the current filter's full, uncapped result set to `destPath` as
+   *  CSV via core/export.ts — never getTransactions, whose 200-row screen
+   *  cap would silently truncate the file. from/to fall back to the data's
+   *  full bounds when no range is set, since ExportFilters requires both
+   *  (unlike this screen's own nullable from/to). */
+  async function doExport(destPath: string) {
+    try {
+      const csv = await exportTransactionsCsv({
+        filter: sharedFilter,
+        from: from ?? bounds.minDate,
+        to: to ?? bounds.maxDate,
+        search: search || undefined,
+      });
+      writeFileSync(destPath, csv, 'utf-8');
+      // transactionsToCsv always ends in a trailing "\n"; trim it before
+      // counting lines so an empty export (header only) reports 0, not -1.
+      const count = Math.max(0, csv.trimEnd().split('\n').length - 1);
+      setMode('list');
+      setExportError('');
+      showStatus(`Exported ${count} transaction${count !== 1 ? 's' : ''} to ${destPath}`, 4000);
+    } catch (e) {
+      // Stay on the path step (rather than wherever the write was triggered
+      // from, e.g. the overwrite-confirm panel) so the error has somewhere to
+      // render and the user can correct the path without retyping it.
+      setExportError(e instanceof Error ? e.message : 'Failed to write file');
+      setMode('export');
     }
   }
 
@@ -574,6 +632,41 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       return;
     }
 
+    if (mode === 'export') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) {
+        const dest = exportPathRef.current.trim();
+        if (!dest) { setExportError('Enter a destination path'); return; }
+        if (existsSync(dest)) { setExportError(''); setMode('export-confirm'); return; }
+        void doExport(dest);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        // Mutate the ref directly, outside setState, rather than inside a
+        // setExportPath functional updater: React defers *running* a queued
+        // updater until flush time, same as the plain closure it was meant to
+        // replace, so a same-tick Enter would still read a stale value. A
+        // direct mutation is visible to the very next keystroke immediately.
+        exportPathRef.current = exportPathRef.current.slice(0, -1);
+        setExportPath(exportPathRef.current);
+        setExportError('');
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        exportPathRef.current = exportPathRef.current + input;
+        setExportPath(exportPathRef.current);
+        setExportError('');
+        return;
+      }
+      return;
+    }
+
+    if (mode === 'export-confirm') {
+      if (key.escape || input === 'n' || input === 'N') { setMode('export'); return; }
+      if (input === 'y' || input === 'Y') { void doExport(exportPathRef.current.trim()); return; }
+      return;
+    }
+
     if (mode === 'list') {
       if (input === 's') { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
       // Pass active search to adjacent screens (1=dashboard, 3=trends)
@@ -664,6 +757,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search);
         return;
       }
+      if (input === 'e' && txs.length > 0) { openExport(); return; }
       if (input === 'S' && !syncing) {
         setSyncing(true);
         syncAll(true)
@@ -708,6 +802,18 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     flex ? flex.charAt(0).toUpperCase() + flex.slice(1) : null,
   ].filter(Boolean).join(' · ');
 
+  // What the export modal shows as "what will be exported" -- deliberately
+  // narrower than filterLabel above. ExportFilters (core/export.ts) only
+  // supports the shared Filter (category/account/owner/tag) + search + date
+  // range; it has no txType/flex fields, so a drill-in that landed here with
+  // one of those active would otherwise show text promising a constraint the
+  // export can't actually honor. The caveat below (txType || flex) covers
+  // that gap explicitly instead of silently overclaiming.
+  const exportFilterLabel = [
+    filterSummary(sharedFilter) || null,
+    search ? `"${search}"` : null,
+  ].filter(Boolean).join(' · ');
+
   // Category list window for edit panel
   const CAT_WIN = 8;
   const catWinStart = Math.max(0, Math.min(editCatCursor - Math.floor(CAT_WIN / 2), categories.length - CAT_WIN));
@@ -741,7 +847,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  ${selected?.source !== 'manual' ? '[i] ignore  ' : ''}${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  ${selected?.source !== 'manual' ? '[i] ignore  ' : ''}${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync  ·  [e] export`
           : '[/] search'}
       </Text>
 
@@ -950,6 +1056,42 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} gap={4}>
             <Text color={C_MANUAL}>[y] Yes, always</Text>
             <Text dimColor>[n] / Esc  No, just this once</Text>
+          </Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'export' && (
+        <ModalPanel borderColor={C_WARNING}>
+          <Text bold>Export transactions to CSV</Text>
+          <Box marginTop={1}>
+            <Text dimColor>
+              {exportFilterLabel || dl
+                ? `Exporting: ${[exportFilterLabel, dl].filter(Boolean).join(' · ')}`
+                : `Exporting all transactions (${bounds.minDate} – ${bounds.maxDate})`}
+            </Text>
+          </Box>
+          {(txType || flex) && (
+            <Box marginTop={1}>
+              <Text color={C_WARNING}>Note: the {[txType, flex].filter(Boolean).join('/')} filter shown above isn't applied to the exported file — it isn't supported yet.</Text>
+            </Box>
+          )}
+          <Box marginTop={1} gap={2}>
+            <Text dimColor>Path: </Text>
+            <TextInput value={exportPath} color={C_WARNING} />
+          </Box>
+          {exportError ? <Box marginTop={1}><Text color={C_WARNING}>{exportError}</Text></Box> : null}
+          <Box marginTop={1}><Text dimColor>Enter export  ·  Esc cancel</Text></Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'export-confirm' && (
+        <ModalPanel borderColor={C_MANUAL}>
+          <Text bold color={C_MANUAL}>
+            <Text color={C_ACCENT}>{exportPath}</Text> already exists. Overwrite it?
+          </Text>
+          <Box marginTop={1} gap={4}>
+            <Text color={C_MANUAL}>[y] Yes, overwrite</Text>
+            <Text dimColor>[n] / Esc  No, change path</Text>
           </Box>
         </ModalPanel>
       )}
