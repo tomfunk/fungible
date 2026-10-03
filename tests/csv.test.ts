@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseDate } from '../core/csv-date.js';
-import { dedupKey, assignOrdinals } from '../core/csv.js';
+import { dedupKey, assignOrdinals, parseCSV, parseCsvText } from '../core/csv.js';
+import { createHash } from 'node:crypto';
+import { useTempCsv } from './helpers/tempCsv.js';
 
 describe('parseDate', () => {
   it('passes through YYYY-MM-DD format unchanged', () => {
@@ -103,5 +105,83 @@ describe('assignOrdinals', () => {
   it('preserves the other fields on each row', () => {
     const rows = [{ date: '2024-01-15', name: 'COFFEE', amount: 4.5, rowIndex: 7 }];
     expect(assignOrdinals(rows)[0].rowIndex).toBe(7);
+  });
+});
+
+describe('parseCsvText', () => {
+  const H = 'D,N,A';
+  it.each<[string, string, string[][], number[]]>([
+    ['BOM', `\uFEFF${H}\n1,a,2`, [['1', 'a', '2']], [2]],
+    ['CRLF', `${H}\r\n1,a,2\r\n3,b,4\r\n`, [['1', 'a', '2'], ['3', 'b', '4']], [2, 3]],
+    ['lone CR', `${H}\r1,a,2\r3,b,4`, [['1', 'a', '2'], ['3', 'b', '4']], [2, 3]],
+    ['doubled quotes', `${H}\n1,"a ""b"" c",2`, [['1', 'a "b" c', '2']], [2]],
+    ['quoted comma', `${H}\n1,"Smith, J",2`, [['1', 'Smith, J', '2']], [2]],
+    ['embedded newline keeps one row, next line correct', `${H}\n1,"two\nlines",2\n3,b,4`,
+      [['1', 'two\nlines', '2'], ['3', 'b', '4']], [2, 4]],
+    ['quoted empty field', `${H}\n1,"",2`, [['1', '', '2']], [2]],
+    ['empty middle field', `${H}\na,,c`, [['a', '', 'c']], [2]],
+    ['trailing comma', `${H}\n1,2,`, [['1', '2', '']], [2]],
+    ['trailing newline', `${H}\n1,a,2\n`, [['1', 'a', '2']], [2]],
+    ['no trailing newline', `${H}\n1,a,2`, [['1', 'a', '2']], [2]],
+    ['blank lines mid-file and at end', `${H}\n\n1,a,2\n\n\n3,b,4\n\n\n`, [['1', 'a', '2'], ['3', 'b', '4']], [3, 6]],
+    ['ragged rows pass through', `${H}\n1,a\n1,a,2,3`, [['1', 'a'], ['1', 'a', '2', '3']], [2, 3]],
+    ['fields trimmed', `${H}\n 1 , a ,2 `, [['1', 'a', '2']], [2]],
+  ])('%s', (_n, text, rows, lines) => {
+    const r = parseCsvText(text);
+    expect(r.headers).toEqual(['D', 'N', 'A']);
+    expect(r.rows).toEqual(rows);
+    expect(r.lines).toEqual(lines);
+  });
+
+  it('a quoted header after a BOM yields the bare name (BOM not left inside the quote)', () => {
+    expect(parseCsvText('\uFEFF"D","N","A"\n1,a,2').headers).toEqual(['D', 'N', 'A']);
+  });
+
+  it('a lone CR inside a quoted field counts as a line break for later row lines', () => {
+    const r = parseCsvText(`${H}\n1,"a\rb",2\n3,b,4`);
+    expect(r.rows).toEqual([['1', 'a\rb', '2'], ['3', 'b', '4']]);
+    expect(r.lines).toEqual([2, 4]);
+  });
+
+  it('a single-column record that is only whitespace or a quoted empty string is dropped as blank (intentional)', () => {
+    const r = parseCsvText(`${H}\n1,a,2\n"" \n   \n""\n3,b,4`);
+    expect(r.rows).toEqual([['1', 'a', '2'], ['3', 'b', '4']]);
+    expect(r.lines).toEqual([2, 6]);
+  });
+
+  it('header-only file has no rows', () => {
+    expect(parseCsvText(`${H}\n`)).toEqual({ headers: ['D', 'N', 'A'], rows: [], lines: [] });
+  });
+
+  it.each(['', '   ', '\n\n', ' \r\n \n'])('empty or whitespace-only %j gives no headers or rows', (t) => {
+    expect(parseCsvText(t)).toEqual({ headers: [], rows: [], lines: [] });
+  });
+
+  it('parses a 1 MB field', () => {
+    const big = 'x'.repeat(1024 * 1024);
+    const r = parseCsvText(`${H}\n1,"${big}",2`);
+    expect(r.rows[0][1]).toHaveLength(big.length);
+  });
+
+  it('throws naming the start line of an unterminated quote', () => {
+    expect(() => parseCsvText(`${H}\n1,a,2\n3,"oops,4\n5,b,6`)).toThrow('CSV has an unterminated quote starting on line 3');
+  });
+});
+
+describe('parseCSV (file)', () => {
+  const { csv } = useTempCsv('parsecsv-');
+
+  it('keeps fileName and hashes the raw bytes including the BOM', () => {
+    const text = '\uFEFFD,N,A\r\n1,a,2\r\n';
+    const p = csv(text, 'stmt.csv');
+    const r = parseCSV(p);
+    expect(r.fileName).toBe('stmt.csv');
+    expect(r.fileHash).toBe(createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex'));
+    expect(r.headers).toEqual(['D', 'N', 'A']);
+    expect(r.rows).toEqual([['1', 'a', '2']]);
+  });
+
+  it('throws on an unterminated quote rather than silently dropping rows', () => {
+    expect(() => parseCSV(csv('D,N\n1,"never closed\n2,b\n'))).toThrow(/unterminated quote starting on line 2/);
   });
 });

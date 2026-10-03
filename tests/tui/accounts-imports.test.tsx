@@ -308,4 +308,37 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
     expect(f).not.toContain('line 8:');
     expect(f).toContain('…and 2 more');
   });
+
+  it('reports the true file line when a blank line precedes the bad row', async () => {
+    const r = renderAccounts();
+    // line 1 header, 2 good, 3 blank, 4 good, 5 bad amount (rowIndex 2 -> rowIndex+2 would say 4)
+    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n\n2025-01-03,COFFEE,4.50\n2025-01-04,GARBAGE,xx\n'));
+    r.stdin.write('y');
+    await waitFor(() => expect(flat(r)).toContain('Import complete'));
+    expect(flat(r)).toContain(`line 5: ${CSV_SKIP_COPY.bad_amount}`);
+    expect(flat(r)).not.toContain('line 4:');
+  });
+
+  it('reports the true file line when a quoted embedded newline precedes the bad row', async () => {
+    const r = renderAccounts();
+    // record 1 spans lines 2-3, so the bad row starts on line 4 (rowIndex+2 would say 3)
+    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,"AMAZON\nPRIME",25.00\n2025-01-04,GARBAGE,xx\n'));
+    r.stdin.write('y');
+    await waitFor(() => expect(flat(r)).toContain('Import complete'));
+    expect(flat(r)).toContain(`line 4: ${CSV_SKIP_COPY.bad_amount}`);
+    expect(flat(r)).not.toContain('line 3:');
+  });
+
+  it('shows the unterminated-quote error and stays on the path step', async () => {
+    const r = renderAccounts();
+    const path = csv('Date,Description,Amount\n2025-01-02,"AMAZON,25.00\n2025-01-03,X,1.00\n');
+    await pressAndWait(r, '\t', 'Links');
+    await pressAndWait(r, '\t', 'Import CSV file');
+    await pressAndWait(r, 'c', 'path to your CSV file');
+    for (const ch of path) r.stdin.write(ch);
+    await waitFor(() => expect(flat(r)).toContain(path.slice(-10)));
+    await pressAndWait(r, '\r', 'CSV has an unterminated quote starting on line 2');
+    expect(flat(r)).toContain('path to your CSV file');
+    expect(flat(r)).not.toContain('Which column is the DATE?');
+  });
 });

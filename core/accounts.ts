@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
 import { parseDate, assignOrdinals, dedupKey } from './csv.js';
+import { deleteDuplicatesKeepingEdits } from './dedup.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
 import { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
@@ -113,6 +114,8 @@ export async function importCsvTransactions(
   accountId: string,
   cfg: ImportConfig,
   file: { name: string; hash: string },
+  /** 1-based source line of each row (ParsedCsv.lines); defaults to rowIndex + 2. */
+  lines?: number[],
 ): Promise<{ imported: number; skipped: number; skippedRows: CsvSkippedRow[]; importId: number }> {
   const { dateCol, nameCol } = cfg;
   const rules = await loadCategoryRules();
@@ -125,13 +128,15 @@ export async function importCsvTransactions(
   // Bad rows are skipped and reported, never written: ordinals are assigned on
   // the good rows only, so a bad row cannot shift a good row's dedup key.
   const skippedRows: CsvSkippedRow[] = [];
+  const skip = (rowIndex: number, reason: CsvSkippedRow['reason']): CsvSkippedRow =>
+    ({ rowIndex, line: lines?.[rowIndex] ?? rowIndex + 2, reason });
   csvRows.forEach((row, rowIndex) => {
     const name = (row[nameCol] ?? '').trim();
-    if (!name) { skippedRows.push({ rowIndex, reason: 'missing_name' }); return; }
+    if (!name) { skippedRows.push(skip(rowIndex, 'missing_name')); return; }
     const date = parseDate(row[dateCol] ?? '');
-    if (date === null) { skippedRows.push({ rowIndex, reason: 'bad_date' }); return; }
+    if (date === null) { skippedRows.push(skip(rowIndex, 'bad_date')); return; }
     const amount = resolveCsvAmount(row, cfg);
-    if (!amount.ok) { skippedRows.push({ rowIndex, reason: amount.reason }); return; }
+    if (!amount.ok) { skippedRows.push(skip(rowIndex, amount.reason)); return; }
     parsed.push({ rowIndex, date, name, amount: amount.amount });
   });
 
@@ -159,7 +164,7 @@ export async function importCsvTransactions(
       newIds.push(id);
       if (minDate === null || row.date < minDate) minDate = row.date;
       if (maxDate === null || row.date > maxDate) maxDate = row.date;
-    } else skippedRows.push({ rowIndex: row.rowIndex, reason: 'duplicate' });
+    } else skippedRows.push(skip(row.rowIndex, 'duplicate'));
   }
   skippedRows.sort((a, b) => a.rowIndex - b.rowIndex);
   const skipped = skippedRows.length;
@@ -181,7 +186,5 @@ export async function deleteDuplicate(csvId: string): Promise<void> {
 }
 
 export async function deleteAllDuplicates(csvIds: string[]): Promise<void> {
-  if (csvIds.length === 0) return;
-  const placeholders = csvIds.map(() => '?').join(',');
-  await db.execute({ sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: csvIds });
+  await deleteDuplicatesKeepingEdits(csvIds);
 }

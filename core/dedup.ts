@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { cascadeDeleteTransactionsSql } from './imports.js';
 
 export type DupePair = {
   csvId: string;
@@ -48,6 +49,8 @@ function buildMatchSql(csvSources: readonly string[]): string {
       OR INSTR(LOWER(csv.name),  LOWER(plaid.name))  > 0
       OR INSTR(LOWER(plaid.name), LOWER(csv.name))   > 0
       OR (
+        -- INSTR(plaid.name,'*') >= 5 means at least 4 prefix characters before
+        -- the star (UBER*TRIP-style names).
         INSTR(plaid.name, '*') >= 5
         AND LOWER(SUBSTR(csv.name,   1, INSTR(plaid.name, '*') - 1))
           = LOWER(SUBSTR(plaid.name, 1, INSTR(plaid.name, '*') - 1))
@@ -174,7 +177,8 @@ export async function getCsvPlaidDupeCandidates(): Promise<DupePair[]> {
 
 // Deliberately NOT widened to include 'manual': this pass deletes the losing
 // row outright with no review step. That's fine for a CSV re-import (a
-// mechanical artifact), but a manual entry may carry a hand-picked category or
+// mechanical artifact -- though any edits on the CSV row are transferred to the
+// surviving Plaid row, see deleteWithEditTransfer), but a manual entry may carry a hand-picked category or
 // tag the newly-synced Plaid row won't have — auto-deleting it the moment
 // Plaid catches up would undo the exact thing this feature exists for. Manual
 // entries only ever leave via getCsvPlaidDupeCandidates + Thomas's own
@@ -182,12 +186,63 @@ export async function getCsvPlaidDupeCandidates(): Promise<DupePair[]> {
 export async function deduplicateCsvVsPlaid(): Promise<number> {
   const paired = await loadPairs(['csv']);
   if (paired.length === 0) return 0;
+  return deleteWithEditTransfer(paired);
+}
 
-  const ids = paired.map((p) => p.csvId);
-  const placeholders = ids.map(() => '?').join(',');
-  const del = await db.execute({
-    sql: `DELETE FROM transactions WHERE id IN (${placeholders})`,
-    args: ids,
-  });
-  return del.rowsAffected;
+/**
+ * Deletes the CSV/manual side of each pair, first moving the user's edits onto
+ * the surviving Plaid row so a duplicate delete never silently discards work:
+ *   - manual_category / display_name: copied only where the Plaid row has none
+ *     (the Plaid row's own edits win); category follows a transferred
+ *     manual_category, the same way a sync would set it.
+ *   - ignored: the Plaid row becomes ignored if either side was.
+ *   - tags: unioned, no duplicates.
+ * One db.batch = one transaction, so a failure cannot half-transfer or delete
+ * without transferring.
+ */
+async function deleteWithEditTransfer(pairs: Pick<Candidate, 'csvId' | 'plaidId'>[]): Promise<number> {
+  const stmts: { sql: string; args: string[] }[] = [];
+  for (const { csvId, plaidId } of pairs) {
+    stmts.push(
+      {
+        sql: `UPDATE transactions SET
+                manual_category = CASE WHEN manual_category IS NULL OR manual_category = ''
+                                       THEN (SELECT manual_category FROM transactions WHERE id = ?) ELSE manual_category END,
+                display_name    = CASE WHEN display_name IS NULL OR display_name = ''
+                                       THEN (SELECT display_name FROM transactions WHERE id = ?) ELSE display_name END,
+                ignored         = MAX(ignored, COALESCE((SELECT ignored FROM transactions WHERE id = ?), 0))
+              WHERE id = ?`,
+        args: [csvId, csvId, csvId, plaidId],
+      },
+      {
+        sql: `UPDATE transactions SET category = manual_category
+              WHERE id = ? AND manual_category IS NOT NULL AND manual_category != ''`,
+        args: [plaidId],
+      },
+      {
+        sql: `INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id)
+              SELECT ?, tag_id FROM transaction_tags WHERE transaction_id = ?`,
+        args: [plaidId, csvId],
+      },
+    );
+  }
+  const csvIds = pairs.map((p) => p.csvId);
+  stmts.push(...cascadeDeleteTransactionsSql(csvIds));
+  const results = await db.batch(stmts, 'write');
+  return results[results.length - 1].rowsAffected;
+}
+
+/**
+ * User-confirmed delete of duplicate rows (the review tab). Rows that still pair
+ * with a Plaid row have their edits transferred first, exactly as the automatic
+ * pass does; ids with no Plaid twin are simply deleted.
+ */
+export async function deleteDuplicatesKeepingEdits(csvIds: string[]): Promise<void> {
+  if (csvIds.length === 0) return;
+  const wanted = new Set(csvIds);
+  const pairs = (await loadPairs(['csv', 'manual'])).filter((p) => wanted.has(p.csvId));
+  const paired = new Set(pairs.map((p) => p.csvId));
+  const lone = csvIds.filter((id) => !paired.has(id));
+  if (pairs.length > 0) await deleteWithEditTransfer(pairs);
+  if (lone.length > 0) await db.batch(cascadeDeleteTransactionsSql(lone), 'write');
 }
