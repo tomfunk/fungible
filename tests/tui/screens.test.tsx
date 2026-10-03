@@ -1891,6 +1891,11 @@ describe('NetWorth', () => {
     });
   });
 
+  it('shows the balance-history import hint', async () => {
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Import history: Accounts → Add Data → [b]'));
+  });
+
   it('shows Assets and Liabilities sections', async () => {
     const r = networth();
     await waitFor(() => {

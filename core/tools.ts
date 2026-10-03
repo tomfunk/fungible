@@ -13,6 +13,7 @@ import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
 import { exportTransactionsCsv } from './export.js';
+import { previewBalanceImport, commitBalanceImport, type BalanceImportOptions, type BalanceImportPreview } from './balance-import.js';
 import type { Filter } from './filters.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows, getPeriodStart, formatPeriodLabel, BASIS_LABEL } from './dateUtils.js';
@@ -41,7 +42,7 @@ export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction', 'add_transaction',
   'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
-  'tag_transaction', 'toggle_hidden_category', 'sync',
+  'tag_transaction', 'toggle_hidden_category', 'sync', 'import_balance_history',
   'show_canvas', 'load_canvas', 'delete_canvas',
 ]);
 
@@ -111,6 +112,32 @@ export const TOOL_DEFS: ToolDef[] = [
         include_hidden:  { type: 'boolean', description: 'Include hidden categories (default false)' },
       },
       required: ['from', 'to'],
+    },
+  },
+  {
+    name: 'preview_balance_import',
+    description: 'Dry-run a balance-history CSV import (no writes). CSV needs a header row date,account,balance with ISO YYYY-MM-DD dates; accounts are matched by name or nickname and are never created. Only history older than an account\'s current balance is importable. Credit and loan balances are the amount owed, entered as positive numbers. Always preview first, and ask the user how to handle any unmatched or ambiguous account names (re-run with account_map) before calling import_balance_history.',
+    parameters: {
+      type: 'object',
+      properties: {
+        csv:         { type: 'string', description: 'Inline CSV text with header: date,account,balance' },
+        account_map: { type: 'object', description: 'Optional overrides: CSV account name -> account id (from list_accounts), or null to skip those rows', additionalProperties: { type: ['string', 'null'] } },
+        today:       { type: 'string', description: 'Optional YYYY-MM-DD treated as today (rows after it are skipped)' },
+      },
+      required: ['csv'],
+    },
+  },
+  {
+    name: 'import_balance_history',
+    description: 'Import balance history from inline CSV (header: date,account,balance) into existing accounts, in one atomic write. Existing balances on the same account and date are overwritten; rows not older than an account\'s current balance are skipped. Credit and loan balances are the amount owed, positive. Run preview_balance_import first and confirm unmatched names with the user.',
+    parameters: {
+      type: 'object',
+      properties: {
+        csv:         { type: 'string', description: 'Inline CSV text with header: date,account,balance' },
+        account_map: { type: 'object', description: 'Optional overrides: CSV account name -> account id, or null to skip those rows', additionalProperties: { type: ['string', 'null'] } },
+        today:       { type: 'string', description: 'Optional YYYY-MM-DD treated as today' },
+      },
+      required: ['csv'],
     },
   },
   {
@@ -473,8 +500,40 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
     case 'tag_transaction':        return `${input['add'] ? 'Add' : 'Remove'} tag #${s('tag')} on transaction [id: ${s('id')}]`;
     case 'toggle_hidden_category': return `${input['hide'] ? 'Hide' : 'Unhide'} category "${s('category')}"`;
     case 'sync':                   return 'Sync transactions from Plaid';
+    case 'import_balance_history': return 'Import balance history from CSV';
     default:                       return name;
   }
+}
+
+function balanceImportSummary(p: BalanceImportPreview): string {
+  const parts = [`${p.willInsert} new`, `${p.willOverwrite.count} replacing existing (${p.willOverwrite.changed} with a different value)`, `${p.skipped.length} skipped`];
+  return parts.join(', ');
+}
+
+function balanceImportOpts(input: Record<string, unknown>): BalanceImportOptions {
+  const map = input['account_map'];
+  const opts: BalanceImportOptions = {};
+  if (map && typeof map === 'object' && !Array.isArray(map)) {
+    opts.accountMap = {};
+    for (const [k, v] of Object.entries(map as Record<string, unknown>)) {
+      opts.accountMap[k] = v === null ? null : String(v);
+    }
+  }
+  if (typeof input['today'] === 'string' && input['today']) opts.today = input['today'];
+  return opts;
+}
+
+/** Like describeToolCall, but may query the database (e.g. to state import preview counts). Used for confirmation prompts. */
+export async function describeToolCallDetailed(name: string, input: Record<string, unknown>): Promise<string> {
+  if (name === 'import_balance_history') {
+    try {
+      const p = await previewBalanceImport(String(input['csv'] ?? ''), balanceImportOpts(input));
+      return `Import balance history: ${balanceImportSummary(p)}`;
+    } catch (e) {
+      return `Import balance history (${e instanceof Error ? e.message : String(e)})`;
+    }
+  }
+  return describeToolCall(name, input);
 }
 
 // ─── Pure tool executor ───────────────────────────────────────────────────────
@@ -613,6 +672,30 @@ async function executeToolImpl(
         includeHidden: bool('include_hidden'),
       });
     }
+
+    case 'preview_balance_import': {
+      let p: BalanceImportPreview;
+      try { p = await previewBalanceImport(str('csv'), balanceImportOpts(input)); }
+      catch (e) { return `Cannot preview import: ${e instanceof Error ? e.message : String(e)}`; }
+      const lines = [
+        `Balance import preview (no changes made): ${p.totalRows} rows, ${balanceImportSummary(p)}.`,
+      ];
+      if (p.duplicatesInFile) lines.push(`${p.duplicatesInFile} duplicate account/date rows in file (last wins).`);
+      for (const r of p.resolved) lines.push(`  ${r.csvName} -> ${r.accountName} [${r.accountId}]: ${r.rows} rows, ${r.minDate} to ${r.maxDate}`);
+      for (const u of p.unmatched) {
+        const sug = u.suggestions.length ? ` Did you mean: ${u.suggestions.map((x) => `${x.name} [${x.id}]`).join('; ')}?` : '';
+        lines.push(`Unmatched account "${u.name}" (${u.rows} rows).${sug}`);
+      }
+      for (const a of p.ambiguous) lines.push(`Ambiguous account "${a.name}": ${a.candidates.map((x) => `${x.name} [${x.id}]`).join('; ')}`);
+      for (const o of p.overwriteSample) lines.push(`  Overwrite ${o.accountName} ${o.date}: ${fmt(o.oldBalance)} -> ${fmt(o.newBalance)}`);
+      for (const w of p.warnings) lines.push(`Warning: ${w}`);
+      for (const sk of p.skipped.slice(0, 20)) lines.push(`Skipped [${sk.reason}] ${sk.message}`);
+      if (p.skipped.length > 20) lines.push(`... and ${p.skipped.length - 20} more skipped rows.`);
+      return lines.join('\n');
+    }
+
+    case 'import_balance_history':
+      return (await runBalanceImport(input)).text;
 
     case 'list_accounts': {
       const rows = await getLinkedAccounts();
@@ -1053,8 +1136,34 @@ async function executeToolImpl(
   }
 }
 
+async function runBalanceImport(input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
+  try {
+    const r = await commitBalanceImport(typeof input.csv === 'string' ? input.csv : '', balanceImportOpts(input));
+    return {
+      text: `Imported balance history: ${r.inserted} new, ${r.overwritten} overwritten, ${r.skipped} skipped, across ${r.accountsTouched} account${r.accountsTouched === 1 ? '' : 's'}.`,
+      wrote: r.inserted + r.overwritten > 0,
+    };
+  } catch (e) {
+    return { text: `Import failed, nothing was written: ${e instanceof Error ? e.message : String(e)}`, wrote: false };
+  }
+}
+
+/**
+ * Like executeTool, but also reports whether the call actually changed data,
+ * so callers (MCP afterWrite) can skip refresh hooks after a failed or no-op
+ * write. Fires notifyChange itself only when data changed.
+ */
+export async function executeToolWithEffect(name: string, input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
+  if (name === 'import_balance_history') {
+    // commitBalanceImport already notifies when it writes; no generic notify.
+    return runBalanceImport(input);
+  }
+  const text = await executeToolImpl(name, input);
+  const wrote = WRITE_TOOLS.has(name);
+  if (wrote) notifyChange();
+  return { text, wrote };
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-  const result = await executeToolImpl(name, input);
-  if (WRITE_TOOLS.has(name)) notifyChange();
-  return result;
+  return (await executeToolWithEffect(name, input)).text;
 }

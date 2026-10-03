@@ -6,6 +6,7 @@ import { useSyncStatus } from '../hooks/useSyncStatus.js';
 import { useSyncProgress } from '../hooks/useSyncProgress.js';
 import { useKeyStatus } from '../hooks/useKeyStatus.js';
 import { Modal } from '../components/Modal.js';
+import { BalanceHistoryImportModal } from '../components/BalanceHistoryImportModal.js';
 import type { LinkedAccount, ImportTarget, LinkedItem } from '../../../../core/queries.js';
 import type { ImportRow } from '../../../../core/imports.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
@@ -55,6 +56,7 @@ export function Accounts() {
   const [deleteAcct, setDeleteAcct] = useState<LinkedAccount | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [balanceImportOpen, setBalanceImportOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   // The connection whose credentials are being updated, if any. Distinct from
   // linkOpen: that adds a new item, this re-authorizes an existing one.
@@ -444,6 +446,10 @@ export function Accounts() {
             <div className={styles.addTitle}>Import CSV</div>
             <div className="dim">Upload a statement export and map its columns</div>
           </button>
+          <button className={styles.addCard} onClick={() => setBalanceImportOpen(true)}>
+            <div className={styles.addTitle}>Import balance history</div>
+            <div className="dim">Past balances from a date,account,balance file</div>
+          </button>
           <button className={styles.addCard} onClick={() => setManualOpen(true)}>
             <div className={styles.addTitle}>Manual asset</div>
             <div className="dim">House, car, or other asset tracked by value</div>
@@ -651,6 +657,17 @@ export function Accounts() {
             showStatus(`Imported ${imported} · skipped ${skipped}`, 4000);
             reload();
             setTab('accounts');
+          }}
+        />
+      )}
+
+      {balanceImportOpen && (
+        <BalanceHistoryImportModal
+          onClose={() => setBalanceImportOpen(false)}
+          onDone={(r) => {
+            setBalanceImportOpen(false);
+            showStatus(`Net worth history updated. Added ${r.inserted}, replaced ${r.overwritten}, skipped ${r.skipped}.`, 4000);
+            reload();
           }}
         />
       )}

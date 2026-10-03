@@ -280,6 +280,7 @@ export const APP_CONTEXT = `
 - Accounts: type is one of depository, investment, credit, loan, other.
 - Manual assets are stored as accounts with type='other', subtype='manual'.
 - Balances are stored in balance_history (account_id, date, balance). Most recent = current balance.
+- Credit and loan balances are the amount owed, stored as positive numbers.
 
 ## Categorization
 - Category rules (substring or regex) auto-categorize transactions in priority order.

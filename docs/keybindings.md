@@ -112,7 +112,7 @@ Everything selected in a section means "no constraint" for that dimension. The f
 | `r` | Cycle history range (Week / Month / Quarter / Year) |
 | `↑ ↓` | Scroll history |
 
-Shows assets (depository, investment, manual), liabilities (credit), and net worth. History shows one snapshot per period (last sync within each bucket), scrollable with up/down.
+Shows assets (depository, investment, manual), liabilities (credit), and net worth. History shows one snapshot per period (last sync within each bucket), scrollable with up/down. To fill in earlier history, see [Importing balance history](#importing-balance-history) (Accounts → Add Data → `[b]`).
 
 ## Tags `[5]`
 
@@ -231,11 +231,31 @@ roughly the last day — and cannot widen the history window. If what you are
 missing is older than that, Plaid almost certainly already has it, which makes
 `[d]` the free fix and `[r]` a wasted charge.
 
-**Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
+**Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[b]` import balance history, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 
 **Import history** appears on the Add Data view once a CSV has been imported. `↑↓` selects an import; `[u]` undoes it, removing the transactions it created and the record of it; `[v]` moves it to a different account, for a file imported into the wrong one. Both confirm first — undo names any categories, renames, or tags of yours that would be lost.
 
 **Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
+
+### Importing balance history
+
+`[b]` on Add Data imports past balances for accounts you already track, to fill in the Net Worth chart. Enter a CSV path, review the preview (nothing is written yet), then `Enter` to import. There is no undo.
+
+```csv
+date,account,balance
+2024-01-31,Chase Checking,4210.55
+2024-01-31,Visa,"$1,250.00"
+2024-02-29,Chase Checking,(50.00)
+```
+
+- Header `date,account,balance` is required; case-insensitive, any column order, extra columns ignored. Dates are `YYYY-MM-DD`.
+- Balances accept `$`, commas, `(50.00)` and `-50`. For credit cards and loans, enter the amount owed as a positive number (a negative one triggers a warning).
+- Accounts match by name or nickname (case-insensitive). Unmatched or ambiguous names are skipped; press `[m]` in the preview to map them to an existing account for this import only. Accounts are never created.
+- Only rows older than an account's current latest balance are imported, so today's balance is unchanged. Newer or future rows are skipped.
+- A row replaces any existing balance for the same account and date, so re-importing a file is safe. Repeated rows in one file: the last wins.
+- Net worth history leaves out an account for any period where it has no balance, so a partial import can make the chart jump.
+
+The same flow is in the desktop app (Accounts, Add data, "Import balance history") and is available to the agent and MCP clients as `preview_balance_import` and `import_balance_history`.
 
 ## Canvas `[9]`
 
