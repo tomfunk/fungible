@@ -23,7 +23,7 @@ import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTop
 import { applyCategoriesToAll } from './categorize.js';
 import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
-import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction } from './transactions.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction, normalizeAmount } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
 import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
@@ -1016,16 +1016,26 @@ async function executeToolImpl(
     }
 
     case 'add_transaction': {
+      // Strict parse: num() would turn "", null, true, [] into 0 and "abc" into NaN.
+      const rawAmount = input['amount'];
+      let amount: number;
+      if (typeof rawAmount === 'number') {
+        amount = rawAmount;
+      } else if (typeof rawAmount === 'string' && /^-?\d+(\.\d+)?$/.test(rawAmount.trim())) {
+        amount = Number(rawAmount.trim());
+      } else {
+        return noWrite('Error: amount must be a number (e.g. 12.34) or a plain decimal string.');
+      }
       try {
         const id = await addTransaction({
           accountId: str('account_id'),
           date: str('date'),
           name: str('name'),
-          amount: num('amount'),
+          amount,
           category: str('category'),
           merchantName: optStr('merchant_name') ?? undefined,
         });
-        return `Added "${str('name')}" ${num('amount')} on ${str('date')} → ${str('category')} [id: ${id}]`;
+        return `Added "${str('name')}" ${normalizeAmount(amount)} on ${str('date')} → ${str('category')} [id: ${id}]`;
       } catch (e) {
         return noWrite(`Error: ${(e as Error).message}`);
       }
