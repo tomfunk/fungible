@@ -1,4 +1,5 @@
 import { MONTHS } from './dateUtils.js';
+import type { BalanceAge } from './queries.js';
 
 export function fmt(n: number, decimals = 2): string {
   return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
@@ -95,4 +96,9 @@ export function sortTags<T extends { earliest: string | null; latest: string | n
     });
   }
   return sorted;
+}
+
+/** Display text for a balance's age: "updated today" or "updated 52d ago". */
+export function fmtBalanceAge(age: BalanceAge): string {
+  return age.days === 0 ? 'updated today' : `updated ${age.days}d ago`;
 }

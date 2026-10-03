@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt } from '../core/fmt.js';
+import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt, fmtBalanceAge } from '../core/fmt.js';
 import { MONTHS } from '../core/dateUtils.js';
 import { bar, truncate } from '../tui/charUtils.js';
 
@@ -221,5 +221,15 @@ describe('fmtSyncedAt', () => {
     expect(fmtSyncedAt(NOW - DAY)).toBe(`${MONTHS[dt.getMonth()]} ${dt.getDate()}`);
     // One millisecond inside the window is still relative.
     expect(fmtSyncedAt(NOW - DAY + 1)).toBe('23 hr ago');
+  });
+});
+
+describe('fmtBalanceAge', () => {
+  it.each([
+    [0, 'updated today'],
+    [1, 'updated 1d ago'],
+    [52, 'updated 52d ago'],
+  ])('days=%i -> %s', (days, expected) => {
+    expect(fmtBalanceAge({ days, isStale: false })).toBe(expected);
   });
 });
