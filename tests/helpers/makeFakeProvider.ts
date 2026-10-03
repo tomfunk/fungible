@@ -32,10 +32,20 @@ export interface PlaidSyncPage {
  * pagination. Pass an Error as a page to simulate a mid-sync failure.
  * Wire it with: vi.mocked(getPlaidClient).mockReturnValue(plaid as never)
  */
-export function makeFakePlaid(opts: { pages?: (PlaidSyncPage | Error)[]; accounts?: object[] } = {}) {
+export function makeFakePlaid(opts: {
+  pages?: (PlaidSyncPage | Error)[];
+  /** accountsGet response (same every call). */
+  accounts?: object[];
+  /** One accountsGet response per call (e.g. balance changing between syncs); the last repeats. */
+  accountsPerSync?: object[][];
+  /** Makes accountsGet reject (a failure after the transaction pages). */
+  accountsError?: Error;
+} = {}) {
   const pages = opts.pages ?? [{}];
   let call = 0;
-  const transactionsSync = vi.fn(async () => {
+  // The request is typed so tests can assert the cursor Plaid was resumed from:
+  // plaid.transactionsSync.mock.calls[0][0].cursor
+  const transactionsSync = vi.fn(async (_req?: { access_token?: string; cursor?: string }) => {
     const idx = Math.min(call++, pages.length - 1);
     const p = pages[idx];
     if (p instanceof Error) throw p;
@@ -49,7 +59,13 @@ export function makeFakePlaid(opts: { pages?: (PlaidSyncPage | Error)[]; account
       },
     };
   });
-  const accountsGet = vi.fn(async () => ({ data: { accounts: opts.accounts ?? [] } }));
+  let acctCall = 0;
+  const accountsGet = vi.fn(async (_req?: { access_token?: string }) => {
+    if (opts.accountsError) throw opts.accountsError;
+    const per = opts.accountsPerSync;
+    const accounts = per ? per[Math.min(acctCall++, per.length - 1)] : opts.accounts ?? [];
+    return { data: { accounts } };
+  });
   return { transactionsSync, accountsGet };
 }
 
