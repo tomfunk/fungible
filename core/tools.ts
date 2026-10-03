@@ -546,13 +546,25 @@ async function requireTransactionName(id: string): Promise<string | null> {
 }
 
 /**
+ * Side-channel from executeToolImpl: set when a write tool failed or its target
+ * was not found. Not a promise that nothing changed in the other direction --
+ * a successful-looking no-op (e.g. removing a tag the transaction does not
+ * have) still counts as a write and fires afterWrite.
+ */
+type ToolEffect = { noWrite?: boolean };
+
+/**
  * Execute a tool by name and return a plain-text result string.
  * Does not handle `show` (agent-only), confirmation, or MCP wrapping.
  */
 async function executeToolImpl(
   name: string,
   input: Record<string, unknown>,
+  fx: ToolEffect = {},
 ): Promise<string> {
+  // Failure/no-op paths return plain text rather than throwing, so they mark
+  // themselves here; executeToolWithEffect then reports wrote=false for them.
+  const noWrite = (text: string): string => { fx.noWrite = true; return text; };
   const str  = (k: string, def = '') => String(input[k] ?? def);
   const num  = (k: string, def = 0)  => Number(input[k] ?? def);
   const bool = (k: string)            => Boolean(input[k]);
@@ -957,7 +969,7 @@ async function executeToolImpl(
 
     case 'edit_transaction': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       await setTransactionCategory(str('id'), str('category'));
       return `Set "${txName}" → ${str('category')} (pinned)`;
     }
@@ -965,14 +977,14 @@ async function executeToolImpl(
     case 'set_transaction_date': {
       const txResult = await db.execute({ sql: 'SELECT name, date FROM transactions WHERE id = ?', args: [str('id')] });
       const tx = txResult.rows[0] as unknown as { name: string; date: string } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
+      if (!tx) return noWrite(`No transaction with id ${str('id')}.`);
       const date = str('date');
       // Reject anything SQLite's date functions would silently treat as NULL —
       // a bad date here would quietly drop the row out of every range query.
       // setTransactionDate enforces this too; the early return gives the agent
       // a friendly message instead of a thrown error.
       if (!isValidIsoDate(date)) {
-        return `"${date}" is not a valid date. Use YYYY-MM-DD.`;
+        return noWrite(`"${date}" is not a valid date. Use YYYY-MM-DD.`);
       }
       await setTransactionDate(str('id'), date);
       return `Reattributed "${tx.name}" from ${tx.date} → ${date} (posting date preserved)`;
@@ -981,15 +993,15 @@ async function executeToolImpl(
     case 'clear_transaction_date': {
       const txResult = await db.execute({ sql: 'SELECT name, original_date FROM transactions WHERE id = ?', args: [str('id')] });
       const tx = txResult.rows[0] as unknown as { name: string; original_date: string | null } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
-      if (!tx.original_date) return `"${tx.name}" has no date override.`;
+      if (!tx) return noWrite(`No transaction with id ${str('id')}.`);
+      if (!tx.original_date) return noWrite(`"${tx.name}" has no date override.`);
       await clearTransactionDate(str('id'));
       return `Restored "${tx.name}" to its posting date ${tx.original_date}`;
     }
 
     case 'clear_edit': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       await clearTransactionOverride(str('id'));
       const revertedResult = await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [str('id')] });
       const reverted = (revertedResult.rows[0] as unknown as { category: string }).category;
@@ -998,7 +1010,7 @@ async function executeToolImpl(
 
     case 'ignore_transaction': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       await setTransactionIgnored(str('id'), bool('ignore'));
       return `"${txName}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
     }
@@ -1015,7 +1027,7 @@ async function executeToolImpl(
         });
         return `Added "${str('name')}" ${num('amount')} on ${str('date')} → ${str('category')} [id: ${id}]`;
       } catch (e) {
-        return `Error: ${(e as Error).message}`;
+        return noWrite(`Error: ${(e as Error).message}`);
       }
     }
 
@@ -1032,7 +1044,7 @@ async function executeToolImpl(
     case 'delete_rule': {
       const ruleResult = await db.execute({ sql: 'SELECT pattern, category FROM category_rules WHERE id = ?', args: [num('id')] });
       const rule = ruleResult.rows[0] as unknown as { pattern: string; category: string } | undefined;
-      if (!rule) return `No rule with id ${num('id')}.`;
+      if (!rule) return noWrite(`No rule with id ${num('id')}.`);
       // deleteCategoryRule deletes the row AND re-evaluates affected transactions
       // (reverting orphans to Uncategorized / a lower-priority rule), matching the
       // TUI/GUI. Raw DELETE here would leave stale categorizations behind.
@@ -1053,14 +1065,14 @@ async function executeToolImpl(
     case 'delete_name_rule': {
       const ruleResult = await db.execute({ sql: 'SELECT pattern, replacement FROM name_rules WHERE id = ?', args: [num('id')] });
       const rule = ruleResult.rows[0] as unknown as { pattern: string; replacement: string } | undefined;
-      if (!rule) return `No name rule with id ${num('id')}.`;
+      if (!rule) return noWrite(`No name rule with id ${num('id')}.`);
       await db.execute({ sql: 'DELETE FROM name_rules WHERE id = ?', args: [num('id')] });
       return `Deleted name rule: "${rule.pattern}" → "${rule.replacement}"`;
     }
 
     case 'tag_transaction': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       if (bool('add')) {
         const tagId = await getOrCreateTag(str('tag'));
         await addTagToTransaction(str('id'), tagId);
@@ -1086,7 +1098,11 @@ async function executeToolImpl(
     case 'sync': {
       const results = await syncAll();
       const total = results.reduce((s, r) => s + r.added, 0);
-      return results.map((r) => `${r.itemId}: +${r.added} added, ${r.modified} modified, ${r.removed} removed`).join('\n')
+      // Debounced, failed, or empty syncs change nothing a refresh would show.
+      if (!results.some((r) => !r.skipped && !r.error && r.added + r.modified + r.removed + r.dupes > 0)) fx.noWrite = true;
+      return results.map((r) => r.error
+        ? `${r.itemId}: FAILED — ${r.error}`
+        : `${r.itemId}: +${r.added} added, ${r.modified} modified, ${r.removed} removed`).join('\n')
         + `\n\nTotal new transactions: ${total}`;
     }
 
@@ -1119,7 +1135,7 @@ async function executeToolImpl(
 
     case 'load_canvas': {
       const entry = getHistoryEntry(str('id'));
-      if (!entry) return `No canvas found with id "${str('id')}".`;
+      if (!entry) return noWrite(`No canvas found with id "${str('id')}".`);
       // entry.spec is the unresolved spec from history — resolve fresh on every
       // reopen rather than trusting a previously-resolved snapshot.
       await resolveAndWriteCanvasSpec(entry.spec, entry.id);
@@ -1128,7 +1144,7 @@ async function executeToolImpl(
 
     case 'delete_canvas': {
       const deleted = deleteHistoryEntry(str('id'));
-      return deleted ? `Canvas deleted.` : `No canvas found with id "${str('id')}".`;
+      return deleted ? `Canvas deleted.` : noWrite(`No canvas found with id "${str('id')}".`);
     }
 
     default:
@@ -1149,17 +1165,18 @@ async function runBalanceImport(input: Record<string, unknown>): Promise<{ text:
 }
 
 /**
- * Like executeTool, but also reports whether the call actually changed data,
- * so callers (MCP afterWrite) can skip refresh hooks after a failed or no-op
- * write. Fires notifyChange itself only when data changed.
+ * Like executeTool, but also reports whether the write tool succeeded, so
+ * callers (MCP afterWrite) can skip refresh hooks after a failed write or one
+ * whose target was not found (see ToolEffect; some harmless no-ops still fire). Fires notifyChange itself only when data changed.
  */
 export async function executeToolWithEffect(name: string, input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
   if (name === 'import_balance_history') {
     // commitBalanceImport already notifies when it writes; no generic notify.
     return runBalanceImport(input);
   }
-  const text = await executeToolImpl(name, input);
-  const wrote = WRITE_TOOLS.has(name);
+  const fx: ToolEffect = {};
+  const text = await executeToolImpl(name, input, fx);
+  const wrote = WRITE_TOOLS.has(name) && !fx.noWrite;
   if (wrote) notifyChange();
   return { text, wrote };
 }
