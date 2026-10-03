@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
+import { exportTransactionsCsv } from './export.js';
+import type { Filter } from './filters.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows, getPeriodStart, formatPeriodLabel, BASIS_LABEL } from './dateUtils.js';
 import { bucketDrift, ratioLabel, isHighSeverityDrift } from './scorecard.js';
@@ -91,6 +93,24 @@ export const TOOL_DEFS: ToolDef[] = [
         include_ignored: { type: 'boolean', description: 'Include ignored transactions (default false)' },
         limit:           { type: 'integer', description: 'Max results (default 50)', minimum: 1, maximum: 500 },
       },
+    },
+  },
+  {
+    name: 'export_transactions',
+    description: 'Export transactions as CSV text for a date range, with optional filters. Hidden categories are excluded unless include_hidden is set. Only "csv" is implemented.',
+    parameters: {
+      type: 'object',
+      properties: {
+        from:            { type: 'string',  description: 'Start date YYYY-MM-DD' },
+        to:              { type: 'string',  description: 'End date YYYY-MM-DD' },
+        format:          { type: 'string',  enum: ['csv'], description: "Export format (default 'csv'; only csv is implemented)" },
+        category:        { type: 'string',  description: 'Filter by category name' },
+        account_id:      { type: 'string',  description: 'Filter to a specific account ID' },
+        tag:             { type: 'string',  description: 'Filter to transactions carrying this tag' },
+        search:          { type: 'string',  description: 'Search within transaction name/display name/amount/date' },
+        include_hidden:  { type: 'boolean', description: 'Include hidden categories (default false)' },
+      },
+      required: ['from', 'to'],
     },
   },
   {
@@ -573,6 +593,25 @@ async function executeToolImpl(
         const flags = (r.manual_category ? '◆' : ' ') + (r.ignored ? '~' : ' ');
         return `${r.date}  ${flags}  ${r.name.slice(0, 36).padEnd(36)}  ${sign}$${Math.abs(Number(r.amount)).toFixed(2).padStart(9)}  ${r.category}  [${r.id}]`;
       }).join('\n');
+    }
+
+    case 'export_transactions': {
+      const from = str('from'); const to = str('to');
+      if (!from || !to) return "Provide 'from' and 'to' (YYYY-MM-DD).";
+      const format = str('format', 'csv');
+      if (format !== 'csv') return `Unsupported format '${format}' — only 'csv' is implemented.`;
+
+      const filter: Filter = {};
+      if (input['category']) filter.categories = [str('category')];
+      if (input['account_id']) filter.accounts = [str('account_id')];
+      if (input['tag']) filter.tags = [{ name: str('tag'), mode: 'has' }];
+
+      return await exportTransactionsCsv({
+        from, to,
+        filter: Object.keys(filter).length ? filter : undefined,
+        search: optStr('search') ?? undefined,
+        includeHidden: bool('include_hidden'),
+      });
     }
 
     case 'list_accounts': {

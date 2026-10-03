@@ -44,6 +44,7 @@ import {
   setIgnoredBulk,
   addTransaction,
 } from '../../core/transactions.js';
+import { exportTransactionsCsv } from '../../core/export.js';
 import {
   getTagOptions,
   getTransactionTagIds,
@@ -157,6 +158,9 @@ export const registry = {
     clearOverridesBulk,
     setIgnoredBulk,
     addTransaction,
+    // Named to match the TUI's core import 1:1 (gui-bridge-parity.test.ts
+    // matches on literal identifier name, not just presence in the registry).
+    exportTransactionsCsv,
   },
   tags: {
     getTagOptions,

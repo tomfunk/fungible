@@ -20,7 +20,7 @@ const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
     },
     cancelLink: async () => {},
   },
-  files: { pickCsv: async () => null },
+  files: { pickCsv: async () => null, saveCsv: async () => true },
   app: { getVersion: async () => '0.0.0-test' },
 };
 

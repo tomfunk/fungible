@@ -42,6 +42,10 @@ case "$SUBCOMMAND" in
   api)
     exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/api/server.ts"
     ;;
+  export)
+    shift
+    exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/scripts/export-csv.ts" "$@"
+    ;;
   *)
     exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/tui/index.tsx" "$@"
     ;;

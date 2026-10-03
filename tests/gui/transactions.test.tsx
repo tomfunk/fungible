@@ -13,6 +13,7 @@ import { db } from '../../core/db.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Transactions } from '../../gui/renderer/src/screens/Transactions.js';
+import { registry } from '../../gui/main/registry.js';
 
 beforeEach(async () => {
   for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
@@ -326,6 +327,44 @@ describe('GUI Transactions', () => {
     const deleteBtn = Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'delete')!;
     await userEvent.click(deleteBtn);
     await waitFor(() => expect(screen.queryByText('Cash Tip')).toBeNull());
+  });
+
+  it('Export passes the shared filter + date range through to core/export.ts and saves the result', async () => {
+    const spy = vi.spyOn(registry.transactions, 'exportTransactionsCsv');
+    renderScreen(<Transactions />, {
+      txFilter: { from: '2026-05-01', to: '2026-05-31' },
+      initialFilter: { categories: ['Grocery'] },
+    });
+    await waitFor(() => expect(screen.getByText('2 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.getByText('Exported transactions')).toBeTruthy());
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ filter: { categories: ['Grocery'] }, from: '2026-05-01', to: '2026-05-31' }),
+    );
+  });
+
+  it('Export falls back to the full data span when no date range is picked', async () => {
+    const spy = vi.spyOn(registry.transactions, 'exportTransactionsCsv');
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.getByText('Exported transactions')).toBeTruthy());
+    const call = spy.mock.calls[0][0];
+    expect(call.from).toBeTruthy();
+    expect(call.to).toBeTruthy();
+  });
+
+  it('shows a caveat when a txType/flex filter is active, since export does not support those dimensions', async () => {
+    // Freeze the export mid-flight so the caveat toast (fired before the
+    // export call) can't be overwritten by the success toast before this
+    // test observes it — mirrors the TUI's export-modal caveat test
+    // (tests/tui/screens.test.tsx), which checks the same static text.
+    const spy = vi.spyOn(registry.transactions, 'exportTransactionsCsv').mockImplementation(() => new Promise(() => {}));
+    renderScreen(<Transactions />, { txFilter: { txType: 'expenses' } });
+    await waitFor(() => expect(screen.getByText('7 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.getByText(/isn't applied to the exported file/)).toBeTruthy());
+    spy.mockRestore();
   });
 
   it('a manually-added row only offers tag + delete — no clear-override, no ignore/unignore', async () => {
