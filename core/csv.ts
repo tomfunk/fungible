@@ -29,23 +29,7 @@ export function parseCSV(filePath: string): ParsedCsv {
   };
 }
 
-export function parseDate(raw: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
-    const [m, d, y] = raw.split('/');
-    const fullYear = y.length === 2 ? (parseInt(y) < 50 ? `20${y}` : `19${y}`) : y;
-    return `${fullYear}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  return raw;
-}
-
-export function parseCurrencyAmount(raw: string): number {
-  const s = raw.trim();
-  const negative = s.startsWith('(') && s.endsWith(')');
-  const cleaned = s.replace(/[$,()]/g, '');
-  const value = parseFloat(cleaned);
-  return negative ? -value : value;
-}
+export { parseDate } from './csv-date.js';
 
 /**
  * The idempotency key for a CSV transaction, scoped to an account by the unique

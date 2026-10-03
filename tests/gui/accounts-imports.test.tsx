@@ -14,6 +14,7 @@ import { importCsvTransactions } from '../../core/accounts.js';
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 import { makeCsvRow } from '../helpers/makeCsvRow.js';
+import { summarizeCsvSkips } from '../../core/csv-import-copy.js';
 
 const CFG = makeCsvRow();
 
@@ -183,5 +184,126 @@ describe('GUI Accounts — import history', () => {
 
       await waitFor(() => expect(screen.getByText(/1 already there/)).toBeTruthy());
     });
+  });
+});
+
+describe('GUI Accounts — CSV import modal', () => {
+  const headers = ['Date', 'Description', 'Amount'];
+  // File lines: header is 1, so data row i is on line i + 2.
+  const mixed = [
+    ['2025-01-02', 'AMAZON', '25.00'],   // line 2 good
+    ['2025-01-03', 'COFFEE', '$4.50'],   // line 3 good, dollar sign
+    ['2025-01-04', 'GARBLED', 'abc'],    // line 4 bad amount
+    ['2025-01-05', 'NOAMOUNT', ''],      // line 5 blank amount
+    ['2025-13-45', 'BADDATE', '5.00'],   // line 6 bad date
+  ];
+
+  /** Opens the import modal with `fileRows` as the picked file and maps Amount. */
+  async function openModal(fileRows: string[][]) {
+    await addAccount('chase', 'Chase');
+    const bridge = (window as unknown as { __bridge: { call: (...a: unknown[]) => Promise<unknown> } }).__bridge;
+    const realCall = bridge.call;
+    bridge.call = async (ns, fn, args) =>
+      ns === 'files' && fn === 'pickCsv'
+        ? { path: '/tmp/x.csv', headers, rows: fileRows, fileName: 'x.csv', fileHash: 'h-x' }
+        : realCall(ns, fn, args);
+    await addData();
+    await userEvent.click(await screen.findByText('Import CSV'));
+    // Selects in order: date, description, amount mode, amount column, positive-means, account.
+    const selects = await screen.findAllByRole('combobox');
+    await userEvent.selectOptions(selects[3], '2');
+  }
+
+  const amountCells = () =>
+    Array.from(document.querySelectorAll('[data-amount-state]')).map((c) => [c.getAttribute('data-amount-state'), c.textContent]);
+
+  it('previews a good row with its date and amount', async () => {
+    await openModal([mixed[0]]);
+    await waitFor(() => expect(amountCells()).toEqual([['ok', '$25.00']]));
+    expect(document.querySelector('[data-date-state="ok"]')!.textContent).toBe('2025-01-02');
+    expect(screen.queryByText(/will be skipped/)).toBeNull();
+  });
+
+  it('previews a $-prefixed amount as its value, not $0.00', async () => {
+    await openModal([mixed[1]]);
+    await waitFor(() => expect(amountCells()).toEqual([['ok', '$4.50']]));
+  });
+
+  it('marks an unreadable amount invalid instead of $0.00', async () => {
+    await openModal([mixed[2]]);
+    await waitFor(() => expect(amountCells()).toEqual([['invalid', 'invalid']]));
+  });
+
+  it('marks a blank amount blank instead of $0.00', async () => {
+    await openModal([mixed[3]]);
+    await waitFor(() => expect(amountCells()).toEqual([['blank', 'blank']]));
+  });
+
+  it('marks an invalid date instead of echoing the raw text', async () => {
+    await openModal([mixed[4]]);
+    await waitFor(() => expect(document.querySelector('[data-date-state="invalid"]')!.textContent).toBe('invalid date'));
+    expect(screen.queryByText('2025-13-45')).toBeNull();
+  });
+
+  it('counts every row that will be skipped in the footer, using the shared copy', async () => {
+    await openModal(mixed);
+    const expected = summarizeCsvSkips([
+      { rowIndex: 2, reason: 'bad_amount' }, { rowIndex: 3, reason: 'empty_amount' }, { rowIndex: 4, reason: 'bad_date' },
+    ]);
+    const footer = await screen.findByText(/will be skipped/);
+    expect(footer.textContent).toContain('3 rows will be skipped');
+    expect(footer.textContent).toContain(expected);
+  });
+
+  it('uses the singular for a single skipped row', async () => {
+    await openModal([mixed[0], mixed[2]]);
+    const footer = await screen.findByText(/will be skipped/);
+    expect(footer.textContent).toContain('1 row will be skipped');
+    expect(footer.textContent).not.toContain('1 rows');
+  });
+
+  it('counts a missing-description row in the footer and skips it on import', async () => {
+    const noName = ['2025-01-06', '', '9.00'];
+    await openModal([mixed[0], noName, mixed[2]]);
+    const footer = await screen.findByText(/will be skipped/);
+    expect(footer.textContent).toContain('2 rows will be skipped');
+    expect(footer.textContent).toContain(summarizeCsvSkips([
+      { rowIndex: 1, reason: 'missing_name' }, { rowIndex: 2, reason: 'bad_amount' },
+    ]));
+    await userEvent.click(await screen.findByRole('button', { name: 'Import 3 rows' }));
+    const msg = await screen.findByText(/^Imported 1/);
+    expect(msg.textContent).toContain('skipped 2');
+    expect(msg.textContent).toMatch(/line 3: missing description/);
+    const res = await db.execute('SELECT name FROM transactions');
+    expect(res.rows.map((r) => r.name)).toEqual(['AMAZON']);
+  });
+
+  it('imports only the good rows and reports skips with file line numbers', async () => {
+    await openModal(mixed);
+    await userEvent.click(await screen.findByRole('button', { name: 'Import 5 rows' }));
+
+    const msg = await screen.findByText(/^Imported 2/);
+    expect(msg.textContent).toContain('skipped 3');
+    expect(msg.textContent).toContain(summarizeCsvSkips([
+      { rowIndex: 2, reason: 'bad_amount' }, { rowIndex: 3, reason: 'empty_amount' }, { rowIndex: 4, reason: 'bad_date' },
+    ]));
+    expect(msg.textContent).toMatch(/line 4: unreadable amount/);
+    expect(msg.textContent).toMatch(/line 5: blank amount/);
+    expect(msg.textContent).toMatch(/line 6: invalid date/);
+
+    const res = await db.execute('SELECT name, date, amount FROM transactions ORDER BY date');
+    expect(res.rows.map((r) => [r.name, r.date, r.amount])).toEqual([
+      ['AMAZON', '2025-01-02', 25], ['COFFEE', '2025-01-03', 4.5],
+    ]);
+  });
+
+  it('says "and N more" when many rows are skipped', async () => {
+    const bad = Array.from({ length: 5 }, (_, i) => [`2025-01-0${i + 1}`, `BAD${i}`, 'abc']);
+    await openModal(bad);
+    await userEvent.click(await screen.findByRole('button', { name: 'Import 5 rows' }));
+    const msg = await screen.findByText(/^Imported 0/);
+    expect(msg.textContent).toContain('line 2:');
+    expect(msg.textContent).toContain('and 2 more');
+    expect(msg.textContent).not.toContain('line 6:');
   });
 });

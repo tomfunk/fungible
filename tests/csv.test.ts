@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseDate, parseCurrencyAmount, dedupKey, assignOrdinals } from '../core/csv.js';
+import { parseDate } from '../core/csv-date.js';
+import { dedupKey, assignOrdinals } from '../core/csv.js';
 
 describe('parseDate', () => {
   it('passes through YYYY-MM-DD format unchanged', () => {
@@ -23,33 +24,21 @@ describe('parseDate', () => {
   });
 
   it('returns raw string for unrecognized format', () => {
-    expect(parseDate('15 March 2024')).toBe('15 March 2024');
+    expect(parseDate('15 March 2024')).toBeNull();
   });
 });
 
-describe('parseCurrencyAmount', () => {
-  it('parses plain number', () => {
-    expect(parseCurrencyAmount('100.00')).toBeCloseTo(100);
+describe('parseDate calendar validation', () => {
+  it.each(['13/45/2024', '2024-02-30', '2/29/2023', '2/30/2024', '0/5/2024', '2024-13-01', '2024-00-10',
+    'March 5', '1/1/202', '', 'abc', '5/2024', '3-15-2024', '2024/03/15', '15/3/2024'])('rejects %j', (raw) => {
+    expect(parseDate(raw)).toBeNull();
   });
 
-  it('strips dollar sign', () => {
-    expect(parseCurrencyAmount('$50.25')).toBeCloseTo(50.25);
-  });
-
-  it('strips commas', () => {
-    expect(parseCurrencyAmount('$1,234.56')).toBeCloseTo(1234.56);
-  });
-
-  it('parses negative with minus sign', () => {
-    expect(parseCurrencyAmount('-75.00')).toBeCloseTo(-75);
-  });
-
-  it('parses negative in parentheses notation', () => {
-    expect(parseCurrencyAmount('(100.00)')).toBeCloseTo(-100);
-  });
-
-  it('handles parentheses with dollar sign', () => {
-    expect(parseCurrencyAmount('($200.00)')).toBeCloseTo(-200);
+  it.each([
+    ['2/29/2024', '2024-02-29'], ['2024-02-29', '2024-02-29'], ['12/31/99', '1999-12-31'],
+    ['1/1/49', '2049-01-01'], ['1/1/50', '1950-01-01'], [' 3/5/2024 ', '2024-03-05'],
+  ])('accepts %j as %s', (raw, iso) => {
+    expect(parseDate(raw)).toBe(iso);
   });
 });
 
@@ -75,6 +64,11 @@ describe('dedupKey', () => {
   it('normalizes amounts to integer cents', () => {
     expect(dedupKey('2024-01-15', 'AMAZON', 5, 0)).toBe(dedupKey('2024-01-15', 'AMAZON', 5.0, 0));
     expect(dedupKey('2024-01-15', 'AMAZON', 5, 0)).toContain('|500|');
+  });
+
+  it.each([[19.99, '1999'], [0.1 + 0.2, '30'], [-4.5, '-450'], [-0, '0'], [1.005, '100'], [4.5, '450']])(
+    'reduces %d to integer cents %s', (amount, cents) => {
+      expect(dedupKey('2024-01-15', 'X', amount, 0)).toBe(`2024-01-15|x|${cents}|0`);
   });
 });
 
