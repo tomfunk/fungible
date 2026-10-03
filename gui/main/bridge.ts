@@ -2,6 +2,7 @@ import { app, dialog, ipcMain } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { parseCSV } from '../../core/csv.js';
+import { readBalanceImportFile } from './read-text-file.js';
 import { isPlaidConfigured } from '../../core/plaid.js';
 import { getDefaultDaysRequested } from '../../core/settings.js';
 import { cancelActivePlaidLink, runPlaidLink } from './plaid-link.js';
@@ -27,6 +28,18 @@ const files = {
     if (result.canceled || result.filePaths.length === 0) return null;
     const path = result.filePaths[0];
     return { path, ...parseCSV(path) };
+  },
+  // Raw text pick for the balance-history import: core takes CSV text, so no
+  // parsing here. Size is checked before reading so a huge file never lands in
+  // memory (core enforces the same cap on the text it is handed).
+  pickText: async (): Promise<{ path: string; fileName: string; text: string } | null> => {
+    const result = await dialog.showOpenDialog({
+      title: 'Import balance history',
+      filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return readBalanceImportFile(result.filePaths[0]);
   },
   // Writes already-built file content to a user-chosen path. Content is built
   // main-side (registry.transactions.exportTransactionsCsv, backed by

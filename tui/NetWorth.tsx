@@ -248,6 +248,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && filterMode && (
         <Text dimColor>[↑↓] navigate  ·  [Space] toggle  ·  [a] all  ·  [f] done</Text>
       )}
+      <Text dimColor>Import history: Accounts → Add Data → [b]</Text>
       <Divider />
 
       {accounts.length === 0 ? (

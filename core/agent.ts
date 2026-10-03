@@ -7,7 +7,7 @@ import 'dotenv/config';
 import { streamResponse, makeAssistantMessage, detectProvider, getProviderModel } from './llm-provider.js';
 import type { Message, ContentBlock, ToolDef } from './llm-provider.js';
 import { APP_CONTEXT } from './agent-context.js';
-import { TOOL_DEFS, WRITE_TOOLS, describeToolCall, executeTool } from './tools.js';
+import { TOOL_DEFS, WRITE_TOOLS, describeToolCall, describeToolCallDetailed, executeTool } from './tools.js';
 import { buildCanvasContextSections } from './canvas-history.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ async function dispatchTool(
 
   // Write tools — confirm before executing
   if (WRITE_TOOLS.has(name)) {
-    const confirmed = await callbacks.onConfirm(describeToolCall(name, input));
+    const confirmed = await callbacks.onConfirm(await describeToolCallDetailed(name, input));
     if (!confirmed) return 'Cancelled.';
   }
 

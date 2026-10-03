@@ -13,6 +13,9 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
+import { readFileSync, statSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { previewBalanceImport, commitBalanceImport, BALANCE_IMPORT_SKIP_COPY, BALANCE_IMPORT_MAX_BYTES, summarizeSkips, type BalanceImportPreview, type BalanceImportResult } from '../core/balance-import.js';
 import { getLinkedAccounts, getImportTargets, getLinkedItems, type LinkedAccount, type ImportTarget, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
@@ -45,6 +48,10 @@ type AddStep =
   | 'link-days'
   | 'link-plaid'
   | 'file'
+  | 'bh-file'
+  | 'bh-preview'
+  | 'bh-map'
+  | 'bh-done'
   | 'map-date'
   | 'map-name'
   | 'map-amount-mode'
@@ -151,6 +158,19 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   // CSV import state
   const [filePath, setFilePath] = useState('');
+  // Balance-history import (issue 58). Nothing is written until bh-preview is confirmed.
+  const [bhPath, setBhPath] = useState('');
+  const [bhError, setBhError] = useState('');
+  const [bhCsv, setBhCsv] = useState('');
+  const [bhPreview, setBhPreview] = useState<BalanceImportPreview | null>(null);
+  const [bhMap, setBhMap] = useState<Record<string, string | null>>({});
+  const [bhMapIdx, setBhMapIdx] = useState(0);
+  const [bhPick, setBhPick] = useState(0);
+  const [bhResult, setBhResult] = useState<BalanceImportResult | null>(null);
+  const [bhBusy, setBhBusy] = useState(false);
+  const bhNames = bhPreview
+    ? [...new Set([...bhPreview.unmatched.map((u) => u.name), ...bhPreview.ambiguous.map((a) => a.name)])]
+    : [];
   const [fileError, setFileError] = useState('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<string[][]>([]);
@@ -257,7 +277,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const syncElapsed = busyPhase === 'sync' ? elapsedSuffix : '';
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
+  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'bh-file', 'manual-name', 'manual-value', 'new-acct-name']);
   const TEXT_INPUT_MODES = new Set<AcctMode>(['edit', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
@@ -661,6 +681,44 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     });
   }
 
+  async function bhLoad(path: string) {
+    if (bhBusy) return;
+    setBhBusy(true);
+    try {
+      const full = resolvePath(path.trim().replace(/^~(?=$|\/)/, process.env.HOME ?? '~'));
+      // Size is checked before reading so a huge file never lands in memory.
+      if (statSync(full).size > BALANCE_IMPORT_MAX_BYTES) {
+        throw new Error(`That file is larger than ${BALANCE_IMPORT_MAX_BYTES / 1024 / 1024} MB, the limit for a balance history import.`);
+      }
+      const text = readFileSync(full, 'utf8');
+      const preview = await previewBalanceImport(text);
+      setBhCsv(text); setBhMap({}); setBhPreview(preview); setBhError('');
+      setAddStep('bh-preview');
+    } catch (e: any) {
+      setBhError(e?.code === 'ENOENT' ? `File not found: ${path.trim()}` : (e?.message ?? String(e)));
+    } finally { setBhBusy(false); }
+  }
+
+  async function bhRecompute(map: Record<string, string | null>) {
+    try {
+      setBhPreview(await previewBalanceImport(bhCsv, { accountMap: map }));
+      setBhMap(map);
+    } catch (e: any) { setBhError(e?.message ?? String(e)); }
+    setAddStep('bh-preview');
+  }
+
+  async function bhCommit() {
+    if (bhBusy || !bhPreview || bhPreview.valid === 0) return;
+    setBhBusy(true);
+    try {
+      setBhResult(await commitBalanceImport(bhCsv, { accountMap: bhMap }));
+      setBhCsv(''); setBhPreview(null);
+      setAddStep('bh-done');
+    } catch (e: any) {
+      setBhError(e?.message ?? String(e));
+    } finally { setBhBusy(false); }
+  }
+
   function tryLoadFile(path: string) {
     try {
       const parsed = parseCSV(path.trim());
@@ -933,6 +991,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('dupes'); return; }
       if (input === 'l') { setDaysInput(String(defaultDays)); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
+      if (input === 'b') { setBhError(''); setAddStep('bh-file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
 
@@ -987,6 +1046,39 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.return) { tryLoadFile(filePath); return; }
       if (key.backspace || key.delete) { setFilePath((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setFilePath((p) => p + input);
+      return;
+    }
+
+    if (addStep === 'bh-file') {
+      if (key.escape) { setAddStep('landing'); return; }
+      if (key.return) { void bhLoad(bhPath); return; }
+      if (key.backspace || key.delete) { setBhPath((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setBhPath((p) => p + input);
+      return;
+    }
+
+    if (addStep === 'bh-preview') {
+      if (key.escape) { setBhCsv(''); setBhPreview(null); setBhMap({}); setAddStep('landing'); return; }
+      if (key.return) { void bhCommit(); return; }
+      if (input === 'm' && bhNames.length > 0) { setBhMapIdx(0); setBhPick(0); setAddStep('bh-map'); return; }
+      return;
+    }
+
+    if (addStep === 'bh-map') {
+      if (key.escape) { setAddStep('bh-preview'); return; }
+      const nOpts = (bhPreview?.accounts.length ?? 0) + 1;
+      if (key.upArrow)   { setBhPick((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setBhPick((c) => Math.min(nOpts - 1, c + 1)); return; }
+      if (key.return && bhPreview) {
+        const next = { ...bhMap, [bhNames[bhMapIdx]]: bhPick === 0 ? null : bhPreview.accounts[bhPick - 1].id };
+        if (bhMapIdx + 1 < bhNames.length) { setBhMap(next); setBhMapIdx(bhMapIdx + 1); setBhPick(0); }
+        else void bhRecompute(next);
+      }
+      return;
+    }
+
+    if (addStep === 'bh-done') {
+      setBhResult(null); setBhPath(''); setAddStep('landing');
       return;
     }
 
@@ -1439,6 +1531,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box flexDirection="column" gap={1} marginTop={1}>
                 <Text color={C_ACCENT}>[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
                 <Text color={C_ACCENT}>[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+                <Text color={C_ACCENT}>[b] Import balance history <Text dimColor>Past balances from a date,account,balance file</Text></Text>
                 <Text color={C_ACCENT}>[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
                 <Text color={syncStatus === 'syncing' ? C_WARNING : C_ACCENT}>
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
@@ -1558,6 +1651,81 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               {(linkStatus === 'done' || linkStatus === 'error') && (
                 <Text dimColor>Press Enter to return.</Text>
               )}
+            </Box>
+          )}
+
+          {addStep === 'bh-file' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Import balance history</Text>
+              <Text dimColor>Enter the path to a CSV with columns: date (YYYY-MM-DD), account name, balance. For credit cards and loans, enter the amount owed as a positive number.</Text>
+              <Box gap={1}><Text>Path: </Text><TextInput value={bhPath} color={C_WARNING} /></Box>
+              {bhError && <Text color={C_NEGATIVE}>{bhError}</Text>}
+              <Text dimColor>Press Enter to preview · Esc back</Text>
+            </Box>
+          )}
+
+          {addStep === 'bh-preview' && bhPreview && (() => {
+            const p = bhPreview;
+            const CAP = 5;
+            const reasonSummary = summarizeSkips(p.skipped);
+            const more = (n: number) => n > CAP ? <Text dimColor>+{n - CAP} more</Text> : null;
+            return (
+              <Box flexDirection="column" marginTop={1} gap={1}>
+                <Text bold>Import balance history — preview <Text dimColor>(nothing written yet)</Text></Text>
+                <Text>
+                  <Text color={C_POSITIVE}>{p.willInsert}</Text> balances will be added, <Text color={C_WARNING}>{p.willOverwrite.count}</Text> will replace existing values, <Text dimColor>{p.skipped.length}</Text> skipped{p.skipped.length > 0 ? ` (${reasonSummary})` : ''}
+                </Text>
+                {p.skipped.length > 0 && (
+                  <Box flexDirection="column">
+                    <Text bold dimColor>Skipped</Text>
+                    {p.skipped.slice(0, CAP).map((s) => <Text key={s.line} dimColor>line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</Text>)}
+                    {more(p.skipped.length)}
+                  </Box>
+                )}
+                {(p.unmatched.length > 0 || p.ambiguous.length > 0) && (
+                  <Box flexDirection="column">
+                    <Text bold dimColor>Unmatched account names</Text>
+                    {p.unmatched.slice(0, CAP).map((u) => <Text key={u.name} color={C_WARNING}>{u.name} <Text dimColor>({u.rows} {u.rows === 1 ? 'row' : 'rows'})</Text></Text>)}
+                    {more(p.unmatched.length)}
+                    {p.ambiguous.slice(0, CAP).map((a) => <Text key={a.name} color={C_WARNING}>{a.name} <Text dimColor>(ambiguous: {a.candidates.map((c) => c.name).join(', ')})</Text></Text>)}
+                    {more(p.ambiguous.length)}
+                  </Box>
+                )}
+                {p.overwriteSample.length > 0 && (
+                  <Box flexDirection="column">
+                    <Text bold dimColor>Will replace</Text>
+                    {p.overwriteSample.slice(0, CAP).map((o, i) => (
+                      <Text key={i} dimColor>{o.accountName} {o.date}: {o.oldBalance.toFixed(2)} → {o.newBalance.toFixed(2)}</Text>
+                    ))}
+                    {more(p.willOverwrite.count)}
+                  </Box>
+                )}
+                {p.warnings.map((w, i) => <Text key={i} color={C_WARNING}>{w}</Text>)}
+                {bhError && <Text color={C_NEGATIVE}>{bhError}</Text>}
+                {p.valid === 0 && <Text color={C_NEGATIVE}>No valid rows to import.</Text>}
+                <Text dimColor>
+                  {p.valid > 0 ? 'Enter import · ' : ''}{bhNames.length > 0 ? '[m] map accounts · ' : ''}Esc cancel
+                </Text>
+              </Box>
+            );
+          })()}
+
+          {addStep === 'bh-map' && bhPreview && bhNames[bhMapIdx] !== undefined && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>Map "{bhNames[bhMapIdx]}" <Text dimColor>({bhMapIdx + 1} of {bhNames.length})</Text></Text>
+              <Text dimColor>↑↓ select · Enter confirm · Esc back (this import only)</Text>
+              <Box flexDirection="column" marginTop={1}>
+                {['Skip these rows', ...bhPreview.accounts.map((a) => a.name)].map((label, i) => (
+                  <Text key={i} color={i === bhPick ? C_ACCENT : undefined} dimColor={i !== bhPick}>{i === bhPick ? '› ' : '  '}{label}</Text>
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {addStep === 'bh-done' && bhResult && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold color={C_POSITIVE}>Net worth history updated. Added {bhResult.inserted}, replaced {bhResult.overwritten}, skipped {bhResult.skipped}.</Text>
+              <Text dimColor>Press any key to return</Text>
             </Box>
           )}
 
