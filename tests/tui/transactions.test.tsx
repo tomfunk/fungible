@@ -42,7 +42,7 @@ import { db } from '../../core/db.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
-import { waitFor, frame, flatFrame } from '../helpers/waitFor.js';
+import { waitFor, frame, flatFrame, press } from '../helpers/waitFor.js';
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
@@ -59,11 +59,6 @@ describe('Transactions', () => {
       </W>,
     );
   }
-
-  it('renders Transactions title', () => {
-    const r = txns();
-    expect(frame(r)).toContain('Transactions');
-  });
 
   it('renders column headers', () => {
     const r = txns();
@@ -92,13 +87,15 @@ describe('Transactions', () => {
 
   it('filters to only May transactions when date filter applied', async () => {
     const r = txns();
-    await waitFor(() => {
-      const f = frame(r);
-      // April-only transaction should not appear
-      expect(f).not.toContain('tx-groc-apr');
-      // May transactions should appear
-      expect(f).toContain('Whole Foods');
-    });
+    await waitFor(() => expect(frame(r)).toContain('2026-05-06'));
+    const f = frame(r);
+    // The seed has both months; only the May rows survive the from/to range.
+    expect(f).toContain('2026-05-14');
+    expect(f).toContain('2026-05-01');
+    expect(f).not.toContain('2026-04-08');
+    expect(f).not.toContain('2026-04-15');
+    expect(f).not.toContain('2026-04-01');
+    expect(f).toMatch(/6 transactions/);
   });
 
   it('/ key enters search mode', async () => {
@@ -108,14 +105,41 @@ describe('Transactions', () => {
     await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
   });
 
-  it('s key cycles sort order label', async () => {
+  it('s walks the sort cycle: header glyph moves to the sorted column and rows reorder', async () => {
     const r = txns();
-    await waitFor(() => expect(frame(r)).toContain('DATE'));
-    // Initial sort is 'date-desc', header shows '↓'
-    expect(frame(r)).toContain('↓');
-    r.stdin.write('s');
-    // After one press → date-asc, shows '↑'
-    await waitFor(() => expect(frame(r)).toContain('↑'));
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    const merchants = ['Trader Joes', 'Amazon', 'Sweetgreen', 'Whole Foods', 'Con Edison', 'Direct Deposit'];
+    // Merchants in the order they appear top to bottom in the list.
+    const order = () => {
+      const f = frame(r);
+      return merchants
+        .map((m) => ({ m, i: f.indexOf(m) }))
+        .filter((x) => x.i >= 0)
+        .sort((x, y) => x.i - y.i)
+        .map((x) => x.m);
+    };
+    const header = () => frame(r).split('\n').find((l) => l.includes('DESCRIPTION'))!;
+    const SORTS: { glyph: RegExp; order: string[] }[] = [
+      { glyph: /DATE ↓/, order: ['Trader Joes', 'Amazon', 'Sweetgreen', 'Whole Foods', 'Con Edison', 'Direct Deposit'] },
+      { glyph: /DATE ↑/, order: ['Direct Deposit', 'Con Edison', 'Whole Foods', 'Sweetgreen', 'Amazon', 'Trader Joes'] },
+      { glyph: /DESCRIPTION ↑/, order: ['Amazon', 'Con Edison', 'Direct Deposit', 'Sweetgreen', 'Trader Joes', 'Whole Foods'] },
+      { glyph: /DESCRIPTION ↓/, order: ['Whole Foods', 'Trader Joes', 'Sweetgreen', 'Direct Deposit', 'Con Edison', 'Amazon'] },
+      { glyph: /AMOUNT ↓/, order: ['Whole Foods', 'Con Edison', 'Trader Joes', 'Sweetgreen', 'Amazon', 'Direct Deposit'] },
+      { glyph: /AMOUNT ↑/, order: ['Direct Deposit', 'Amazon', 'Sweetgreen', 'Trader Joes', 'Con Edison', 'Whole Foods'] },
+      { glyph: /CATEGORY ↑/, order: ['Con Edison', 'Sweetgreen', 'Trader Joes', 'Whole Foods', 'Direct Deposit', 'Amazon'] },
+      { glyph: /CATEGORY ↓/, order: ['Amazon', 'Direct Deposit', 'Trader Joes', 'Whole Foods', 'Sweetgreen', 'Con Edison'] },
+    ];
+    // Income is stored negative, so amount-desc lists spending largest-first and
+    // Direct Deposit lands last. The two Grocery rows keep date-desc order on a tie.
+    for (let i = 0; i < SORTS.length; i++) {
+      if (i > 0) await press(r, 's');
+      await waitFor(() => expect(header()).toMatch(SORTS[i].glyph));
+      expect(order()).toEqual(SORTS[i].order);
+    }
+    // One more press wraps back to the default sort.
+    await press(r, 's');
+    await waitFor(() => expect(header()).toMatch(/DATE ↓/));
+    expect(order()).toEqual(SORTS[0].order);
   });
 
   it('Escape navigates back to dashboard', async () => {
@@ -297,18 +321,6 @@ describe('Transactions', () => {
       const f = frame(r);
       expect(f).toMatch(/May 2026/);
     });
-  });
-
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W>
-        <Transactions onNavigate={onNavigate} showHints={false} initialFilter={MAY_DATE_FILTER} />
-      </W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Transactions'));
-    r.stdin.write('4'); // networth
-    expect(onNavigate).toHaveBeenCalledWith('networth');
   });
 
   it('Enter opens the edit panel for the selected transaction', async () => {

@@ -31,12 +31,6 @@ describe('Tags', () => {
     );
   }
 
-  it('renders app title and screen header', () => {
-    const r = tags();
-    expect(frame(r)).toContain('fungible');
-    expect(frame(r)).toContain('Tags');
-  });
-
   it('shows seeded tags after load', async () => {
     const r = tags();
     await waitFor(() => {
@@ -93,16 +87,6 @@ describe('Tags', () => {
       expect(f).not.toContain('travelxyz');
       expect(f).toContain('travel');
     });
-  });
-
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W><Tags onNavigate={onNavigate} showHints={false} /></W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Tags'));
-    r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
 
   // A tag rarely represents actual income (e.g. a reimbursement is inflow,

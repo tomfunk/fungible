@@ -33,13 +33,6 @@ describe('Health', () => {
     );
   }
 
-  it('renders app title and screen header', () => {
-    const r = health();
-    const f = frame(r);
-    expect(f).toContain('fungible');
-    expect(f).toContain('Financial Health');
-  });
-
   it('shows SNAPSHOT section', async () => {
     const r = health();
     await waitFor(() => expect(frame(r)).toContain('SNAPSHOT'));
@@ -58,16 +51,6 @@ describe('Health', () => {
   it('shows ASSUMPTIONS section', async () => {
     const r = health();
     await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
-  });
-
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W><Health onNavigate={onNavigate} showHints={false} /></W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Financial Health'));
-    r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
 
   it('Enter opens dial edit mode showing cursor', async () => {

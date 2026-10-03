@@ -25,7 +25,8 @@ import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
-import { waitFor, frame } from '../helpers/waitFor.js';
+import { waitFor, frame, press } from '../helpers/waitFor.js';
+import { SCREEN_NAV } from '../helpers/screenNav.js';
 import { useSeededScreenDb } from './helpers/screenSetup.js';
 
 useSeededScreenDb();
@@ -40,35 +41,57 @@ describe('App', () => {
     });
   });
 
-  it('pressing 2 switches to Transactions screen', async () => {
+  // A datum unique to each screen (seeded data, or a section label that only
+  // renders once the screen's own load has run) pairs with the header word,
+  // since several header words also appear in other screens' body text
+  // (e.g. 'Accounts' in the Net Worth import hint).
+  const SCREEN_DATUM: Record<string, string> = {
+    settings: 'HOUSEHOLD',
+    dashboard: 'SPENDING BY CATEGORY',
+    // Dashboard hands over its current-month (Oct) filter, so the seeded May
+    // rows are out of range here; the empty-list footer is what identifies the list.
+    transactions: '0 transactions',
+    trends: 'avg/month',
+    networth: 'Total assets',
+    tags: 'travel',
+    health: 'SNAPSHOT',
+    rules: 'Whole Foods',
+    accounts: 'Test Visa',
+    canvas: 'INPUTS',
+  };
+
+  it.each(SCREEN_NAV)('pressing $digit from Dashboard shows $screen', async ({ digit, screen, header }) => {
     const r = render(<App />);
-    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
-    r.stdin.write('2');
-    await waitFor(() => expect(frame(r)).toContain('Transactions'));
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+    await press(r, digit);
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain(header);
+      expect(f).toContain(SCREEN_DATUM[screen]);
+      // Digit 1 is Dashboard itself (a no-op); every other digit must leave it.
+      if (digit !== '1') expect(f).not.toContain('Dashboard');
+    }, 2000);
   });
 
-  it('pressing 1 from Transactions returns to Dashboard', async () => {
-    const r = render(<App />);
-    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
-    r.stdin.write('2');
-    await waitFor(() => expect(frame(r)).toContain('Transactions'));
-    r.stdin.write('1');
-    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
-  });
-
-  it('h key toggles hint text', async () => {
+  it('h toggles the nav hints on and off', async () => {
     const r = render(<App />);
     await waitFor(() => expect(frame(r)).toContain('fungible'));
-    // hints off by default — pressing h shows them
-    r.stdin.write('h');
-    await waitFor(() => expect(frame(r)).toContain('[h]'));
-  });
-
-  it('pressing 0 switches to Settings screen', async () => {
-    const r = render(<App />);
-    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
-    r.stdin.write('0');
-    await waitFor(() => expect(frame(r)).toContain('Settings'));
+    // Hints off by default: just the [h] affordance, no per-screen key list.
+    expect(frame(r)).toContain('[h]');
+    expect(frame(r)).not.toContain('[2] txns');
+    await press(r, 'h');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('[2] txns');
+      expect(f).toContain('[0] settings');
+      expect(f).not.toContain('[h]');
+    });
+    await press(r, 'h');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('[h]');
+      expect(f).not.toContain('[2] txns');
+    });
   });
 
   it('digit-nav sweep: every screen renders in the full app with seeded data', async () => {
@@ -101,12 +124,16 @@ describe('App', () => {
       ['0', ['Settings', 'HOUSEHOLD']],
       ['1', ['Dashboard', 'Dining']],
     ];
+    let previous = 'Dashboard';
     for (const [digit, markers] of sweep) {
-      r.stdin.write(digit);
+      await press(r, digit);
+      const left = previous;
       await waitFor(() => {
         const f = frame(r);
         for (const m of markers) expect(f).toContain(m);
+        expect(f).not.toContain(left);
       }, 2000);
+      previous = markers[0];
     }
   });
 });

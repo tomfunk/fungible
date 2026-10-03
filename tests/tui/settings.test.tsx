@@ -111,13 +111,6 @@ describe('Settings', () => {
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
   });
 
-  it('pressing a nav number calls onNavigate', () => {
-    const onNavigate = vi.fn();
-    const r = render(<W><Settings onNavigate={onNavigate} showHints={false} /></W>);
-    r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
-  });
-
   it('loaded profile values appear after async init', async () => {
     vi.mocked(loadProfile).mockResolvedValue({ self: { name: 'Thomas', birthYear: 1990 }, children: [] });
     const r = settings();
