@@ -26,6 +26,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer",
     "test": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest run",
     "test:watch": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest",
+    "test:coverage": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest run --coverage",
     "test:e2e": "electron-vite build && playwright test"
   },
   "license": "MIT",
@@ -58,6 +59,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^5.0.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",

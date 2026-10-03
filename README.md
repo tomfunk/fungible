@@ -154,4 +154,5 @@ Full per-screen keybindings: [`docs/keybindings.md`](docs/keybindings.md).
 - [`docs/keybindings.md`](docs/keybindings.md) — per-screen keyboard reference
 - [`docs/integrations.md`](docs/integrations.md) — HTTP API and MCP server setup, full tool list
 - [`docs/gui.md`](docs/gui.md) — desktop app install, packaging, release flow
+- [`docs/testing.md`](docs/testing.md) — how to run tests and what each kind should assert
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching policy, tests, PRs

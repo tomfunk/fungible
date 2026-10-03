@@ -25,11 +25,17 @@ export async function waitFor(
   const { timeout = 1500, interval = 30, context } =
     typeof opts === 'number' ? { timeout: opts } : opts;
   const deadline = Date.now() + timeout;
+  // Iteration cap alongside the deadline: under a pinned/fake Date the
+  // deadline never passes, so a failing assertion would otherwise spin until
+  // the vitest timeout instead of failing with the last assertion error.
+  const maxIterations = Math.max(1, Math.ceil(timeout / Math.max(1, interval))) + 1;
   let lastErr: unknown;
+  let iterations = 0;
   do {
     try { await assertion(); return; } catch (e) { lastErr = e; }
+    iterations++;
     await new Promise((res) => setTimeout(res, interval));
-  } while (Date.now() < deadline);
+  } while (Date.now() < deadline && iterations < maxIterations);
   const reason = lastErr instanceof Error ? lastErr.message : String(lastErr);
   let extra = '';
   if (context) {
@@ -40,6 +46,16 @@ export async function waitFor(
 
 const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
 
+/** Removes ANSI escape sequences from `text`. */
+export function stripAnsi(text: string | undefined): string {
+  return (text ?? '').replace(ANSI_RE, '');
+}
+
+/** Last frame with ANSI stripped but line structure kept (use flatFrame to collapse whitespace). */
+export function frame(r: Pick<FrameSource, 'lastFrame'>): string {
+  return stripAnsi(r.lastFrame());
+}
+
 /** Minimal shape of an ink-testing-library render result. */
 export interface FrameSource {
   lastFrame(): string | undefined;
@@ -48,7 +64,7 @@ export interface FrameSource {
 
 /** Last frame with ANSI stripped and whitespace collapsed to single spaces. */
 export function flatFrame(r: Pick<FrameSource, 'lastFrame'>): string {
-  return (r.lastFrame() ?? '').replace(ANSI_RE, '').replace(/\s+/g, ' ');
+  return frame(r).replace(/\s+/g, ' ');
 }
 
 /** Waits until the flattened frame contains `text`; timeout error includes the last frame. */

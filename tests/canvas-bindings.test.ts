@@ -40,6 +40,7 @@ vi.mock('../core/settings.js', () => ({
 
 import { evalExpr, computeOutputValues, projectSeries, fmtDialValue, fmtValue, type CanvasSpec, type CanvasElement, type DialDef, type OutputDef, type ProjectionSeriesDef } from '../core/canvas-spec.js';
 import { resolveCanvasBindings, BINDING_KEYS } from '../core/canvas-agent.js';
+import { useFixedClock } from './helpers/fakeClock.js';
 
 const dial = (overrides: Partial<DialDef>): DialDef => ({
   key: 'k', label: 'K', default: 0, step: 1, format: 'dollar', hint: 'h',
@@ -361,6 +362,7 @@ describe('computeOutputValues', () => {
 // ─── resolveCanvasBindings ──────────────────────────────────────────────────────
 
 describe('resolveCanvasBindings', () => {
+  useFixedClock();
   it('overwrites default for every recognized binding key with the live value', async () => {
     const spec = specWith([
       dial({ key: 'income', default: 1, binding: 'monthly_income_12mo_avg' }),
@@ -389,7 +391,7 @@ describe('resolveCanvasBindings', () => {
     expect(byKey.cc).toBe(1500);
     expect(byKey.loan).toBe(300000);
     expect(byKey.nw).toBe(258500);
-    expect(byKey.self_age).toBe(new Date().getFullYear() - 1990);
+    expect(byKey.self_age).toBe(2026 - 1990);
   });
 
   it('leaves the hardcoded default untouched for a binding that cannot resolve (e.g. no spouse)', async () => {
