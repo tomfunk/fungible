@@ -5,15 +5,14 @@ vi.mock('../core/db.js', async () => {
   return { db: await makeTestDb() };
 });
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { db } from '../core/db.js';
-import { createMcpServer } from '../mcp/create-server.js';
+import { makeMcpClient, type McpTestClient } from './helpers/makeMcpClient.js';
 
 const csv = 'date,account,balance\n2026-01-01,Checking,100\n2026-01-02,Nowhere,5\n';
+let mcp: McpTestClient;
 let client: Client;
-let afterWrite: ReturnType<typeof vi.fn<() => void>>;
-let close: () => Promise<void>;
+let afterWrite: McpTestClient['afterWrite'];
 
 async function count() {
   return Number((await db.execute('SELECT COUNT(*) c FROM balance_history')).rows[0].c);
@@ -25,15 +24,12 @@ beforeEach(async () => {
   await db.execute('DELETE FROM balance_history');
   await db.execute({ sql: 'INSERT INTO accounts (id, name, type) VALUES (?, ?, ?)', args: ['chk', 'Checking', 'depository'] });
   await db.execute({ sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)', args: ['chk', 5000, '2026-05-20'] });
-  afterWrite = vi.fn<() => void>();
-  const server = createMcpServer({ afterWrite });
-  const [ct, st] = InMemoryTransport.createLinkedPair();
-  client = new Client({ name: 'test', version: '1.0.0' });
-  await Promise.all([server.connect(st), client.connect(ct)]);
-  close = async () => { await client.close(); await server.close(); };
+  mcp = await makeMcpClient();
+  client = mcp.client;
+  afterWrite = mcp.afterWrite;
 });
 
-afterEach(async () => { await close(); });
+afterEach(() => mcp.close());
 
 describe('balance import over MCP', () => {
   it('lists both tools with csv required and account_map/today optional', async () => {
