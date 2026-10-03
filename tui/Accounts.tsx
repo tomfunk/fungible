@@ -13,9 +13,9 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { previewBalanceImport, commitBalanceImport, type BalanceImportPreview, type BalanceImportResult, type BalanceImportSkipReason } from '../core/balance-import.js';
+import { previewBalanceImport, commitBalanceImport, BALANCE_IMPORT_SKIP_COPY, BALANCE_IMPORT_MAX_BYTES, summarizeSkips, type BalanceImportPreview, type BalanceImportResult } from '../core/balance-import.js';
 import { getLinkedAccounts, getImportTargets, getLinkedItems, type LinkedAccount, type ImportTarget, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
@@ -685,7 +685,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (bhBusy) return;
     setBhBusy(true);
     try {
-      const text = readFileSync(resolvePath(path.trim().replace(/^~(?=$|\/)/, process.env.HOME ?? '~')), 'utf8');
+      const full = resolvePath(path.trim().replace(/^~(?=$|\/)/, process.env.HOME ?? '~'));
+      // Size is checked before reading so a huge file never lands in memory.
+      if (statSync(full).size > BALANCE_IMPORT_MAX_BYTES) {
+        throw new Error(`That file is larger than ${BALANCE_IMPORT_MAX_BYTES / 1024 / 1024} MB, the limit for a balance history import.`);
+      }
+      const text = readFileSync(full, 'utf8');
       const preview = await previewBalanceImport(text);
       setBhCsv(text); setBhMap({}); setBhPreview(preview); setBhError('');
       setAddStep('bh-preview');
@@ -1662,18 +1667,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'bh-preview' && bhPreview && (() => {
             const p = bhPreview;
             const CAP = 5;
-            const REASON: Record<BalanceImportSkipReason, string> = {
-              no_matching_account: 'no matching account',
-              ambiguous_account: 'ambiguous account name',
-              newer_than_current: 'newer than the current balance',
-              future_date: 'dated in the future',
-              invalid_date: 'invalid date or amount',
-              invalid_amount: 'invalid date or amount',
-              missing_field: 'missing field',
-            };
-            const reasonCounts = new Map<string, number>();
-            for (const s of p.skipped) reasonCounts.set(REASON[s.reason], (reasonCounts.get(REASON[s.reason]) ?? 0) + 1);
-            const reasonSummary = [...reasonCounts].map(([label, n]) => `${n} ${label}`).join(', ');
+            const reasonSummary = summarizeSkips(p.skipped);
             const more = (n: number) => n > CAP ? <Text dimColor>+{n - CAP} more</Text> : null;
             return (
               <Box flexDirection="column" marginTop={1} gap={1}>
@@ -1684,7 +1678,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 {p.skipped.length > 0 && (
                   <Box flexDirection="column">
                     <Text bold dimColor>Skipped</Text>
-                    {p.skipped.slice(0, CAP).map((s) => <Text key={s.line} dimColor>line {s.line}: {REASON[s.reason]}</Text>)}
+                    {p.skipped.slice(0, CAP).map((s) => <Text key={s.line} dimColor>line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</Text>)}
                     {more(p.skipped.length)}
                   </Box>
                 )}

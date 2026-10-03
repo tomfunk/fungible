@@ -694,14 +694,8 @@ async function executeToolImpl(
       return lines.join('\n');
     }
 
-    case 'import_balance_history': {
-      try {
-        const r = await commitBalanceImport(str('csv'), balanceImportOpts(input));
-        return `Imported balance history: ${r.inserted} new, ${r.overwritten} overwritten, ${r.skipped} skipped, across ${r.accountsTouched} account${r.accountsTouched === 1 ? '' : 's'}.`;
-      } catch (e) {
-        return `Import failed, nothing was written: ${e instanceof Error ? e.message : String(e)}`;
-      }
-    }
+    case 'import_balance_history':
+      return (await runBalanceImport(input)).text;
 
     case 'list_accounts': {
       const rows = await getLinkedAccounts();
@@ -1142,8 +1136,34 @@ async function executeToolImpl(
   }
 }
 
+async function runBalanceImport(input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
+  try {
+    const r = await commitBalanceImport(typeof input.csv === 'string' ? input.csv : '', balanceImportOpts(input));
+    return {
+      text: `Imported balance history: ${r.inserted} new, ${r.overwritten} overwritten, ${r.skipped} skipped, across ${r.accountsTouched} account${r.accountsTouched === 1 ? '' : 's'}.`,
+      wrote: r.inserted + r.overwritten > 0,
+    };
+  } catch (e) {
+    return { text: `Import failed, nothing was written: ${e instanceof Error ? e.message : String(e)}`, wrote: false };
+  }
+}
+
+/**
+ * Like executeTool, but also reports whether the call actually changed data,
+ * so callers (MCP afterWrite) can skip refresh hooks after a failed or no-op
+ * write. Fires notifyChange itself only when data changed.
+ */
+export async function executeToolWithEffect(name: string, input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
+  if (name === 'import_balance_history') {
+    // commitBalanceImport already notifies when it writes; no generic notify.
+    return runBalanceImport(input);
+  }
+  const text = await executeToolImpl(name, input);
+  const wrote = WRITE_TOOLS.has(name);
+  if (wrote) notifyChange();
+  return { text, wrote };
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-  const result = await executeToolImpl(name, input);
-  if (WRITE_TOOLS.has(name)) notifyChange();
-  return result;
+  return (await executeToolWithEffect(name, input)).text;
 }

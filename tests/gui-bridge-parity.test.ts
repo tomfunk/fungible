@@ -26,6 +26,7 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   spawn: 'node builtin used by TUI Plaid flow; GUI will use gui/main/plaid-link.ts',
   onRefresh: 'main process subscribes and pushes refresh events over IPC (gui/main/refresh-ipc.ts)',
   notifyChange: 'GUI achieves the same post-sync refresh via its own renderer-side useBumpRefresh()/useRefresh.tsx rather than the main-process notifyChange signal',
+  summarizeSkips: 'pure copy helper in core/balance-import-copy.ts; the GUI renderer imports it directly as a value (browser-safe), no IPC needed',
   generateAllPeriods: 'imported but unused by tui/Trends.tsx; GUI uses getPeriodTotals',
 
   // Agent chat is wired through dedicated IPC channels (gui/main/agent-ipc.ts)

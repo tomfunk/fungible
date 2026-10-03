@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +7,11 @@ import path from 'node:path';
 // test helper schema (composite PK); the upsert must work on both.
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bal-import-'));
 process.env.FUNGIBLE_DATA_DIR = dir;
+
+afterAll(() => {
+  vi.resetModules();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe('balance import on the production schema', () => {
   it('upserts against the real initDb schema', async () => {
@@ -22,6 +27,5 @@ describe('balance import on the production schema', () => {
     const rows = (await db.execute("SELECT balance FROM balance_history WHERE account_id='a' AND date='2026-01-01'")).rows;
     expect(rows.length).toBe(1);
     expect(Number(rows[0].balance)).toBe(2);
-    vi.resetModules();
   });
 });

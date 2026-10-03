@@ -1,33 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modal.js';
-import type { BalanceImportPreview, BalanceImportResult, BalanceImportSkipReason } from '../../../../core/balance-import.js';
+import type { BalanceImportPreview, BalanceImportResult } from '../../../../core/balance-import.js';
+import { BALANCE_IMPORT_SKIP_COPY, summarizeSkips } from '../../../../core/balance-import-copy.js';
 import styles from '../screens/Accounts.module.css';
 
-// Same copy as the TUI's balance-history import (parity is required).
-export const SKIP_REASON_COPY: Record<BalanceImportSkipReason, string> = {
-  no_matching_account: 'no matching account',
-  ambiguous_account: 'ambiguous account name',
-  newer_than_current: 'newer than the current balance',
-  future_date: 'dated in the future',
-  invalid_date: 'invalid date or amount',
-  invalid_amount: 'invalid date or amount',
-  missing_field: 'missing field',
-};
-
-const SKIPPED_LIST_CAP = 20;
+export const SKIPPED_LIST_CAP = 20;
 const FORMAT_HELP =
   'date (YYYY-MM-DD), account name, balance. For credit cards and loans, enter the amount owed as a positive number.';
-
-/** Skip reasons collapsed by display copy ("invalid date or amount" merges two). */
-function reasonSummary(skipped: BalanceImportPreview['skipped']): string {
-  const counts = new Map<string, number>();
-  for (const s of skipped) {
-    const label = SKIP_REASON_COPY[s.reason];
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  return [...counts].map(([label, n]) => `${n} ${label}`).join(', ');
-}
 
 export function BalanceHistoryImportModal({
   onClose,
@@ -122,7 +102,7 @@ export function BalanceHistoryImportModal({
           <p>
             {preview.willInsert} balances will be added, {preview.willOverwrite.count} will replace existing values,{' '}
             {preview.skipped.length} skipped
-            {preview.skipped.length > 0 && ` (${reasonSummary(preview.skipped)})`}
+            {preview.skipped.length > 0 && ` (${summarizeSkips(preview.skipped)})`}
           </p>
           {preview.warnings.map((w, i) => (
             <p key={i} className="dim">{w}</p>
@@ -172,7 +152,7 @@ export function BalanceHistoryImportModal({
               <h3 className="sectionLabel">Skipped rows</h3>
               <ul className="dim">
                 {preview.skipped.slice(0, SKIPPED_LIST_CAP).map((s) => (
-                  <li key={s.line}>Line {s.line}: {SKIP_REASON_COPY[s.reason]}</li>
+                  <li key={s.line}>Line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</li>
                 ))}
                 {preview.skipped.length > SKIPPED_LIST_CAP && (
                   <li>…and {preview.skipped.length - SKIPPED_LIST_CAP} more</li>

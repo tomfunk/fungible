@@ -1,8 +1,8 @@
 import { app, dialog, ipcMain } from 'electron';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { parseCSV } from '../../core/csv.js';
-import { BALANCE_IMPORT_MAX_BYTES } from '../../core/balance-import.js';
+import { readBalanceImportFile } from './read-text-file.js';
 import { isPlaidConfigured } from '../../core/plaid.js';
 import { getDefaultDaysRequested } from '../../core/settings.js';
 import { cancelActivePlaidLink, runPlaidLink } from './plaid-link.js';
@@ -39,11 +39,7 @@ const files = {
       properties: ['openFile'],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
-    const path = result.filePaths[0];
-    if (statSync(path).size > BALANCE_IMPORT_MAX_BYTES) {
-      throw new Error(`That file is larger than ${BALANCE_IMPORT_MAX_BYTES / 1024 / 1024} MB, the limit for a balance history import.`);
-    }
-    return { path, fileName: path.split(/[\\/]/).pop() ?? path, text: readFileSync(path, 'utf8') };
+    return readBalanceImportFile(result.filePaths[0]);
   },
   // Writes already-built file content to a user-chosen path. Content is built
   // main-side (registry.transactions.exportTransactionsCsv, backed by

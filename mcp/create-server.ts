@@ -1,12 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { executeTool, WRITE_TOOLS } from '../core/tools.js';
+import { executeToolWithEffect } from '../core/tools.js';
 import { buildCanvasContextSections } from '../core/canvas-history.js';
 
 export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServer {
   async function run(name: string, input: Record<string, unknown>) {
-    const text = await executeTool(name, input);
-    if (opts.afterWrite && WRITE_TOOLS.has(name)) opts.afterWrite();
+    const { text, wrote } = await executeToolWithEffect(name, input);
+    if (opts.afterWrite && wrote) opts.afterWrite();
     return { content: [{ type: 'text' as const, text }] };
   }
   const server = new McpServer({ name: 'fungible', version: '1.0.0' });

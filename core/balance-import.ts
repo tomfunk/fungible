@@ -18,19 +18,16 @@ import { notifyChange } from './refresh.js';
 export const BALANCE_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 export const BALANCE_IMPORT_MAX_ROWS = 50_000;
 
-export type BalanceImportSkipReason =
-  | 'no_matching_account'
-  | 'ambiguous_account'
-  | 'newer_than_current'
-  | 'future_date'
-  | 'invalid_date'
-  | 'invalid_amount'
-  | 'missing_field';
+import {
+  BALANCE_IMPORT_SKIP_REASONS,
+  BALANCE_IMPORT_SKIP_COPY,
+  summarizeSkips,
+  type BalanceImportSkipReason,
+} from './balance-import-copy.js';
 
-export const BALANCE_IMPORT_SKIP_REASONS: readonly BalanceImportSkipReason[] = [
-  'no_matching_account', 'ambiguous_account', 'newer_than_current',
-  'future_date', 'invalid_date', 'invalid_amount', 'missing_field',
-];
+export { BALANCE_IMPORT_SKIP_REASONS, BALANCE_IMPORT_SKIP_COPY, summarizeSkips };
+export type { BalanceImportSkipReason };
+
 
 export type BalanceImportSkip = {
   line: number;
@@ -216,7 +213,7 @@ async function resolveBalanceImport(csvText: string, opts: BalanceImportOptions 
   const today = opts.today ?? localToday();
   const parsed = parseBalanceCsv(csvText);
 
-  const accountRows = (await db.execute('SELECT id, name, nickname, type, excluded FROM accounts')).rows as unknown as AccountRow[];
+  const accountRows = (await db.execute('SELECT id, name, nickname, type, excluded FROM accounts ORDER BY name, id')).rows as unknown as AccountRow[];
   const byId = new Map(accountRows.map((a) => [a.id, a]));
   const byName = new Map<string, Set<string>>();
   const addName = (n: string | null, id: string) => {
@@ -262,7 +259,7 @@ async function resolveBalanceImport(csvText: string, opts: BalanceImportOptions 
     if (accountMap.has(key)) {
       const mapped = accountMap.get(key);
       if (mapped === null) {
-        skip(r, 'no_matching_account', `Line ${r.line}: "${r.account}" is mapped to skip.`);
+        skip(r, 'user_skipped', `Line ${r.line}: "${r.account}" was skipped by you.`);
         continue;
       }
       if (mapped && byId.has(mapped)) accountId = mapped;
