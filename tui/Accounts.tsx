@@ -175,6 +175,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [fileError, setFileError] = useState('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<string[][]>([]);
+  const [csvLines, setCsvLines] = useState<number[]>([]);
   const [csvFile, setCsvFile] = useState<{ name: string; hash: string }>({ name: '', hash: '' });
   // Prior imports of the exact same bytes, looked up when the file is loaded.
   const [priorImports, setPriorImports] = useState<ImportRow[]>([]);
@@ -726,6 +727,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (!parsed.headers.length) { setFileError('No columns found'); return; }
       setHeaders(parsed.headers);
       setCsvRows(parsed.rows);
+      setCsvLines(parsed.lines);
       setCsvFile({ name: parsed.fileName, hash: parsed.fileHash });
       void getImportsOfFile(parsed.fileHash).then(setPriorImports);
       setFileError('');
@@ -746,7 +748,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     void importCsvTransactions(csvRows, acct.id, {
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
-    }, csvFile).then((result) => {
+    }, csvFile, csvLines).then((result) => {
       void getImports().then(setImports);
       setImportResult(result);
       setAddStep('done');
@@ -1933,7 +1935,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 <Box flexDirection="column">
                   <Text color={C_WARNING}>{summarizeCsvSkips(importResult.skippedRows)}</Text>
                   {importResult.skippedRows.slice(0, 5).map((s) => (
-                    <Text key={s.rowIndex} dimColor>  line {s.rowIndex + 2}: {CSV_SKIP_COPY[s.reason]}</Text>
+                    <Text key={s.rowIndex} dimColor>  line {s.line ?? s.rowIndex + 2}: {CSV_SKIP_COPY[s.reason]}</Text>
                   ))}
                   {importResult.skippedRows.length > 5 && (
                     <Text dimColor>  …and {importResult.skippedRows.length - 5} more</Text>

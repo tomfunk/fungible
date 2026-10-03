@@ -12,6 +12,8 @@ import {
 } from '../core/imports.js';
 import { parseCSV } from '../core/csv.js';
 import { useTempCsv } from './helpers/tempCsv.js';
+
+const { csv } = useTempCsv('imports-');
 import { getAccountsWithBalances, getNetWorthHistory } from '../core/queries.js';
 
 const CFG: ImportConfig = {
@@ -388,7 +390,6 @@ describe('deleteAccount', () => {
 });
 
 describe('importCsvTransactions bad rows are skipped and reported', () => {
-  const { csv } = useTempCsv('bad-rows-');
   const FILE = [
     'Date,Name,Amount',
     '2025-01-02,GOOD ONE,$4.50',        // 0 good
@@ -406,9 +407,9 @@ describe('importCsvTransactions bad rows are skipped and reported', () => {
     const result = await importFile(rows());
     expect(result.imported).toBe(2);
     expect(result.skippedRows).toEqual([
-      { rowIndex: 1, reason: 'bad_amount' }, { rowIndex: 2, reason: 'bad_amount' },
-      { rowIndex: 3, reason: 'empty_amount' }, { rowIndex: 4, reason: 'bad_date' },
-      { rowIndex: 5, reason: 'missing_name' },
+      { rowIndex: 1, line: 3, reason: 'bad_amount' }, { rowIndex: 2, line: 4, reason: 'bad_amount' },
+      { rowIndex: 3, line: 5, reason: 'empty_amount' }, { rowIndex: 4, line: 6, reason: 'bad_date' },
+      { rowIndex: 5, line: 7, reason: 'missing_name' },
     ]);
     expect(result.skipped).toBe(result.skippedRows.length);
     const tx = await txRows('chase');
@@ -452,7 +453,7 @@ describe('importCsvTransactions bad rows are skipped and reported', () => {
     const r = await importFile(noisy, 'chase', { name: 'noisy.csv', hash: 'h-noisy' });
     expect(r.imported).toBe(0);
     expect(r.skippedRows).toEqual([
-      { rowIndex: 0, reason: 'duplicate' }, { rowIndex: 1, reason: 'bad_amount' }, { rowIndex: 2, reason: 'duplicate' },
+      { rowIndex: 0, line: 2, reason: 'duplicate' }, { rowIndex: 1, line: 3, reason: 'bad_amount' }, { rowIndex: 2, line: 4, reason: 'duplicate' },
     ]);
     expect(await txRows('chase')).toHaveLength(2);
   });
@@ -469,14 +470,47 @@ describe('importCsvTransactions bad rows are skipped and reported', () => {
   it('a row with both a missing name and a bad date reports missing_name', async () => {
     await account('chase');
     const r = await importFile([['13/45/2024', '', '5.00']]);
-    expect(r.skippedRows).toEqual([{ rowIndex: 0, reason: 'missing_name' }]);
+    expect(r.skippedRows).toEqual([{ rowIndex: 0, line: 2, reason: 'missing_name' }]);
   });
 
   it('a whitespace-only name is missing_name; surrounding whitespace is trimmed on store', async () => {
     await account('chase');
     const r = await importFile([['2025-01-02', '   ', '5.00'], ['2025-01-03', ' ACME ', '6.00']]);
-    expect(r.skippedRows).toEqual([{ rowIndex: 0, reason: 'missing_name' }]);
+    expect(r.skippedRows).toEqual([{ rowIndex: 0, line: 2, reason: 'missing_name' }]);
     expect((await txRows('chase')).map((t) => t.name)).toEqual(['ACME']);
+  });
+
+  it('reports the true source line after a blank line and an embedded-newline row', async () => {
+    await account('chase');
+    const parsed = parseCSV(csv([
+      'Date,Name,Amount',
+      '',
+      '2025-01-02,"Two\nLine",4.50',   // line 3-4, rowIndex 0
+      '2025-01-03,BAD,abc',             // line 5, rowIndex 1
+      '',
+      '13/45/2024,X,1.00',              // line 7, rowIndex 2
+    ].join('\n')));
+    const r = await importCsvTransactions(parsed.rows, 'chase', CFG, { name: 'q.csv', hash: 'h-q' }, parsed.lines);
+    expect(r.imported).toBe(1);
+    expect(r.skippedRows).toEqual([
+      { rowIndex: 1, line: 5, reason: 'bad_amount' },
+      { rowIndex: 2, line: 7, reason: 'bad_date' },
+    ]);
+  });
+
+  it('a clean file imported twice adds nothing and keeps ids and dedup keys stable', async () => {
+    await account('chase');
+    const parsed = parseCSV(csv('Date,Name,Amount\n2025-01-02,Coffee,4.50\n2025-01-02,Coffee,4.50\n2025-01-03,Rent,1000.00'));
+    const first = await importCsvTransactions(parsed.rows, 'chase', CFG, { name: 'c.csv', hash: 'h-c' }, parsed.lines);
+    const snapshot = await txRows('chase');
+    // Independently written expectations (not via dedupKey()).
+    expect(snapshot.map((t) => t.id)).toEqual([0, 1, 2].map((n) => `csv-${first.importId}-${n}`));
+    expect(snapshot.map((t) => t.dedup_key).sort()).toEqual(
+      ['2025-01-02|coffee|450|0', '2025-01-02|coffee|450|1', '2025-01-03|rent|100000|0']);
+    const again = await importCsvTransactions(parsed.rows, 'chase', CFG, { name: 'c.csv', hash: 'h-c' }, parsed.lines);
+    expect(again.imported).toBe(0);
+    expect(again.skippedRows.every((s) => s.reason === 'duplicate')).toBe(true);
+    expect(await txRows('chase')).toEqual(snapshot);
   });
 
   it('split mode: blank debit and credit is skipped as empty_amount, not imported as 0', async () => {
@@ -486,6 +520,6 @@ describe('importCsvTransactions bad rows are skipped and reported', () => {
       [['2025-01-02', 'A', '4.50', ''], ['2025-01-03', 'B', '', ''], ['2025-01-04', 'C', '', '20.00']],
       'chase', cfg, { name: 's.csv', hash: 'h-s' });
     expect(r.imported).toBe(2);
-    expect(r.skippedRows).toEqual([{ rowIndex: 1, reason: 'empty_amount' }]);
+    expect(r.skippedRows).toEqual([{ rowIndex: 1, line: 3, reason: 'empty_amount' }]);
   });
 });
