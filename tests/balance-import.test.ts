@@ -40,6 +40,16 @@ beforeEach(async () => {
   await bal('chk', '2026-05-20', 5000);
 });
 
+describe('tokenizeCsv unterminated quote', () => {
+  it('returns best-effort records instead of throwing (balance import relies on this)', async () => {
+    const { tokenizeCsv } = await import('../core/balance-import.js');
+    const recs = tokenizeCsv('date,account,balance\n2025-01-01,"Chase,100\n2025-01-02,Amex,5');
+    expect(recs[0].fields).toEqual(['date', 'account', 'balance']);
+    expect(recs).toHaveLength(2);
+    expect(recs[1].fields[0]).toBe('2025-01-01');
+  });
+});
+
 describe('parser edge cases', () => {
   it.each([
     ['BOM', '﻿date,account,balance\n2026-01-01,Checking,100\n'],

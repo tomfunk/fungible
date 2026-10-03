@@ -1,6 +1,7 @@
 export type CsvSkipReason = 'bad_amount' | 'empty_amount' | 'bad_date' | 'missing_name' | 'duplicate';
 
-export type CsvSkippedRow = { rowIndex: number; reason: CsvSkipReason };
+/** `rowIndex` is 0-based among data rows (part of stored ids); `line` is the 1-based source line (always set by importCsvTransactions; optional so UI fixtures may omit it). */
+export type CsvSkippedRow = { rowIndex: number; line?: number; reason: CsvSkipReason };
 
 /** Plain-language label for each skip reason, shared by every surface. */
 export const CSV_SKIP_COPY: Record<CsvSkipReason, string> = {
