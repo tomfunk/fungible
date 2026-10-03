@@ -35,12 +35,13 @@ Personal finance, keyboard-first. Available as a **terminal UI** or a **desktop 
 
 - **Plaid sync** — connect bank accounts and pull transactions automatically; 15-min debounce with force-sync option
 - **CSV import** — import statement exports from any bank with flexible column mapping
+- **Balance history import** — load past balances from a `date,account,balance` CSV to fill in net worth history
 - **Manual assets** — track a house, car, or other asset by name and value
 - **Category & name rules** — substring or regex rules that auto-categorize and rename transactions; survives re-syncs
 - **Spending flexibility** — tag categories as fixed / flexible / discretionary; see breakdown on Dashboard
 - **Scorecard** — categories flagged over / under the typical month against a 12-month median baseline, with a net verdict and optional delta columns (prior period, same period last year, 12-month average); heat-map coloring
 - **Tags** — label transactions across accounts (trips, projects, events) and view summaries by tag
-- **Net worth** — balance history with asset/liability breakdown; by account or by type
+- **Net worth** — balance history with asset/liability breakdown; by account or by type; import earlier balances from CSV
 - **Financial health** — cash and liquid runway, FIRE number and progress, years to retirement with adjustable assumptions
 - **Trends** — bar charts for expenses, income, net, or any category; per-range aggregation
 - **Regex search** — shared across Dashboard, Transactions, and Trends

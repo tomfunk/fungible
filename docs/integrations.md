@@ -112,6 +112,8 @@ Same set across MCP and HTTP.
 | `get_drift` | Per-category spending deltas vs prior period, last year, and typical-month avg (12 complete calendar periods, elapsed-day-clipped) |
 | `get_trends` | Month-by-month spending trends for the last N months |
 | `get_net_worth_history` | Net worth over time grouped by day, week, month, quarter, or year |
+| `preview_balance_import` | Dry-run a balance-history CSV (inline `csv`, optional `account_map`, `today`); read-only |
+| `import_balance_history` | Import balance history from inline CSV into existing accounts; write tool (the in-app agent asks for confirmation first). Run the preview first |
 | `get_finance_guide` | Opinionated personal finance guidance by topic |
 | `get_screen` | Return the current TUI screen content exactly as the user sees it |
 | `generate_canvas` | Prepare context and schema to build a Canvas; call then render with `show_canvas` |

@@ -98,6 +98,7 @@ import {
 import {
   getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
 } from '../../core/imports.js';
+import { previewBalanceImport, commitBalanceImport } from '../../core/balance-import.js';
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
@@ -228,6 +229,10 @@ export const registry = {
     getImportImpact,
     deleteImport,
     moveImport,
+  },
+  balanceImport: {
+    previewBalanceImport,
+    commitBalanceImport,
   },
   categorize: {
     applyCategoriesToAll,

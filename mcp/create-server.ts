@@ -77,6 +77,28 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('export_transactions', input),
   );
 
+  // ── preview_balance_import / import_balance_history ─────────────────────────
+
+  const balanceImportShape = {
+    csv:         z.string().describe('Inline CSV text with header row: date,account,balance (ISO YYYY-MM-DD dates)'),
+    account_map: z.record(z.string(), z.string().nullable()).optional().describe('Overrides: CSV account name -> account id (from list_accounts), or null to skip those rows'),
+    today:       z.string().optional().describe('Optional YYYY-MM-DD treated as today; rows after it are skipped'),
+  };
+
+  server.tool(
+    'preview_balance_import',
+    "Dry-run a balance-history CSV import (no writes). Accounts are matched by name or nickname and never created; only history older than an account's current balance is importable. Credit and loan balances are the amount owed, positive. Preview first and ask the user about unmatched names before importing.",
+    balanceImportShape,
+    (input) => run('preview_balance_import', input),
+  );
+
+  server.tool(
+    'import_balance_history',
+    "Import balance history from inline CSV (header: date,account,balance) into existing accounts in one atomic write. Existing balances on the same account and date are overwritten. Credit and loan balances are the amount owed, positive. Run preview_balance_import first.",
+    balanceImportShape,
+    (input) => run('import_balance_history', input),
+  );
+
   // ── edit_transaction ────────────────────────────────────────────────────────
 
   server.tool(
