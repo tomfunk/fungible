@@ -28,7 +28,7 @@ import {
 } from '../core/imports.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
-import { fmtSyncedAt } from '../core/fmt.js';
+import { fmtSyncedAt, fmtBalanceAge } from '../core/fmt.js';
 import { handleNavKey } from './nav.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
@@ -1179,7 +1179,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         : acct.item_last_synced_at !== null
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(acct.item_last_synced_at)}</Text></Text>
                         : acct.balance_age
-                        ? <Text color={acct.balance_age.isStale ? C_WARNING : undefined}>{acct.balance_age.days === 0 ? 'updated today' : `updated ${acct.balance_age.days}d ago`}</Text>
+                        ? <Text color={acct.balance_age.isStale ? C_WARNING : undefined}>{fmtBalanceAge(acct.balance_age)}</Text>
                         : acct.last_synced
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
                         : <Text color={C_WARNING}>not synced</Text>

@@ -1259,3 +1259,34 @@ describe('groupAccountsByType / buildTypeToAccountIds', () => {
     expect(buildTypeToAccountIds([], identity).size).toBe(0);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getLinkedAccounts balance_age', () => {
+  const now = new Date('2026-10-02T12:00:00Z');
+
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    await db.execute('DELETE FROM plaid_items');
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('chase', 'Chase', 'depository', 'checking', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('manual-house', 'House', 'other', NULL, 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item-1', 'tok', 'Bank')", args: [] });
+    await db.execute({ sql: "INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item-new', 'tok', 'Fresh Bank')", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, item_id, excluded) VALUES ('plaid-acct', 'Plaid', 'depository', 'checking', 'item-1', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('chase', 10, '2026-08-01')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('chase', 20, '2026-09-22')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('manual-house', 500000, '2026-06-04')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('plaid-acct', 5, '2020-01-01')", args: [] });
+  });
+
+  it('fills balance_age for csv and manual, null for plaid and placeholders', async () => {
+    const linked = await getLinkedAccounts(now);
+    const by = (id: string) => linked.find((a) => a.id === id)!;
+    expect(by('chase').balance_age).toEqual({ days: 10, isStale: false }); // newer row wins
+    expect(by('manual-house').balance_age).toEqual({ days: 120, isStale: false });
+    expect(by('plaid-acct').balance_age).toBeNull();
+    const placeholder = linked.find((a) => a.awaitingFirstSync)!;
+    expect(placeholder.id).toBe('item-new');
+    expect(placeholder.balance_age).toBeNull();
+  });
+});

@@ -43,6 +43,10 @@ import { db } from '../../core/db.js';
 import * as queries from '../../core/queries.js';
 import { useLoadGuard } from '../../tui/useLoadGuard.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
+import { useFixedClock } from '../helpers/fakeClock.js';
+import { seedManualAccount, seedCsvAccount, seedPlaidAccount } from '../helpers/balanceFixtures.js';
+import { useForcedColor, frameHasColor, SGR } from '../helpers/ansi.js';
+import { fmtBalanceAge } from '../../core/fmt.js';
 import { App } from '../../tui/App.js';
 import { Dashboard } from '../../tui/Dashboard.js';
 import { Transactions } from '../../tui/Transactions.js';
@@ -97,9 +101,11 @@ function flat(r: ReturnType<typeof render>): string {
 }
 
 async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
-  const deadline = Date.now() + timeout;
+  // Iteration-bounded (not Date.now()-based) so it still terminates when a
+  // test has pinned Date with useFixedClock.
+  const attempts = Math.max(1, Math.ceil(timeout / 30));
   let lastErr: unknown;
-  while (Date.now() < deadline) {
+  for (let i = 0; i < attempts; i++) {
     try { assertion(); return; } catch (e) { lastErr = e; }
     await new Promise((res) => setTimeout(res, 30));
   }
@@ -2953,31 +2959,70 @@ describe('Accounts', () => {
       expect(flat(r)).toContain('Chase');
     });
 
-    // A manual account has no Plaid item; its balance age (computed by core)
-    // is the only freshness signal, rendered as "updated Nd ago".
-    const daysAgo = (n: number) => {
-      const d = new Date();
-      d.setDate(d.getDate() - n);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    };
-    const addManual = async (id: string, name: string, n: number) => {
-      await db.execute({ sql: `INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, 'other', null)`, args: [id, name] });
-      await db.execute({ sql: `INSERT INTO balance_history (account_id, balance, date) VALUES (?, 500000, ?)`, args: [id, daysAgo(n)] });
-    };
+    // Accounts with no Plaid item show their balance age (computed by core) as
+    // the freshness signal. Stale (yellow) depends on the account's tier: manual
+    // 'other' accounts (house, boat) get the long 120-day tier, so 52 days is
+    // NOT stale for them but is for a CSV/manual depository.
+    describe('balance age', () => {
+      useFixedClock();
+      useForcedColor();
 
-    it('a manual account renders "updated Nd ago" from its balance age', async () => {
-      await addManual('manual-house', 'House', 52);
-      const r = accounts();
-      await waitFor(() => expect(flat(r)).toContain('House'));
-      expect(flat(r)).toContain('updated 52d ago');
-      expect(flat(r)).not.toContain('synced');
-    });
+      const rawFrame = (r: ReturnType<typeof render>) => r.lastFrame() ?? '';
+      /** The rendered line holding `name`, ANSI stripped. */
+      const rowOf = (r: ReturnType<typeof render>, name: string) =>
+        frame(r).split('\n').find((l) => l.includes(name)) ?? '';
 
-    it('a manual account updated today renders "updated today"', async () => {
-      await addManual('manual-boat', 'Boat', 0);
-      const r = accounts();
-      await waitFor(() => expect(flat(r)).toContain('Boat'));
-      expect(flat(r)).toContain('updated today');
+      it('a stale CSV account renders "updated 52d ago" in yellow', async () => {
+        await seedCsvAccount(db, { id: 'csv-brokerage', name: 'CSV Savings', balanceDaysAgo: 52 });
+        const r = accounts();
+        await waitFor(() => expect(flat(r)).toContain('updated 52d ago'));
+        expect(fmtBalanceAge({ days: 52, isStale: true } as never)).toBe('updated 52d ago');
+        expect(frameHasColor(rawFrame(r), 'updated 52d ago', SGR.yellow)).toBe(true);
+        expect(rowOf(r, 'CSV Savings')).not.toContain('synced');
+      });
+
+      it('a stale manual depository renders "updated 52d ago" in yellow', async () => {
+        await seedManualAccount(db, { id: 'manual-cash', name: 'Cash Stash', balanceDaysAgo: 52 });
+        const r = accounts();
+        await waitFor(() => expect(flat(r)).toContain('updated 52d ago'));
+        expect(frameHasColor(rawFrame(r), 'updated 52d ago', SGR.yellow)).toBe(true);
+        expect(rowOf(r, 'Cash Stash')).not.toContain('synced');
+      });
+
+      it('a manual "other" account at 52d is in the long tier: same text, not yellow', async () => {
+        await seedManualAccount(db, { id: 'manual-house', name: 'House', type: 'other', subtype: null, balanceDaysAgo: 52 });
+        const r = accounts();
+        await waitFor(() => expect(flat(r)).toContain('updated 52d ago'));
+        expect(frameHasColor(rawFrame(r), 'updated 52d ago', SGR.yellow)).toBe(false);
+        expect(rowOf(r, 'House')).not.toContain('synced');
+      });
+
+      it('a fresh balance (10d) is not yellow', async () => {
+        await seedCsvAccount(db, { id: 'csv-fresh', name: 'Fresh CSV', balanceDaysAgo: 10 });
+        const r = accounts();
+        await waitFor(() => expect(flat(r)).toContain('updated 10d ago'));
+        expect(frameHasColor(rawFrame(r), 'updated 10d ago', SGR.yellow)).toBe(false);
+      });
+
+      it('a balance from today renders "updated today"', async () => {
+        await seedManualAccount(db, { id: 'manual-boat', name: 'Boat', type: 'other', subtype: null, balanceDaysAgo: 0 });
+        const r = accounts();
+        await waitFor(() => expect(flat(r)).toContain('updated today'));
+        expect(fmtBalanceAge({ days: 0, isStale: false } as never)).toBe('updated today');
+      });
+
+      it('a balance from yesterday renders "updated 1d ago"', async () => {
+        await seedManualAccount(db, { id: 'manual-bike', name: 'Bike', type: 'other', subtype: null, balanceDaysAgo: 1 });
+        const r = accounts();
+        await waitFor(() => expect(flat(r)).toContain('updated 1d ago'));
+      });
+
+      it('a Plaid-linked account shows "synced", never "updated"', async () => {
+        await seedPlaidAccount(db, { id: 'acct-plaid-age', name: 'Plaid Chk', balanceDaysAgo: 52, lastSyncedAt: Date.now() - 5 * 60_000 });
+        const r = accounts();
+        await waitFor(() => expect(rowOf(r, 'Plaid Chk')).toContain('synced'));
+        expect(flat(r)).not.toContain('updated');
+      });
     });
   });
 

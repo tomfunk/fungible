@@ -11,6 +11,9 @@ vi.mock('../../core/db.js', async () => {
 
 import { db } from '../../core/db.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
+import { useFixedClock } from '../helpers/fakeClock.js';
+import { isoDaysAgo } from '../helpers/dates.js';
+import { seedManualAccount, seedCsvAccount, seedPlaidAccount } from '../helpers/balanceFixtures.js';
 import { installBridge, renderScreen, type BridgeHarness } from './helpers/renderGui.js';
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 import { SyncStatusProvider } from '../../gui/renderer/src/hooks/useSyncStatus.js';
@@ -139,48 +142,64 @@ describe('GUI Accounts', () => {
   });
 
   describe('balance age (manual/CSV accounts)', () => {
-    const isoDaysAgo = (n: number) => {
-      const d = new Date();
-      d.setDate(d.getDate() - n);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    };
-    async function makeManual(daysAgo: number) {
-      await db.execute('DELETE FROM balance_history');
-      await db.execute("UPDATE accounts SET item_id = NULL WHERE id = 'test-checking'");
-      await db.execute({
-        sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('test-checking', 100, ?)",
-        args: [isoDaysAgo(daysAgo)],
-      });
+    useFixedClock();
+
+    async function rowFor(name: string) {
+      renderScreen(<Accounts />);
+      return waitFor(() => screen.getByText(name).closest('tr')!);
     }
 
-    it('shows "updated Nd ago" in the warning style when stale', async () => {
-      await makeManual(52);
-      renderScreen(<Accounts />);
-      const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
+    it('CSV depository at 52 days: "updated 52d ago" in the warning style', async () => {
+      await seedCsvAccount(db, { id: 'csv-old', name: 'CSV Old', balanceDaysAgo: 52 });
+      const row = await rowFor('CSV Old');
       const label = within(row).getByText('updated 52d ago');
       expect(label.className).toContain('warn');
       expect(row.textContent).not.toContain('not synced');
     });
 
-    it('shows "updated today" in the muted style when fresh', async () => {
-      await makeManual(0);
-      renderScreen(<Accounts />);
-      const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
-      const label = within(row).getByText('updated today');
+    it('fresh non-zero age (10d) is muted', async () => {
+      await seedCsvAccount(db, { id: 'csv-ten', name: 'CSV Ten', balanceDaysAgo: 10 });
+      const label = within(await rowFor('CSV Ten')).getByText('updated 10d ago');
+      expect(label.className).toContain('dim');
+      expect(label.className).not.toContain('warn');
+    });
+
+    it('0 days: "updated today" in the muted style', async () => {
+      await seedCsvAccount(db, { id: 'csv-today', name: 'CSV Today', balanceDaysAgo: 0 });
+      const label = within(await rowFor('CSV Today')).getByText('updated today');
+      expect(label.className).toContain('dim');
+      expect(label.className).not.toContain('warn');
+    });
+
+    it('1 day: "updated 1d ago"', async () => {
+      await seedCsvAccount(db, { id: 'csv-one', name: 'CSV One', balanceDaysAgo: 1 });
+      expect(within(await rowFor('CSV One')).getByText('updated 1d ago')).toBeTruthy();
+    });
+
+    it('manual investment at 60 days is muted (slow tier, not warn)', async () => {
+      await seedManualAccount(db, { id: 'inv', name: 'Manual Brokerage', type: 'investment', subtype: 'brokerage', balanceDaysAgo: 60 });
+      const label = within(await rowFor('Manual Brokerage')).getByText('updated 60d ago');
       expect(label.className).toContain('dim');
       expect(label.className).not.toContain('warn');
     });
 
     it('keeps the "synced" display for Plaid rows', async () => {
-      await db.execute({
-        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
-        args: ['item-p', 'tok', 'Test Bank', Date.now() - 5 * 60_000],
-      });
-      await db.execute("UPDATE accounts SET item_id = 'item-p' WHERE id = 'test-checking'");
-      renderScreen(<Accounts />);
-      const row = await waitFor(() => screen.getByText('Test Checking').closest('tr')!);
+      await seedPlaidAccount(db, { id: 'plaid-1', name: 'Plaid Acct', balanceDaysAgo: 3, lastSyncedAt: Date.now() - 5 * 60_000 });
+      const row = await rowFor('Plaid Acct');
       expect(row.textContent).not.toContain('updated');
       expect(row.textContent).toContain('synced 5 min ago');
+    });
+
+    it('the newest balance_history row drives the label', async () => {
+      await seedCsvAccount(db, { id: 'csv-multi', name: 'CSV Multi', balanceDaysAgo: 100 });
+      await db.execute({
+        sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)',
+        args: ['csv-multi', 500, isoDaysAgo(2)],
+      });
+      const row = await rowFor('CSV Multi');
+      const label = within(row).getByText('updated 2d ago');
+      expect(label.className).toContain('dim');
+      expect(row.textContent).not.toContain('100d');
     });
   });
 
