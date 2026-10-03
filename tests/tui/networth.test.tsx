@@ -18,7 +18,7 @@ vi.mock('../../core/profile.js', async (importActual) => {
 import { db } from '../../core/db.js';
 import { NetWorth } from '../../tui/NetWorth.js';
 import { Accounts } from '../../tui/Accounts.js';
-import { waitFor, frame } from '../helpers/waitFor.js';
+import { waitFor, frame, press } from '../helpers/waitFor.js';
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 
 useSeededScreenDb();
@@ -31,12 +31,6 @@ describe('NetWorth', () => {
       </W>,
     );
   }
-
-  it('renders app title and screen header', () => {
-    const r = networth();
-    expect(frame(r)).toContain('fungible');
-    expect(frame(r)).toContain('Net Worth');
-  });
 
   it('shows seeded accounts after load', async () => {
     const r = networth();
@@ -62,23 +56,25 @@ describe('NetWorth', () => {
 
   it('Tab cycles to types view', async () => {
     const r = networth();
-    await waitFor(() => expect(frame(r)).toContain('Net Worth'));
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    expect(frame(r)).not.toContain('credit card');
+    await press(r, '\t');
+    // Types view groups by subtype: account names give way to type labels.
     await waitFor(() => {
       const f = frame(r);
-      // types view groups by subtype: checking, savings, credit card, brokerage
-      expect(f).toContain('checking');
+      expect(f).not.toContain('Test Checking');
+      expect(f).not.toContain('Test Visa');
+      expect(f).toContain('credit card');
     });
-  });
+    expect(frame(r)).toContain('Total assets');
 
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W><NetWorth onNavigate={onNavigate} showHints={false} /></W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Net Worth'));
-    r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
+    await press(r, '\t');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Test Checking');
+      expect(f).toContain('Test Visa');
+      expect(f).not.toContain('credit card');
+    });
   });
 
   it('shows an excluded account in a carved-out section, out of Total assets', async () => {

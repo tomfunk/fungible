@@ -20,7 +20,7 @@ import { Dashboard } from '../../tui/Dashboard.js';
 import { Transactions } from '../../tui/Transactions.js';
 import * as syncApi from '../../core/sync.js';
 import { FilterProvider } from '../../tui/FilterContext.js';
-import { waitFor, frame } from '../helpers/waitFor.js';
+import { waitFor, frame, press, pressKeys } from '../helpers/waitFor.js';
 import { W, MAY_FILTER, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 
 useSeededScreenDb();
@@ -35,12 +35,6 @@ describe('Dashboard', () => {
       </W>,
     );
   }
-
-  it('renders app title and screen header', () => {
-    const r = dash();
-    expect(frame(r)).toContain('fungible');
-    expect(frame(r)).toContain('Dashboard');
-  });
 
   it('shows Income / Expenses / Net after data loads', async () => {
     const r = dash();
@@ -97,38 +91,35 @@ describe('Dashboard', () => {
 
   it('Tab cycles to flex view', async () => {
     const r = dash();
-    await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+    await press(r, '\t');
     await waitFor(() => expect(frame(r)).toContain('SPENDING BY FLEXIBILITY'));
+    expect(frame(r)).not.toContain('SPENDING BY CATEGORY');
   });
 
-  it('Tab Tab cycles to account view', async () => {
+  it('Tab Tab cycles to account view and the third Tab wraps to categories', async () => {
     const r = dash();
-    await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\t');
-    r.stdin.write('\t');
-    await waitFor(() => expect(frame(r)).toContain('account'));
-  });
-
-  it('account view shows linked accounts', async () => {
-    const r = dash();
-    await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\t');
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+    await pressKeys(r, ['\t', '\t']);
     await waitFor(() => {
       const f = frame(r);
+      // Account view lists the linked accounts instead of categories.
       expect(f).toContain('Test Checking');
+      expect(f).not.toContain('SPENDING BY CATEGORY');
+      expect(f).not.toContain('SPENDING BY FLEXIBILITY');
     });
+    await press(r, '\t');
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+    expect(frame(r)).not.toContain('Test Checking');
   });
 
   it('owner view is skipped in the Tab cycle when no account has an owner', async () => {
     // Seeded accounts have no owner, so account → Tab should wrap back to categories.
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\t'); // flex
-    r.stdin.write('\t'); // account
+    await pressKeys(r, ['\t', '\t']); // flex, account
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
-    r.stdin.write('\t'); // would be owner, but skipped → categories
+    await press(r, '\t'); // would be owner, but skipped → categories
     await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
     expect(frame(r)).not.toContain('SPENDING BY OWNER');
   });
@@ -137,10 +128,9 @@ describe('Dashboard', () => {
     await db.execute({ sql: "UPDATE accounts SET owner = 'Alex' WHERE id = 'test-checking'", args: [] });
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\t'); // flex
-    r.stdin.write('\t'); // account
+    await pressKeys(r, ['\t', '\t']); // flex, account
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
-    r.stdin.write('\t'); // owner
+    await press(r, '\t'); // owner
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('SPENDING BY OWNER');
@@ -225,8 +215,25 @@ describe('Dashboard', () => {
   it('s key toggles scorecard mode label', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('s');
-    await waitFor(() => expect(frame(r)).toContain('scorecard'));
+    expect(frame(r)).not.toContain('scorecard');
+    expect(frame(r)).not.toContain('VS TYPICAL');
+    await press(r, 's');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('scorecard');
+      expect(f).toContain('VS TYPICAL');
+      // May seed: Grocery and Bills & Utilities run over their typical spend.
+      expect(f).toContain('OVER');
+      expect(f).toContain('TYPICAL ──');
+    });
+
+    await press(r, 's');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('scorecard');
+      expect(f).not.toContain('VS TYPICAL');
+      expect(f).toContain('SPENDING BY CATEGORY');
+    });
   });
 
   it('pressing a nav number calls onNavigate', async () => {
@@ -294,8 +301,7 @@ describe('Dashboard', () => {
       </W>,
     );
     await waitFor(() => expect(frame(r)).toContain('Grocery'));
-    r.stdin.write('\t'); // flex
-    r.stdin.write('\t'); // account
+    await pressKeys(r, ['\t', '\t']); // flex, account
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
     r.stdin.write('\r');
     await waitFor(() =>

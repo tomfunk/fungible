@@ -31,11 +31,8 @@ describe('Rules', () => {
     );
   }
 
-  it('renders app title and section tabs', () => {
-    const r = rules();
-    const f = frame(r);
-    expect(f).toContain('fungible');
-    expect(f).toContain('Rules');
+  it('renders the Rules / Tag Rules / Categories section tabs', () => {
+    const f = frame(rules());
     expect(f).toContain('Tag Rules');
     expect(f).toContain('Categories');
   });
@@ -387,13 +384,4 @@ describe('Rules', () => {
     });
   });
 
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W><Rules onNavigate={onNavigate} showHints={false} /></W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
-    r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
-  });
 });

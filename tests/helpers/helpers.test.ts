@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { waitFor, waitForFrame, pressAndWait, stripAnsi, frame } from './waitFor.js';
+import { waitFor, waitForFrame, pressAndWait, press, pressKeys, stripAnsi, frame } from './waitFor.js';
+import { SCREEN_NAV } from './screenNav.js';
 import { makeFakePlaid, makeFakeLlm } from './makeFakeProvider.js';
 import { makePlaidTx, makePlaidAccount } from './makePlaidTx.js';
 import { seedPlaidItem, seedTx } from './seedDb.js';
@@ -132,5 +133,32 @@ describe('seedPlaidItem / seedTx', () => {
     expect(rows).toMatchObject({ source: 'csv', manual_category: 'Dining', display_name: 'Latte', ignored: 1, pending: 1, original_date: '2024-12-30', amount: -5 });
     expect((await db.execute({ sql: 'SELECT source, pending, ignored FROM transactions WHERE id = ?', args: [a.id] })).rows[0])
       .toMatchObject({ source: 'plaid', pending: 0, ignored: 0 });
+  });
+});
+
+describe('press / pressKeys', () => {
+  it('writes keys as separate, ordered stdin writes with a tick between', async () => {
+    const writes: [string, number][] = [];
+    const r = { stdin: { write: (d: string) => { writes.push([d, Date.now()]); } } };
+    await pressKeys(r, ['a', 'b', 'c']);
+    expect(writes.map((w) => w[0])).toEqual(['a', 'b', 'c']);
+    expect(writes[1][1] - writes[0][1]).toBeGreaterThanOrEqual(10);
+    expect(writes[2][1] - writes[1][1]).toBeGreaterThanOrEqual(10);
+  });
+
+  it('press resolves only after the tick, and pressAndWait uses it', async () => {
+    const t0 = Date.now();
+    const r = { lastFrame: () => 'ready', stdin: { write: () => {} } };
+    await press(r, 'x');
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(10);
+    await pressAndWait(r, 'y', 'ready');
+  });
+});
+
+describe('SCREEN_NAV', () => {
+  it('covers digits 0-9 once each with unique screens and headers', () => {
+    expect(SCREEN_NAV.map((n) => n.digit)).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    expect(new Set(SCREEN_NAV.map((n) => n.screen)).size).toBe(10);
+    expect(new Set(SCREEN_NAV.map((n) => n.header)).size).toBe(10);
   });
 });
