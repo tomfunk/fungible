@@ -241,7 +241,7 @@ export function Accounts() {
         <h1 className={styles.title}>Accounts</h1>
         <div className="tabGroup">
           {TABS.map((t) => (
-            <button key={t} className={t === tab ? 'tabActive' : 'tab'} onClick={() => setTab(t)}>
+            <button key={t} aria-pressed={t === tab} className={t === tab ? 'tabActive' : 'tab'} onClick={() => setTab(t)}>
               {TAB_LABELS[t]}
               {t === 'dupes' && dupes.length > 0 ? ` (${dupes.length})` : ''}
               {t === 'links' && failingItems.size > 0 ? <span className="neg"> ⚠</span> : ''}
