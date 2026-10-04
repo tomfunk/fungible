@@ -17,7 +17,7 @@ vi.mock('../../core/profile.js', async (importActual) => {
 
 import { db } from '../../core/db.js';
 import { Rules } from '../../tui/Rules.js';
-import { waitFor as baseWaitFor, frame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, flatFrame, press, pressKeys } from '../helpers/waitFor.js';
 
 // Screen loads run slower under coverage/CI load; give every wait generous headroom.
 const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
@@ -388,4 +388,92 @@ describe('Rules', () => {
     });
   });
 
+});
+
+describe('Rules: destructive and cycling keys write the expected rows', () => {
+  function rules() {
+    return render(
+      <W>
+        <Rules onNavigate={noop} showHints={false} />
+      </W>,
+    );
+  }
+  const cat = async (name: string) =>
+    (await db.execute({ sql: 'SELECT name, flexibility FROM categories WHERE name = ?', args: [name] })).rows[0];
+
+  it('Categories [x] deletes the category and moves its transactions to Uncategorized', async () => {
+    // Bills & Utilities is the first row (alphabetical) and has one seeded tx; give it a manual override too.
+    await db.execute("UPDATE transactions SET manual_category = 'Bills & Utilities' WHERE id = 'tx-bills-1'");
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await pressKeys(r, ['\t', '\t']);
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    await press(r, 'x');
+    await waitFor(() => expect(flatFrame(r)).toContain('Deleted "Bills & Utilities"'));
+    await waitFor(async () => expect(await cat('Bills & Utilities')).toBeUndefined());
+    const tx = (await db.execute("SELECT category, manual_category FROM transactions WHERE id = 'tx-bills-1'")).rows[0];
+    expect(tx.category).toBe('Uncategorized');
+    expect(tx.manual_category).toBeNull();
+    // other categories untouched
+    expect(await cat('Dining')).toBeDefined();
+    expect((await db.execute("SELECT category FROM transactions WHERE id = 'tx-dining-1'")).rows[0].category).toBe('Dining');
+  });
+
+  it('Tag Rules [x] deletes the rule but leaves already-applied tags in place', async () => {
+    await db.execute("INSERT INTO tag_rules (id, priority, match_type, pattern, tag_id) VALUES (7, 10, 'name', 'Whole Foods', 1)");
+    await db.execute("INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-groc-1', 1)");
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await press(r, '\t');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    expect(frame(r)).not.toContain('No tag rules yet');
+    await press(r, 'x');
+    await waitFor(() => expect(flatFrame(r)).toContain('Tag rule deleted · existing tags left in place'));
+    await waitFor(async () => expect((await db.execute('SELECT id FROM tag_rules')).rows).toHaveLength(0));
+    const tt = (await db.execute('SELECT transaction_id, tag_id FROM transaction_tags')).rows;
+    expect(tt.map((x) => [x.transaction_id, Number(x.tag_id)])).toEqual([['tx-groc-1', 1]]);
+  });
+
+  it('Categories [v] hides then un-hides a category (hidden_categories row)', async () => {
+    const hidden = async () => (await db.execute('SELECT category FROM hidden_categories')).rows.map((x) => x.category);
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await pressKeys(r, ['\t', '\t']);
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    await press(r, 'v');
+    await waitFor(() => expect(flatFrame(r)).toContain('Bills & Utilities is now hidden'));
+    await waitFor(async () => expect(await hidden()).toEqual(['Bills & Utilities']));
+    await press(r, 'v');
+    await waitFor(() => expect(flatFrame(r)).toContain('Bills & Utilities is now visible'));
+    await waitFor(async () => expect(await hidden()).toEqual([]));
+  });
+
+  it('Categories [f] cycles flexibility none -> fixed -> flexible -> discretionary -> none', async () => {
+    // Cursor starts on Bills & Utilities (fixed). Five presses walk the whole cycle and wrap.
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await pressKeys(r, ['\t', '\t']);
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    const expected = ['flexible', 'discretionary', null, 'fixed', 'flexible'];
+    for (const want of expected) {
+      await press(r, 'f');
+      await waitFor(async () => expect((await cat('Bills & Utilities')).flexibility).toBe(want));
+      // wait for the screen's own reload so the next press reads the new value
+      await waitFor(() => expect(flatFrame(r)).toContain(`Bills & Utilities ${want ?? '—'}`));
+    }
+  });
+
+  it('Rules [x] deletes the rule under the cursor, not the first one', async () => {
+    await db.execute("INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (20, 'name', 'Amazon', 'Shopping')");
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Amazon'));
+    // which rule is listed first (the one the cursor starts on)?
+    const rowsOf = () => frame(r).split('\n').filter((l) => /Whole Foods|Amazon/.test(l) && /name|regex/.test(l));
+    const first = /Amazon/.test(rowsOf()[0]) ? 'Amazon' : 'Whole Foods';
+    const second = first === 'Amazon' ? 'Whole Foods' : 'Amazon';
+    await press(r, '\u001b[B');
+    await press(r, 'x');
+    await waitFor(async () => expect((await db.execute('SELECT pattern FROM category_rules')).rows.map((x) => x.pattern)).toEqual([first]));
+    expect(await db.execute({ sql: 'SELECT 1 FROM category_rules WHERE pattern = ?', args: [second] }).then((x) => x.rows.length)).toBe(0);
+  });
 });

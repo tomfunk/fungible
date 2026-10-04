@@ -400,4 +400,28 @@ describe('Dashboard', () => {
     r.stdin.write('S');
     await waitFor(() => expect(frame(r)).toContain('Synced Category'));
   });
+
+  it('[<-]/[->] step the period within the data bounds and stay put at the edges', async () => {
+    const LEFT = '\u001b[D';
+    const RIGHT = '\u001b[C';
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    const flat = () => frame(r).replace(/\s+/g, ' ');
+    expect(flat()).toContain('May 2026');
+    expect(flat()).toContain('$205.00'); // May grocery: 120 + 85
+    await press(r, LEFT);
+    await waitFor(() => expect(flat()).toContain('Apr 2026'));
+    await waitFor(() => expect(flat()).toContain('$100.00')); // April grocery
+    expect(flat()).not.toContain('$205.00');
+    await press(r, LEFT); // March has no data and is before the earliest transaction: no-op
+    await new Promise((res) => setTimeout(res, 100));
+    expect(flat()).toContain('Apr 2026');
+    expect(flat()).not.toContain('Mar 2026');
+    await press(r, RIGHT);
+    await waitFor(() => expect(flat()).toContain('May 2026'));
+    await press(r, RIGHT); // past the latest transaction: no-op
+    await new Promise((res) => setTimeout(res, 100));
+    expect(flat()).toContain('May 2026');
+    expect(flat()).not.toContain('Jun 2026');
+  });
 });
