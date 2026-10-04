@@ -43,7 +43,7 @@ import { db } from '../../core/db.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
-import { waitFor as baseWaitFor, frame, flatFrame, press } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, flatFrame, press, pressKeys } from '../helpers/waitFor.js';
 
 // Screen loads run slower under coverage/CI load; give every wait generous headroom.
 const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
@@ -971,5 +971,124 @@ describe('Transactions', () => {
         expect(f).toContain("isn't applied to the exported file");
       });
     });
+  });
+});
+
+describe('Transactions: row-level keys write the expected rows', () => {
+  const LEFT = '\u001b[D';
+  const RIGHT = '\u001b[C';
+
+  function txns(initialFilter: Parameters<typeof Transactions>[0]['initialFilter'] = { from: '2026-05-01', to: '2026-05-31' }) {
+    return render(
+      <W>
+        <Transactions onNavigate={noop} showHints={false} initialFilter={initialFilter} />
+      </W>,
+    );
+  }
+  async function search(r: ReturnType<typeof render>, text: string) {
+    await press(r, '/');
+    await pressKeys(r, [...text]);
+    await press(r, '\r');
+  }
+  const row = async (id: string) =>
+    (await db.execute({ sql: 'SELECT id, source, category, manual_category FROM transactions WHERE id = ?', args: [id] })).rows[0];
+
+  it.each([
+    ['plaid', false],
+    ['csv', true],
+  ] as const)('[x] on a %s-source row: deleted=%s', async (source, deleted) => {
+    await db.execute({ sql: "UPDATE transactions SET source = ? WHERE id = 'tx-groc-1'", args: [source] });
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await search(r, 'Whole Foods');
+    await waitFor(() => expect(flatFrame(r)).toMatch(/(^|\s)1 transactions?/));
+    await press(r, 'x');
+    if (deleted) {
+      await waitFor(async () => expect(await row('tx-groc-1')).toBeUndefined());
+      await waitFor(() => expect(flatFrame(r)).toMatch(/(^|\s)0 transactions/));
+    } else {
+      await new Promise((res) => setTimeout(res, 150));
+      expect(await row('tx-groc-1')).toBeDefined();
+      expect(flatFrame(r)).toContain('Whole Foods');
+    }
+    // nothing else is ever collateral damage
+    expect(Number((await db.execute('SELECT COUNT(*) c FROM transactions')).rows[0].c)).toBe(deleted ? 8 : 9);
+  });
+
+  it('[c] clears a manual override: status shown, manual_category NULL, category reverts via rules', async () => {
+    await db.execute("UPDATE transactions SET manual_category = 'Dining', category = 'Dining' WHERE id = 'tx-groc-1'");
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await search(r, 'Whole Foods');
+    await waitFor(() => expect(flatFrame(r)).toMatch(/(^|\s)1 transactions?/));
+    await press(r, 'c');
+    await waitFor(() => expect(flatFrame(r)).toContain('Override cleared'));
+    await waitFor(async () => expect((await row('tx-groc-1')).manual_category).toBeNull());
+    expect((await row('tx-groc-1')).category).toBe('Grocery'); // the Whole Foods name rule
+  });
+
+  it('[c] on a row without an override does nothing', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    await search(r, 'Whole Foods');
+    await waitFor(() => expect(flatFrame(r)).toMatch(/(^|\s)1 transactions?/));
+    await press(r, 'c');
+    await new Promise((res) => setTimeout(res, 100));
+    expect(flatFrame(r)).not.toContain('Override cleared');
+    expect((await row('tx-groc-1')).category).toBe('Grocery');
+  });
+
+  it('[G] tags exactly the transactions in the filtered list with a new tag', async () => {
+    const r = txns({}); // no date range: all 9 rows
+    await waitFor(() => expect(flatFrame(r)).toMatch(/9 transactions/));
+    await search(r, 'Whole Foods');
+    await waitFor(() => expect(flatFrame(r)).toMatch(/(^|\s)2 transactions/));
+    await press(r, 'G');
+    await pressKeys(r, [...'newtag']);
+    await waitFor(() => expect(flatFrame(r)).toContain('newtag'));
+    await press(r, '\r');
+    await waitFor(() => expect(flatFrame(r)).toContain('Tagged 2 transactions'));
+    const tag = (await db.execute("SELECT id FROM tags WHERE name = 'newtag'")).rows[0];
+    expect(tag).toBeDefined();
+    await waitFor(async () => {
+      const ids = (await db.execute({ sql: 'SELECT transaction_id FROM transaction_tags WHERE tag_id = ? ORDER BY transaction_id', args: [tag.id] })).rows.map((x) => x.transaction_id);
+      expect(ids).toEqual(['tx-groc-1', 'tx-groc-apr']);
+    });
+  });
+
+  it('[<-]/[->] step the month within the data bounds and stay put at the edges', async () => {
+    const r = txns(); // May 2026; data spans 2026-04-01 .. 2026-05-14
+    await waitFor(() => expect(flatFrame(r)).toContain('Amazon'));
+    await press(r, LEFT);
+    await waitFor(() => expect(flatFrame(r)).toContain('$100.00'));
+    expect(flatFrame(r)).toContain('Whole Foods');
+    expect(flatFrame(r)).not.toContain('Amazon');
+    await press(r, LEFT); // before the earliest transaction month: no-op
+    await new Promise((res) => setTimeout(res, 100));
+    expect(flatFrame(r)).toContain('Whole Foods');
+    expect(flatFrame(r)).toContain('2026-04-08');
+    expect(flatFrame(r)).not.toContain('2026-03');
+    await press(r, RIGHT);
+    await waitFor(() => expect(flatFrame(r)).toContain('Amazon'));
+    await press(r, RIGHT); // past the latest transaction month: no-op
+    await new Promise((res) => setTimeout(res, 100));
+    expect(flatFrame(r)).toContain('Amazon');
+    expect(flatFrame(r)).not.toContain('2026-06');
+  });
+
+  it('[<-]/[->] cross the year boundary (Jan 2026 <-> Dec 2025)', async () => {
+    const LEFT = '\u001b[D';
+    const RIGHT = '\u001b[C';
+    await db.execute(`INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored, source) VALUES
+      ('tx-dec', 'test-credit', '2025-12-01', 'Holiday Gift', 30, 'Shopping', 0, 0, 'plaid'),
+      ('tx-jan', 'test-credit', '2026-01-05', 'New Year Brunch', 20, 'Dining', 0, 0, 'plaid')`);
+    const r = txns({ from: '2026-01-01', to: '2026-01-31' });
+    await waitFor(() => expect(flatFrame(r)).toContain('New Year Brunch'));
+    await press(r, LEFT);
+    await waitFor(() => expect(flatFrame(r)).toContain('Holiday Gift'));
+    expect(flatFrame(r)).not.toContain('New Year Brunch');
+    await press(r, RIGHT);
+    await waitFor(() => expect(flatFrame(r)).toContain('New Year Brunch'));
+    expect(flatFrame(r)).not.toContain('Holiday Gift');
   });
 });

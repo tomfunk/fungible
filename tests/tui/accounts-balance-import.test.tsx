@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, cleanup } from 'ink-testing-library';
 import { writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
@@ -35,7 +35,8 @@ async function toBhFile(r: ReturnType<typeof render>) {
 }
 
 async function typePath(r: ReturnType<typeof render>, path: string) {
-  for (const ch of path) r.stdin.write(ch);
+  r.stdin.write(path); // one chunk: no coalescing concern, and far faster than per-key presses
+  await new Promise((res) => setTimeout(res, 15));
   await waitFor(() => expect(flat(r)).toContain(path.slice(-12)));
   r.stdin.write('\r');
 }
@@ -219,9 +220,16 @@ describe('TUI Accounts — balance history import', () => {
   it('accepts a relative path', async () => {
     const r = renderAccounts();
     await toBhFile(r);
-    const p = csv('date,account,balance\n2026-01-01,Checking,100\n');
-    await typePath(r, relative(process.cwd(), p));
-    await waitFor(() => expect(flat(r)).toContain('1 balances will be added'));
+    // Pin cwd to the temp dir so the typed path is short and independent of where vitest was launched.
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    try {
+      csv('date,account,balance\n2026-01-01,Checking,100\n', 'rel.csv');
+      await typePath(r, 'rel.csv');
+      await waitFor(() => expect(flat(r)).toContain('1 balances will be added'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Added 1'));
+      expect(await history('chk')).toEqual([['2026-01-01', 100], ['2026-05-20', 5000]]);
+    } finally { cwd.mockRestore(); }
   });
 
   it('expands a leading ~ to the home directory', async () => {
