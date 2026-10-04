@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
+import { homedir } from 'node:os';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
@@ -861,8 +862,11 @@ describe('Transactions', () => {
       await waitFor(() => {
         const f = frame(r);
         expect(f).toContain('Export transactions to CSV');
-        expect(f).toContain('transactions-export-');
-        expect(f).toContain('.csv');
+        // A long homedir (e.g. a macOS tmp HOME) wraps the path across lines and
+        // the cursor glyph overwrites one character mid-word; compare with box/space/cursor removed.
+        const flat = f.replace(/[│▊\s]/g, '');
+        expect(flat).toContain(`${homedir()}/transactions-exp`.replace(/\s/g, ''));
+        expect(flat).toMatch(/-\d{4}-\d{2}-\d{2}\.csv/);
       });
       expect(fsWriteFileSyncMock).not.toHaveBeenCalled();
     });

@@ -12,6 +12,13 @@ vi.mock('../../core/profile.js', async (importActual) => {
   return { ...actual, loadProfile: vi.fn(() => Promise.resolve(null)), saveProfile: vi.fn(() => Promise.resolve()) };
 });
 
+// Canvas lists saved canvases from the real data dir; stub it to the empty state
+// so the 'Ask the agent' datum does not depend on the developer's own history.
+vi.mock('../../core/canvas-history.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../core/canvas-history.js')>();
+  return { ...actual, loadHistory: vi.fn(() => []) };
+});
+
 import { Dashboard } from '../../tui/Dashboard.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { Trends } from '../../tui/Trends.js';
