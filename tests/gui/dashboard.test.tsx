@@ -164,4 +164,41 @@ describe('GUI Dashboard', () => {
     expect(expenses).toBeCloseTo(1088.99, 2);          // 388.99 seeded + 200 net Travel + 500 uncat
     expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
   });
+
+  describe('scorecard on the All Time range', () => {
+    const MSG = 'Scorecard not available for All Time range.';
+    const ALLTIME = { range: 'alltime', scorecard: true } as const;
+
+    it('Categories view says the scorecard is unavailable instead of rendering buckets', async () => {
+      renderScreen(<Dashboard />, { txFilter: { ...ALLTIME } });
+      await waitFor(() => expect(screen.getByText(MSG)).toBeTruthy());
+      expect(screen.queryByText('Grocery')).toBeNull(); // no category rows rendered either
+    });
+
+    it('Flexibility and Accounts views say the same', async () => {
+      renderScreen(<Dashboard />, { txFilter: { ...ALLTIME } });
+      await waitFor(() => expect(screen.getByText(MSG)).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Flexibility' }));
+      await waitFor(() => expect(screen.getByText(MSG)).toBeTruthy());
+      expect(screen.queryByText('Discretionary')).toBeNull();
+      await userEvent.click(screen.getByRole('button', { name: 'Accounts' }));
+      await waitFor(() => expect(screen.getByText(MSG)).toBeTruthy());
+      expect(screen.queryByText('Test Checking')).toBeNull();
+    });
+
+    it('a month range with the scorecard on has no such message', async () => {
+      renderScreen(<Dashboard />, { txFilter: { ...MAY_FILTER, scorecard: true } });
+      await waitFor(() => expect(screen.getAllByText('Grocery').length).toBeGreaterThan(0));
+      for (const view of ['Flexibility', 'Accounts']) {
+        await userEvent.click(screen.getByRole('button', { name: view }));
+        expect(screen.queryByText(MSG)).toBeNull();
+      }
+    });
+
+    it('All Time without the scorecard still lists the real data', async () => {
+      renderScreen(<Dashboard />, { txFilter: { range: 'alltime' } });
+      await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+      expect(screen.queryByText(MSG)).toBeNull();
+    });
+  });
 });
