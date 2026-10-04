@@ -73,7 +73,6 @@ vi.mock('../../core/canvas-history.js', () => ({
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Canvas, CanvasView } from '../../gui/renderer/src/screens/Canvas.js';
 import { updateHistoryEntrySpec, resolveAndWriteCanvasSpec } from '../../core/canvas-history.js';
-import { evalExpr } from '../../core/canvas-spec.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 
 const SPEC: CanvasSpec = {
@@ -239,8 +238,8 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
 // `has_option == 1 && strategy == 1` threw a parse error, evalExpr() caught it
 // and returned NaN, and per the documented "fails OPEN" convention (NaN !== 0
 // is true) the element rendered as ALWAYS VISIBLE regardless of dial values —
-// the opposite of the intended AND gate). This is now fixed; see the
-// regression test below and the natural `&&` used directly in
+// the opposite of the intended AND gate). This is now fixed (the truth
+// table lives in tests/canvas-eval.test.ts); the natural `&&` is used directly in
 // CHAINED_VISIBLE_SPEC's `strategy_detail` dial.
 //
 // Three-level chain: has_option (toggle) gates whether `strategy` (select) renders
@@ -270,23 +269,6 @@ const CHAINED_VISIBLE_SPEC: CanvasSpec = {
     },
   ],
 };
-
-describe('GUI CanvasView chained visible condition uses real && instead of the nested-ternary workaround', () => {
-  it('`&&` in a `visible` expression behaves as a logical AND, identically to the old nested-ternary equivalent', () => {
-    const expr = 'has_option == 1 && strategy == 1';
-    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBe(0);
-    expect(evalExpr(expr, { has_option: 1, strategy: 0 })).toBe(0);
-    expect(evalExpr(expr, { has_option: 0, strategy: 1 })).toBe(0);
-    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBe(1);
-
-    // same truth table as the nested-ternary workaround this expression replaces
-    const nestedTernaryEquivalent = 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0';
-    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 0, strategy: 0 }));
-    expect(evalExpr(expr, { has_option: 1, strategy: 0 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 1, strategy: 0 }));
-    expect(evalExpr(expr, { has_option: 0, strategy: 1 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 0, strategy: 1 }));
-    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 1, strategy: 1 }));
-  });
-});
 
 describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)', () => {
   it('hides both the select and the detail dial while the toggle is off', () => {
