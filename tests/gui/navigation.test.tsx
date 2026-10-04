@@ -32,7 +32,10 @@ beforeEach(async () => {
   installBridge();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 describe('GUI App navigation', () => {
   it('sidebar clicks switch screens', async () => {
