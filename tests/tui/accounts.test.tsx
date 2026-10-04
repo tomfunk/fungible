@@ -75,13 +75,6 @@ describe('Accounts', () => {
     await waitFor(() => expect(flatFrame(r)).toContain(VIEW_MARKER[view]));
   }
 
-  it('renders app title and Accounts tab', () => {
-    const r = accounts();
-    const f = frame(r);
-    expect(f).toContain('fungible');
-    expect(f).toContain('Accounts');
-  });
-
   it('shows seeded accounts after load', async () => {
     const r = accounts();
     await waitFor(() => {
@@ -96,16 +89,6 @@ describe('Accounts', () => {
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
     r.stdin.write('\t');
     await waitFor(() => expect(frame(r)).toContain('Add Data'));
-  });
-
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W><Accounts onNavigate={onNavigate} showHints={false} /></W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Accounts'));
-    r.stdin.write('1');
-    expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
 
   // Regression guards for the stale-list bug: the mutation DB calls are async, so

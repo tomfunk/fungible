@@ -23,7 +23,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { db } from '../core/db.js';
 import { getPlaidClient } from '../core/plaid.js';
-import { TOOL_DEFS, WRITE_TOOLS } from '../core/tools.js';
+import { TOOL_DEFS, WRITE_TOOLS, executeToolWithEffect } from '../core/tools.js';
 import { makeMcpClient, type McpTestClient } from './helpers/makeMcpClient.js';
 import { seedTx } from './helpers/seedDb.js';
 import { seedPlaidItem } from './helpers/seedDb.js';
@@ -165,6 +165,36 @@ describe('read tools', () => {
       expect((await mcp.callTool('list_transactions', { search: 'landlord' })).text.split('\n')).toHaveLength(1);
       expect((await mcp.callTool('list_transactions', { from: day(5), to: day(6) })).text.split('\n')).toHaveLength(2);
       expect((await mcp.callTool('list_transactions', { limit: 2 })).text.split('\n')).toHaveLength(2);
+    });
+
+    it('treats LIKE wildcards and backslashes in search as literal text', async () => {
+      for (const [id, name] of [['w1', '100% Cash'], ['w2', '100X Cash'], ['w3', 'a_b'], ['w4', 'axb'], ['w5', 'back\\slash']]) {
+        await seedTx(db, { id, account_id: 'chk', date: day(9), name, amount: 1, category: 'Food' });
+      }
+      const names = async (search: string) =>
+        (await mcp.callTool('list_transactions', { search })).text.split('\n').filter(Boolean);
+      const has = (lines: string[], id: string) => lines.some((l) => l.includes(`[${id}]`));
+      const pct = await names('100%');
+      expect(has(pct, 'w1')).toBe(true);
+      expect(has(pct, 'w2')).toBe(false);
+      const us = await names('a_b');
+      expect(has(us, 'w3')).toBe(true);
+      expect(has(us, 'w4')).toBe(false);
+      expect(has(await names('back\\slash'), 'w5')).toBe(true);
+      expect(has(await names('k\\s'), 'w5')).toBe(true);
+      expect(has(await names('100X'), 'w2')).toBe(true);
+      expect(has(await names('CASH'), 'w1')).toBe(true);
+    });
+
+    it('escapes wildcards in the display_name clause too', async () => {
+      for (const [id, dn] of [['d1', '50% Off'], ['d2', '50X Off'], ['d3', 'p_q'], ['d4', 'pxq']]) {
+        await seedTx(db, { id, account_id: 'chk', date: day(9), name: `RAW ${id}`, amount: 1, category: 'Food' });
+        await db.execute({ sql: 'UPDATE transactions SET display_name = ? WHERE id = ?', args: [dn, id] });
+      }
+      const run = async (search: string) =>
+        (await mcp.callTool('list_transactions', { search })).text;
+      const pct = await run('50%'); expect(pct).toContain('[d1]'); expect(pct).not.toContain('[d2]');
+      const us = await run('p_q'); expect(us).toContain('[d3]'); expect(us).not.toContain('[d4]');
     });
 
     it('defaults to 50 rows and enforces 1..500', async () => {
@@ -342,16 +372,27 @@ describe('write tools: transactions', () => {
     expect((await stored()).display_name).toBe('Pretty Name');
   });
 
-  // Pinned as observed: the amount is stored exactly as given (no rounding to
-  // cents, no magnitude cap). See the report: this is a validation gap, not a decision.
-  it.each([[4.505], [0.1 + 0.2], [1e15], [1e308]])('add_transaction stores %d exactly as given (no rounding or cap)', async (amount) => {
-    await expectWrite('add_transaction', add({ amount }), true);
-    expect((await stored()).amount).toBe(amount);
+  it.each([
+    [4.505, 4.51],
+    [-4.505, -4.51],
+    [0.1 + 0.2, 0.3],
+    [999999999.99, 999999999.99],
+  ])('add_transaction rounds %d to cents and stores %d', async (amount, expected) => {
+    const r = await expectWrite('add_transaction', add({ amount }), true);
+    expect((await stored()).amount).toBe(expected);
+    expect(r.text).toContain(` ${expected} on `);
   });
 
   it.each([[NaN], [Infinity], [-Infinity]])('add_transaction rejects %d at the schema and writes nothing', async (amount) => {
     const r = await expectWrite('add_transaction', add({ amount }), false);
     expect(r.isError).toBe(true);
+    expect(await txCount()).toBe(7);
+  });
+
+  // Out-of-range magnitudes pass the schema and are rejected by core.
+  it.each([[1e9], [-1e9], [1e15], [1e308]])('add_transaction rejects %d in core and writes nothing', async (amount) => {
+    const r = await expectWrite('add_transaction', add({ amount }), false);
+    expect(r.text).toMatch(/^Error: .*amount/i);
     expect(await txCount()).toBe(7);
   });
 
@@ -361,6 +402,8 @@ describe('write tools: transactions', () => {
     ['an empty name', { name: '   ' }, /name is required/],
     ['an empty category', { category: '' }, /category is required/],
     ['an unknown account', { account_id: 'nope' }, /No account with id nope/],
+    ['amount 1e9', { amount: 1e9 }, /amount/i],
+    ['amount -1e9', { amount: -1e9 }, /amount/i],
   ])('add_transaction with %s fails, writes nothing and does not fire afterWrite', async (_n, over, msg) => {
     const r = await expectWrite('add_transaction', add(over), false);
     expect(r.text).toMatch(/^Error: /);
@@ -593,5 +636,53 @@ describe('afterWrite invariants', () => {
     for (const n of names) if (!WRITE_TOOLS.has(n)) expect(covered.has(n), `${n} is a read tool missing from the sweep`).toBe(true);
     for (const [n, a] of reads) await mcp.callTool(n, a);
     expect(mcp.afterWrite).not.toHaveBeenCalled();
+  });
+});
+
+// ─── add_transaction via executeTool (no schema layer) ───────────────────────
+
+describe('add_transaction through executeToolWithEffect', () => {
+  const base = { account_id: 'chk', date: day(10), name: 'Direct Entry', category: 'Food' };
+  const count = async () => Number((await one<{ c: number }>('SELECT COUNT(*) c FROM transactions')).c);
+
+  beforeEach(async () => {
+    await db.execute("INSERT OR IGNORE INTO accounts (id,name,type,subtype) VALUES ('chk','Checking','depository','checking')");
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['"abc"', { amount: 'abc' }],
+    ['""', { amount: '' }],
+    ['whitespace', { amount: '   ' }],
+    ['null', { amount: null }],
+    ['a missing key', {}],
+    ['true', { amount: true }],
+    ['[]', { amount: [] }],
+    ['{}', { amount: {} }],
+    ['"0x10"', { amount: '0x10' }],
+    ['"1e9"', { amount: '1e9' }],
+    ['"NaN"', { amount: 'NaN' }],
+    ['"Infinity"', { amount: 'Infinity' }],
+    ['"1e308"', { amount: '1e308' }],
+  ])('rejects amount %s without writing', async (_n, extra) => {
+    const before = await count();
+    const r = await executeToolWithEffect('add_transaction', { ...base, ...extra });
+    expect(r.text).toMatch(/^Error: .*amount/i);
+    expect(r.wrote).toBe(false);
+    expect(await count()).toBe(before);
+  });
+
+  it.each([
+    ['12.34', 12.34],
+    ['4.505', 4.51],
+    ['-80', -80],
+    [12.34, 12.34],
+    [' 12.34 ', 12.34],
+  ])('accepts amount %j and stores %d', async (amount, expected) => {
+    const r = await executeToolWithEffect('add_transaction', { ...base, amount });
+    expect(r.wrote).toBe(true);
+    expect(r.text).toContain(` ${expected} on `);
+    const id = /\[id: ([^\]]+)\]/.exec(r.text)![1];
+    const row = await one<{ amount: number }>('SELECT amount FROM transactions WHERE id = ?', [id]);
+    expect(row.amount).toBe(expected);
   });
 });

@@ -30,7 +30,8 @@ export function fmtMonths(n: number): string {
 
 function fmtCompactWithSign(n: number, sign: string): string {
   const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  // 999_950+ would render as 1000.0K, so switch to M there.
+  if (abs >= 999_950) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
   if (abs >= 10_000)    return `${sign}$${(abs / 1_000).toFixed(1)}K`;
   return `${sign}${fmt(abs)}`;
 }

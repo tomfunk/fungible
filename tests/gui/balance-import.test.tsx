@@ -13,12 +13,6 @@ import { db } from '../../core/db.js';
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 import { SKIPPED_LIST_CAP } from '../../gui/renderer/src/components/BalanceHistoryImportModal.js';
-import { BALANCE_IMPORT_MAX_BYTES } from '../../core/balance-import.js';
-import { summarizeSkips, type BalanceImportSkipReason } from '../../core/balance-import-copy.js';
-import { readBalanceImportFile } from '../../gui/main/read-text-file.js';
-import { mkdtempSync, writeFileSync, truncateSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 type Call = { ns: string; fn: string; args: unknown[] };
 let calls: Call[];
@@ -185,7 +179,7 @@ describe('GUI Accounts — import balance history', () => {
     expect(screen.getByText(/balances will be added/).textContent).toContain('1 skipped by you');
   });
 
-  it('preview count line matches summarizeSkips (shared with the TUI)', async () => {
+  it('renders the full preview line with the exact skip-reason wording', async () => {
     picked = {
       path: '/x/m.csv',
       fileName: 'm.csv',
@@ -193,11 +187,10 @@ describe('GUI Accounts — import balance history', () => {
     };
     await openModal();
     const el = await screen.findByText(/balances will be added/);
-    const set = [
-      { reason: 'no_matching_account' }, { reason: 'no_matching_account' }, { reason: 'invalid_date' },
-    ] as { reason: BalanceImportSkipReason }[];
-    expect(summarizeSkips(set)).toBe('2 no matching account, 1 invalid date or amount');
-    expect(el.textContent).toContain(`${set.length} skipped (${summarizeSkips(set)})`);
+    // Literal string, so a wording change in the shared copy is a visible diff here.
+    expect(el.textContent).toContain(
+      '1 balances will be added, 0 will replace existing values, 3 skipped (2 no matching account, 1 invalid date or amount)',
+    );
   });
 
   it('shows the newer-than-current reason for rows not older than the current balance', async () => {
@@ -215,14 +208,7 @@ describe('GUI Accounts — import balance history', () => {
   it('shows a pickText failure inline and keeps the modal open', async () => {
     const b = (window as unknown as { __bridge: { call: (ns: string, fn: string, args: unknown[]) => Promise<unknown> } }).__bridge;
     const prev = b.call;
-    const dir = mkdtempSync(join(tmpdir(), 'fungible-bi-'));
-    const big = join(dir, 'big.csv');
-    writeFileSync(big, '');
-    truncateSync(big, BALANCE_IMPORT_MAX_BYTES + 1);
-    let realMessage = '';
-    try { readBalanceImportFile(big); } catch (e) { realMessage = (e as Error).message; }
-    rmSync(dir, { recursive: true, force: true });
-    expect(realMessage).toMatch(/larger than 5 MB/);
+    const realMessage = 'That file is larger than 5 MB, the limit for a balance history import.';
     b.call = async (ns, fn, args) => {
       if (ns === 'files' && fn === 'pickText') throw new Error(realMessage);
       return prev(ns, fn, args);

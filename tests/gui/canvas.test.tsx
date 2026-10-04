@@ -73,7 +73,6 @@ vi.mock('../../core/canvas-history.js', () => ({
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Canvas, CanvasView } from '../../gui/renderer/src/screens/Canvas.js';
 import { updateHistoryEntrySpec, resolveAndWriteCanvasSpec } from '../../core/canvas-history.js';
-import { evalExpr } from '../../core/canvas-spec.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 
 const SPEC: CanvasSpec = {
@@ -102,7 +101,7 @@ describe('GUI CanvasView', () => {
     expect(screen.getByText('INPUTS')).toBeTruthy();
     expect(screen.getByText(/Adjust the dials/)).toBeTruthy();
     expect(screen.getByText('Balance')).toBeTruthy();
-    const balanceDial = screen.getByText('Balance').closest('div')!.parentElement!;
+    const balanceDial = screen.getByRole('group', { name: 'Balance' });
     // Dollar dials show comma-formatted, non-editable text while unfocused —
     // see DialRow's focus/blur formatting.
     const balanceInput = balanceDial.querySelector('input') as HTMLInputElement;
@@ -116,7 +115,7 @@ describe('GUI CanvasView', () => {
 
   it('stepping a dial recomputes outputs and offers reset', async () => {
     renderScreen(<CanvasView spec={SPEC} />);
-    const monthlyDial = screen.getByText('Monthly payment').closest('div')!.parentElement!;
+    const monthlyDial = screen.getByRole('group', { name: 'Monthly payment' });
     const monthlyInput = () => monthlyDial.querySelector('input') as HTMLInputElement;
     const plus = Array.from(monthlyDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
@@ -129,7 +128,7 @@ describe('GUI CanvasView', () => {
 
   it('a dollar dial shows raw digits while focused and re-formats with commas on blur', () => {
     renderScreen(<CanvasView spec={SPEC} />);
-    const balanceDial = screen.getByText('Balance').closest('div')!.parentElement!;
+    const balanceDial = screen.getByRole('group', { name: 'Balance' });
     const input = balanceDial.querySelector('input') as HTMLInputElement;
     expect(input.type).toBe('text');
     expect(input.value).toBe('20,000');
@@ -149,7 +148,7 @@ describe('GUI CanvasView', () => {
 
   it('bounded dials render as a stepper and respect max', async () => {
     renderScreen(<CanvasView spec={SPEC} />);
-    const aprDial = screen.getByText('APR').closest('div')!.parentElement!;
+    const aprDial = screen.getByRole('group', { name: 'APR' });
     const input = aprDial.querySelector('input[type="number"]') as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.max).toBe('40');
@@ -217,7 +216,7 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
     expect(screen.getByText('Raise amount')).toBeTruthy();
 
     // change the now-visible dial away from its default
-    const raiseDial = screen.getByText('Raise amount').closest('div')!.parentElement!;
+    const raiseDial = screen.getByRole('group', { name: 'Raise amount' });
     const plus = Array.from(raiseDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
     // Dollar dial, unfocused -> comma-formatted text, not a raw type="number" value.
@@ -229,7 +228,7 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
 
     // reshow — value should have survived (frozen), not reset to the 5000 default
     await userEvent.click(checkbox); // hasRaise -> 1
-    const raiseDialAgain = screen.getByText('Raise amount').closest('div')!.parentElement!;
+    const raiseDialAgain = screen.getByRole('group', { name: 'Raise amount' });
     expect((raiseDialAgain.querySelector('input') as HTMLInputElement).value).toBe('5,500');
   });
 });
@@ -239,8 +238,8 @@ describe('GUI CanvasView toggle/select dials and visible filtering', () => {
 // `has_option == 1 && strategy == 1` threw a parse error, evalExpr() caught it
 // and returned NaN, and per the documented "fails OPEN" convention (NaN !== 0
 // is true) the element rendered as ALWAYS VISIBLE regardless of dial values —
-// the opposite of the intended AND gate). This is now fixed; see the
-// regression test below and the natural `&&` used directly in
+// the opposite of the intended AND gate). This is now fixed (the truth
+// table lives in tests/canvas-eval.test.ts); the natural `&&` is used directly in
 // CHAINED_VISIBLE_SPEC's `strategy_detail` dial.
 //
 // Three-level chain: has_option (toggle) gates whether `strategy` (select) renders
@@ -271,23 +270,6 @@ const CHAINED_VISIBLE_SPEC: CanvasSpec = {
   ],
 };
 
-describe('GUI CanvasView chained visible condition uses real && instead of the nested-ternary workaround', () => {
-  it('`&&` in a `visible` expression behaves as a logical AND, identically to the old nested-ternary equivalent', () => {
-    const expr = 'has_option == 1 && strategy == 1';
-    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBe(0);
-    expect(evalExpr(expr, { has_option: 1, strategy: 0 })).toBe(0);
-    expect(evalExpr(expr, { has_option: 0, strategy: 1 })).toBe(0);
-    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBe(1);
-
-    // same truth table as the nested-ternary workaround this expression replaces
-    const nestedTernaryEquivalent = 'has_option == 1 ? (strategy == 1 ? 1 : 0) : 0';
-    expect(evalExpr(expr, { has_option: 0, strategy: 0 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 0, strategy: 0 }));
-    expect(evalExpr(expr, { has_option: 1, strategy: 0 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 1, strategy: 0 }));
-    expect(evalExpr(expr, { has_option: 0, strategy: 1 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 0, strategy: 1 }));
-    expect(evalExpr(expr, { has_option: 1, strategy: 1 })).toBe(evalExpr(nestedTernaryEquivalent, { has_option: 1, strategy: 1 }));
-  });
-});
-
 describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)', () => {
   it('hides both the select and the detail dial while the toggle is off', () => {
     renderScreen(<CanvasView spec={CHAINED_VISIBLE_SPEC} />);
@@ -314,7 +296,7 @@ describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)',
 
     await userEvent.selectOptions(select, '1'); // strategy -> 1 (Aggressive)
     expect(screen.getByText('Strategy detail')).toBeTruthy();
-    const detailDial = screen.getByText('Strategy detail').closest('div')!.parentElement!;
+    const detailDial = screen.getByRole('group', { name: 'Strategy detail' });
     expect((detailDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('42');
   });
 
@@ -326,7 +308,7 @@ describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)',
     await userEvent.selectOptions(select, '1'); // strategy -> 1, detail dial appears
 
     // change the now-visible detail dial away from its default
-    const detailDial = screen.getByText('Strategy detail').closest('div')!.parentElement!;
+    const detailDial = screen.getByRole('group', { name: 'Strategy detail' });
     const plus = Array.from(detailDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
     expect((detailDial.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('43');
@@ -341,7 +323,7 @@ describe('GUI CanvasView chained visible conditions (toggle -> select -> dial)',
     await userEvent.click(checkbox); // has_option -> 1
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('1');
     expect(screen.getByText('Strategy detail')).toBeTruthy();
-    const detailDialAgain = screen.getByText('Strategy detail').closest('div')!.parentElement!;
+    const detailDialAgain = screen.getByRole('group', { name: 'Strategy detail' });
     expect((detailDialAgain.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('43');
   });
 });
@@ -621,15 +603,9 @@ const EMPTY_PROJECTION_SPEC: CanvasSpec = {
   ],
 };
 
-// "Years out" also appears inside the chart's "Click a point to move…" caption,
-// so pick the label whose ancestor .dial row actually owns a numeric input
-// (DialRow's header is label-only; the raw value lives on the input itself)
-// rather than assuming there's only one match.
 function yearsDialValue(): string {
-  const label = screen
-    .getAllByText('Years out')
-    .find((el) => el.closest('div')?.parentElement?.querySelector('input[type="number"]'));
-  const dial = label!.closest('div')!.parentElement!;
+  // "Years out" also appears in the chart's caption, so go through the dial's labelled group.
+  const dial = screen.getByRole('group', { name: 'Years out' });
   return (dial.querySelector('input[type="number"]') as HTMLInputElement).value;
 }
 
