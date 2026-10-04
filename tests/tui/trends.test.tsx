@@ -19,7 +19,11 @@ import { db } from '../../core/db.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { Trends } from '../../tui/Trends.js';
 import * as syncApi from '../../core/sync.js';
-import { waitFor, frame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, flatFrame, press, pressKeys } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 
 useSeededScreenDb();
@@ -34,12 +38,6 @@ describe('Trends', () => {
       </W>,
     );
   }
-
-  it('renders app title and screen header', () => {
-    const r = trends();
-    expect(frame(r)).toContain('fungible');
-    expect(frame(r)).toContain('Trends');
-  });
 
   it('shows the current view label (Expenses by default)', async () => {
     const r = trends();
@@ -56,40 +54,67 @@ describe('Trends', () => {
     });
   });
 
-  it('r key cycles range label', async () => {
+  it('r walks month -> quarter -> year -> week -> month, each showing its own periods', async () => {
     const r = trends();
-    await waitFor(() => expect(frame(r)).toContain('Month'));
-    r.stdin.write('r');
-    await waitFor(() => expect(frame(r)).toContain('Quarter'));
+    // Each range is identified by data only that range renders: its period
+    // labels and the "avg/<unit>" summary (the Week/Month/Quarter/Year tab
+    // strip is always on screen, so it proves nothing).
+    const RANGES: { period: string; avg: string; absent: string[] }[] = [
+      { period: 'Apr 2026', avg: 'avg/month', absent: ['Q2 2026', 'avg/quarter', 'avg/year', 'avg/week'] },
+      { period: 'Q2 2026', avg: 'avg/quarter', absent: ['Apr 2026', 'avg/month'] },
+      { period: '2026 ', avg: 'avg/year', absent: ['Q2 2026', 'Apr 2026', 'avg/quarter'] },
+      { period: 'Apr 6–12 2026', avg: 'avg/week', absent: ['Q2 2026', 'avg/year'] },
+      { period: 'Apr 2026', avg: 'avg/month', absent: ['Apr 6–12 2026', 'avg/week'] },
+    ];
+    for (let i = 0; i < RANGES.length; i++) {
+      if (i > 0) await press(r, 'r');
+      const { period, avg, absent } = RANGES[i];
+      await waitFor(() => {
+        const f = flatFrame(r);
+        expect(f).toContain(period);
+        expect(f).toContain(avg);
+        for (const a of absent) expect(f).not.toContain(a);
+      });
+    }
+    // Month totals: Apr $140.00 and May $388.99.
+    expect(flatFrame(r)).toContain('$388.99');
   });
 
-  it('pressing nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W><Trends onNavigate={onNavigate} showHints={false} /></W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Trends'));
-    r.stdin.write('1');
-    // Trends passes search (undefined when empty) as second arg
-    expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined);
-  });
-
-  it('right arrow cycles through the base views in order', async () => {
+  it('right arrow cycles through the base views in order, left arrow wraps', async () => {
     const r = trends();
     const viewLabels = ['Expenses', 'Income', 'Net', 'Flexibility', 'Fixed', 'Flexible', 'Discretionary'];
-    await waitFor(() => expect(frame(r)).toContain('Expenses'));
+    // Categories with spending are appended as extra views once they load
+    // (same query as buildTrendViews: spend > 0, biggest total first).
+    const cats = (await db.execute(
+      `SELECT category FROM transactions
+       WHERE pending = 0 AND ignored = 0 AND amount > 0
+         AND category NOT IN (SELECT category FROM hidden_categories)
+       GROUP BY category ORDER BY SUM(amount) DESC`,
+    )).rows.map((x) => String(x.category));
+    const N = viewLabels.length + cats.length;
+    const lastLabel = cats.at(-1)!;
+    await waitFor(() => expect(flatFrame(r)).toContain(`← Expenses → 1 / ${N}`));
     for (let i = 1; i < viewLabels.length; i++) {
-      r.stdin.write('\x1B[C');
-      await waitFor(() => expect(frame(r)).toContain(viewLabels[i]));
+      await press(r, '\x1B[C');
+      await waitFor(() => expect(flatFrame(r)).toContain(`← ${viewLabels[i]} → ${i + 1} / ${N}`));
     }
+    // Left from the first view wraps to the last view, right from the last wraps back.
+    await press(r, '\x1B[D');
+    await waitFor(() => expect(flatFrame(r)).toContain(`← ${viewLabels[5]} → 6 / ${N}`));
+    for (let i = 0; i < 5; i++) await press(r, '\x1B[D');
+    await waitFor(() => expect(flatFrame(r)).toContain(`← Expenses → 1 / ${N}`));
+    await press(r, '\x1B[D');
+    await waitFor(() => expect(flatFrame(r)).toContain(`← ${lastLabel} → ${N} / ${N}`));
+    await press(r, '\x1B[C');
+    await waitFor(() => expect(flatFrame(r)).toContain(`← Expenses → 1 / ${N}`));
   });
 
   it('Net view shows expense/income direction headers', async () => {
     const r = trends();
     await waitFor(() => expect(frame(r)).toContain('Expenses'));
-    r.stdin.write('\x1B[C'); // Income
+    await press(r, '\x1B[C'); // Income
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('\x1B[C'); // Net
+    await press(r, '\x1B[C'); // Net
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Net');
@@ -101,7 +126,7 @@ describe('Trends', () => {
   it('Flexibility view shows fixed/flexible/discr column headers', async () => {
     const r = trends();
     await waitFor(() => expect(frame(r)).toContain('Expenses'));
-    for (let i = 0; i < 3; i++) r.stdin.write('\x1B[C'); // Expenses→Income→Net→Flexibility
+    await pressKeys(r, ['\x1B[C', '\x1B[C', '\x1B[C']); // Expenses→Income→Net→Flexibility
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Flexibility');

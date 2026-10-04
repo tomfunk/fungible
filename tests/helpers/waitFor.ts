@@ -82,13 +82,27 @@ export function waitForFrame(
   );
 }
 
-/** Writes `key` to stdin, then waits for `text` to appear in the frame. */
+/** Settle time after a keypress so Ink never coalesces two consecutive writes into one input event. */
+const KEY_TICK_MS = 15;
+
+/** Writes `key` to stdin, then yields ~15ms so the next key is a separate input event. */
+export async function press(r: Pick<FrameSource, 'stdin'>, key: string): Promise<void> {
+  r.stdin.write(key);
+  await new Promise((res) => setTimeout(res, KEY_TICK_MS));
+}
+
+/** Presses each key in order via `press` (never batched into one write). */
+export async function pressKeys(r: Pick<FrameSource, 'stdin'>, keys: string[]): Promise<void> {
+  for (const k of keys) await press(r, k);
+}
+
+/** Presses `key`, then waits for `text` to appear in the frame. */
 export async function pressAndWait(
   r: FrameSource,
   key: string,
   text: string,
   opts: number | WaitForOptions = {},
 ): Promise<void> {
-  r.stdin.write(key);
+  await press(r, key);
   await waitForFrame(r, text, opts);
 }
