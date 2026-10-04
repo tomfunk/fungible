@@ -11,6 +11,7 @@ vi.mock('../../core/db.js', async () => {
 
 import { db } from '../../core/db.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
+import { readTx, readTxTags } from '../helpers/readDb.js';
 import { installBridge, renderScreen, saveCsvStub } from './helpers/renderGui.js';
 import { Transactions } from '../../gui/renderer/src/screens/Transactions.js';
 import { registry } from '../../gui/main/registry.js';
@@ -230,6 +231,8 @@ describe('GUI Transactions', () => {
       const updated = screen.getAllByText('Sweetgreen')[0].closest('tr')!;
       expect(updated.textContent).toContain('~');
     });
+    const ignored = await db.execute("SELECT id, ignored FROM transactions WHERE name = 'Sweetgreen' ORDER BY date DESC");
+    expect(ignored.rows.map((r) => Number(r.ignored))).toEqual([1, 0]); // only the clicked (May) row
   });
 
   it('tag modal applies an existing tag to a transaction', async () => {
@@ -261,6 +264,14 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Dining' }));
     await waitFor(() => expect(screen.getByText(/Set category to "Dining" for 3 transactions/)).toBeTruthy());
+    // The outcome is in the DB, on all three selected rows (manual_category is the pin).
+    for (const id of ['tx-groc-1', 'tx-groc-2', 'tx-groc-apr']) {
+      const r = (await readTx(db, id))!;
+      expect(r.category).toBe('Dining');
+      expect(r.manual_category).toBe('Dining');
+    }
+    // Rows outside the selection are untouched.
+    expect((await readTx(db, 'tx-shopping'))!.manual_category).toBeNull();
 
     // Outcome in the DB: exactly the 3 Grocery rows moved and are pinned; nothing else changed.
     const res = await db.execute('SELECT id, category, manual_category FROM transactions ORDER BY id');
@@ -474,5 +485,182 @@ describe('GUI Transactions', () => {
     const row = screen.getByText('Cash Tip').closest('tr')!;
     const labels = Array.from(row.querySelectorAll('button')).map((b) => b.textContent);
     expect(labels).toEqual(['tag', 'delete']);
+  });
+});
+
+// ── Bulk actions (Clear overrides / Ignore / Tag) and single-row clear ──────
+// Every assertion reads the DB: the toasts and glyphs are only the echo.
+describe('GUI Transactions: bulk actions', () => {
+  const rowOf = (name: string) => screen.getAllByText(name)[0].closest('tr')!;
+  const check = (name: string) => userEvent.click(rowOf(name).querySelector('input[type="checkbox"]')!);
+  const bulkBtn = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
+  const BULK = ['Categorize', 'Tag', 'Clear overrides', 'Ignore'];
+
+  async function pin(id: string, cat: string) {
+    await db.execute({ sql: 'UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?', args: [cat, cat, id] });
+  }
+
+  it('all four bulk buttons are disabled with no selection, and selection clears after an action', async () => {
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    for (const b of BULK) expect(bulkBtn(b).disabled).toBe(true);
+    expect(screen.getByText('9 visible')).toBeTruthy();
+
+    await check('Amazon');
+    await check('Con Edison');
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    for (const b of BULK) expect(bulkBtn(b).disabled).toBe(false);
+
+    await userEvent.click(bulkBtn('Ignore'));
+    await waitFor(() => expect(screen.getByText('Ignored 2 transactions')).toBeTruthy());
+    // selection cleared: count text reverts and buttons disable again
+    await waitFor(() => expect(screen.getByText('9 visible')).toBeTruthy());
+    for (const b of BULK) expect(bulkBtn(b).disabled).toBe(true);
+    expect((rowOf('Amazon').querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('Clear overrides un-pins the selected rows (back to the rule result) and leaves unselected pins alone', async () => {
+    await pin('tx-groc-1', 'Dining'); // Whole Foods: the 'Whole Foods' rule maps it to Grocery
+    await pin('tx-shopping', 'Dining'); // Amazon, unselected
+    await pin('tx-bills-1', 'Dining'); // Con Edison, selected
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+
+    await check('Whole Foods');
+    await check('Con Edison');
+    await userEvent.click(bulkBtn('Clear overrides'));
+    await waitFor(() => expect(screen.getByText('Cleared overrides on 2 transactions')).toBeTruthy());
+
+    const wf = (await readTx(db, 'tx-groc-1'))!;
+    expect(wf.manual_category).toBeNull();
+    expect(wf.category).toBe('Grocery'); // recomputed from the rule, not left as 'Dining'
+    const ce = (await readTx(db, 'tx-bills-1'))!;
+    expect(ce.manual_category).toBeNull();
+    expect(ce.category).not.toBe('Dining');
+    const amazon = (await readTx(db, 'tx-shopping'))!;
+    expect(amazon.manual_category).toBe('Dining');
+    expect(amazon.category).toBe('Dining');
+  });
+
+  it('Clear overrides counts only the rows that actually carried an override', async () => {
+    await pin('tx-bills-1', 'Dining');
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await check('Con Edison');
+    await check('Amazon'); // not pinned
+    await userEvent.click(bulkBtn('Clear overrides'));
+    await waitFor(() => expect(screen.getByText('Cleared overrides on 1 transaction')).toBeTruthy());
+    expect((await readTx(db, 'tx-shopping'))!.category).toBe('Shopping');
+  });
+
+  it('bulk Ignore sets ignored=1 on both rows; selecting them again offers Un-ignore, which clears them', async () => {
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await check('Amazon');
+    await check('Con Edison');
+    await userEvent.click(bulkBtn('Ignore'));
+    await waitFor(() => expect(screen.getByText('Ignored 2 transactions')).toBeTruthy());
+    expect((await readTx(db, 'tx-shopping'))!.ignored).toBe(1);
+    expect((await readTx(db, 'tx-bills-1'))!.ignored).toBe(1);
+    expect((await readTx(db, 'tx-groc-1'))!.ignored).toBe(0);
+
+    await waitFor(() => expect(rowOf('Amazon').textContent).toContain('~'));
+    await check('Amazon');
+    await check('Con Edison');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Un-ignore' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Un-ignore' }));
+    await waitFor(() => expect(screen.getByText('Un-ignored 2 transactions')).toBeTruthy());
+    expect((await readTx(db, 'tx-shopping'))!.ignored).toBe(0);
+    expect((await readTx(db, 'tx-bills-1'))!.ignored).toBe(0);
+  });
+
+  it('bulk Ignore of a single row uses the singular status', async () => {
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await check('Amazon');
+    await userEvent.click(bulkBtn('Ignore'));
+    await waitFor(() => expect(screen.getByText('Ignored 1 transaction')).toBeTruthy());
+  });
+
+  it('bulk Tag applies an existing tag to every selected row and no others', async () => {
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await check('Amazon');
+    await check('Con Edison');
+    await userEvent.click(bulkBtn('Tag'));
+    await waitFor(() => expect(screen.getByText('Tag 2 visible transactions')).toBeTruthy());
+    await userEvent.click(await screen.findByRole('button', { name: 'work' }));
+    await waitFor(() => expect(screen.getByText('Tagged 2 transactions')).toBeTruthy());
+    expect(await readTxTags(db, 'tx-shopping')).toEqual(['work']);
+    expect(await readTxTags(db, 'tx-bills-1')).toEqual(['work']);
+    expect(await readTxTags(db, 'tx-groc-1')).toEqual([]);
+  });
+
+  it('single-row clear resets a pinned row; a non-pinned row has no clear button', async () => {
+    await pin('tx-shopping', 'Dining');
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    const labels = (name: string) => Array.from(rowOf(name).querySelectorAll('button')).map((b) => b.textContent);
+    expect(labels('Con Edison')).not.toContain('clear');
+    expect(labels('Amazon')).toContain('clear');
+
+    await userEvent.click(Array.from(rowOf('Amazon').querySelectorAll('button')).find((b) => b.textContent === 'clear')!);
+    await waitFor(() => expect(screen.getByText('Override cleared')).toBeTruthy());
+    const r = (await readTx(db, 'tx-shopping'))!;
+    expect(r.manual_category).toBeNull();
+    expect(r.category).not.toBe('Dining');
+  });
+
+  // PRODUCT BUG: the bulk actions bypass the guards the single-row UI applies to
+  // source='manual' rows. A hand-entered row is also "pinned" (addTransaction
+  // sets manual_category = category) with no raw category to revert to, so the
+  // single-row UI hides both clear and ignore for it. Bulk Clear overrides
+  // (core clearOverridesBulk selects every manual_category IS NOT NULL row) wipes
+  // the manual row's category; bulk Ignore ignores it. Fix: exclude
+  // source = 'manual' ids in clearOverridesBulk/setIgnoredBulk (or filter them
+  // out of selectedTxs in Transactions.tsx), then flip these to plain `it`.
+  it.fails('BUG: bulk Clear overrides keeps a manual-source row\'s category', async () => {
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored, source)
+       VALUES ('tx-manual-3', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 'Dining', 0, 0, 'manual')`,
+    );
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('Cash Tip')).toBeTruthy());
+    await check('Cash Tip');
+    await userEvent.click(bulkBtn('Clear overrides'));
+    await waitFor(() => expect(screen.getByText(/Cleared overrides on/)).toBeTruthy());
+    const r = (await readTx(db, 'tx-manual-3'))!;
+    expect(r.category).toBe('Dining');
+    expect(r.manual_category).toBe('Dining');
+  });
+
+  it.fails('BUG: bulk Ignore does not ignore a manual-source row (single-row UI forbids it)', async () => {
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored, source)
+       VALUES ('tx-manual-4', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 'Dining', 0, 0, 'manual')`,
+    );
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('Cash Tip')).toBeTruthy());
+    await check('Cash Tip');
+    await userEvent.click(bulkBtn('Ignore'));
+    await waitFor(() => expect(screen.getByText(/Ignored 1 transaction/)).toBeTruthy());
+    expect((await readTx(db, 'tx-manual-4'))!.ignored).toBe(0);
+  });
+
+  // Not a defect, a documented rule: a mixed selection takes its bulk-Ignore
+  // direction from the first selected row in TABLE order (target = !selectedTxs[0]
+  // .ignored), and the button label shows that direction before you click. The
+  // status count is the selection size, not the number of rows that changed.
+  it('bulk Ignore on a mixed selection follows the first row in table order, and the label matches the outcome (status count = selection size, not rows changed)', async () => {
+    await db.execute("UPDATE transactions SET ignored = 1 WHERE id = 'tx-shopping'"); // Amazon 05-11, first in date-desc order
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await check('Con Edison'); // click order does not matter...
+    await check('Amazon');
+    expect(bulkBtn('Un-ignore')).toBeTruthy(); // ...the label follows the first row in the table (ignored Amazon)
+    await userEvent.click(bulkBtn('Un-ignore'));
+    await waitFor(() => expect(screen.getByText('Un-ignored 2 transactions')).toBeTruthy());
+    expect((await readTx(db, 'tx-shopping'))!.ignored).toBe(0);
+    expect((await readTx(db, 'tx-bills-1'))!.ignored).toBe(0); // was never ignored; stays so
   });
 });
