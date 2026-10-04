@@ -147,7 +147,7 @@ export function NetWorth() {
         {chartData.length > 0 && (
           <div className={`pillGroup ${styles.rangePills}`}>
             {NW_RANGES.map((r) => (
-              <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
+              <button key={r} aria-pressed={r === range} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
                 {NW_RANGE_LABELS[r]}
               </button>
             ))}

@@ -23,12 +23,29 @@ curl -X POST http://localhost:3456/tools/spending_summary \
   -d '{"year": 2026, "month": 5}'
 ```
 
+Requests are checked in this order:
+
+| Status | Cause |
+|--------|-------|
+| 403 | `Host` or `Origin` is not local (`localhost`, `127.0.0.1`, `[::1]`). Blocks browsers on other origins and DNS rebinding. |
+| 401 | `FUNGIBLE_API_KEY` is set and the `Authorization: Bearer <key>` header is missing or wrong. Applies to `/notify` too. |
+| 404 | Unknown route or tool. |
+| 415 | `Content-Type` is not `application/json` (charset is fine). Required on every POST. |
+| 413 | Body over 1 MiB. |
+| 400 | Body is malformed JSON, or valid JSON that is not an object. An empty body means no arguments. |
+| 500 | The tool threw. The response is a generic `internal error`; details go to the server log. |
+
+Query strings on `/tools/<name>` are accepted and ignored.
+
 **Configuration** (in `~/.fungible/.env`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FUNGIBLE_API_KEY` | _(none)_ | Bearer token required on all requests. If unset, auth is skipped (dev only). |
+| `FUNGIBLE_API_KEY` | _(none)_ | Bearer token required on all requests, including `/notify`, and on the HTTP MCP server. Never generated for you; if unset, auth is skipped, which is fine on loopback only. |
+| `FUNGIBLE_BIND_HOST` | `127.0.0.1` | Address both HTTP servers bind to. A concrete address is accepted as a `Host`; `0.0.0.0` is not. |
 | `FUNGIBLE_API_PORT` | `3456` | Port to listen on. |
+
+Binding to a non-local address without a key logs a warning here. Prefer leaving it on loopback.
 
 Available tools: same set as the MCP server below.
 
@@ -40,7 +57,7 @@ Exposes your financial data to Claude via the [Model Context Protocol](https://m
 
 - **stdio** — Claude Desktop spawns `fungible mcp` as a child process. Always works, even when the TUI isn't open. When the TUI is running, writes notify it automatically so the UI refreshes. Use this if you're not sure which to pick.
 
-- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open. The GUI does not start this; use stdio with the GUI.
+- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open. It enforces the same Host/Origin, `Content-Type: application/json`, 1 MiB and `FUNGIBLE_API_KEY` rules as the HTTP API (clients must then send the `Authorization: Bearer` header). With `FUNGIBLE_BIND_HOST` set to a non-local address it refuses to start unless `FUNGIBLE_API_KEY` is set; a concrete bind address is accepted as a `Host`, while `0.0.0.0` needs its hostnames passed as `allowedHosts` in code. The GUI does not start this; use stdio with the GUI.
 
 Config file location:
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`

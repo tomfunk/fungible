@@ -5,6 +5,7 @@ import { registry } from '../../../gui/main/registry.js';
 import { RefreshProvider } from '../../../gui/renderer/src/hooks/useRefresh.js';
 import { FilterProvider } from '../../../gui/renderer/src/hooks/useFilter.js';
 import { FilterBar } from '../../../gui/renderer/src/components/FilterBar.js';
+import { SyncProgressProvider } from '../../../gui/renderer/src/hooks/useSyncProgress.js';
 import { UiPrefsProvider } from '../../../gui/renderer/src/hooks/useUiPrefs.js';
 import { NavContext } from '../../../gui/renderer/src/hooks/useNav.js';
 import type { Screen, TxFilter } from '../../../gui/shared/nav.js';
@@ -20,8 +21,23 @@ const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
     },
     cancelLink: async () => {},
   },
-  files: { pickCsv: async () => null, pickText: async () => null, saveCsv: async () => true },
+  files: {
+    pickCsv: async () => null,
+    pickText: async () => null,
+    saveCsv: async (csv, name) => {
+      saveCsvStub.calls.push({ csv: String(csv), name: String(name) });
+      if (saveCsvStub.result instanceof Error) throw saveCsvStub.result;
+      return saveCsvStub.result;
+    },
+  },
   app: { getVersion: async () => '0.0.0-test' },
+};
+
+/** Captures files.saveCsv calls. `result` is what the native dialog "returns":
+ *  true = saved, false = user cancelled, Error = the write failed. Reset by installBridge(). */
+export const saveCsvStub: { calls: { csv: string; name: string }[]; result: boolean | Error } = {
+  calls: [],
+  result: true,
 };
 
 export type BridgeHarness = {
@@ -35,6 +51,8 @@ export type BridgeHarness = {
 /** Installs a fake window.__bridge that routes calls into the real registry
  *  (backed by the mocked in-memory DB). Call in beforeEach, before rendering. */
 export function installBridge(): BridgeHarness {
+  saveCsvStub.calls = [];
+  saveCsvStub.result = true;
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   const invokeHandlers = new Map<string, (...args: unknown[]) => unknown>();
   (window as unknown as { __bridge: unknown }).__bridge = {
@@ -86,14 +104,16 @@ export function Providers({
 }) {
   return (
     <RefreshProvider>
-      <FilterProvider initial={initialFilter}>
-        <UiPrefsProvider>
-          <NavContext.Provider value={{ screen, txFilter, navigate }}>
-            {filterBar && <FilterBar />}
-            {children}
-          </NavContext.Provider>
-        </UiPrefsProvider>
-      </FilterProvider>
+      <SyncProgressProvider>
+        <FilterProvider initial={initialFilter}>
+          <UiPrefsProvider>
+            <NavContext.Provider value={{ screen, txFilter, navigate }}>
+              {filterBar && <FilterBar />}
+              {children}
+            </NavContext.Provider>
+          </UiPrefsProvider>
+        </FilterProvider>
+      </SyncProgressProvider>
     </RefreshProvider>
   );
 }

@@ -197,6 +197,7 @@ export async function deduplicateCsvVsPlaid(): Promise<number> {
  *     manual_category, the same way a sync would set it.
  *   - ignored: the Plaid row becomes ignored if either side was.
  *   - tags: unioned, no duplicates.
+ *   - tag_rule_suppressions: unioned, so a removed rule-applied tag stays removed.
  * One db.batch = one transaction, so a failure cannot half-transfer or delete
  * without transferring.
  */
@@ -222,6 +223,13 @@ async function deleteWithEditTransfer(pairs: Pick<Candidate, 'csvId' | 'plaidId'
       {
         sql: `INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id)
               SELECT ?, tag_id FROM transaction_tags WHERE transaction_id = ?`,
+        args: [plaidId, csvId],
+      },
+      // A tag a rule applied and the user removed stays removed on the Plaid
+      // row. The CSV row's own suppressions are deleted by the cascade below.
+      {
+        sql: `INSERT OR IGNORE INTO tag_rule_suppressions (transaction_id, tag_id)
+              SELECT ?, tag_id FROM tag_rule_suppressions WHERE transaction_id = ?`,
         args: [plaidId, csvId],
       },
     );

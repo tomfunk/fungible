@@ -68,8 +68,13 @@ if (process.argv.includes('--setup')) {
 
   const mcpPort = parseInt(process.env.FUNGIBLE_MCP_PORT ?? '3741', 10);
   const apiPort = parseInt(process.env.FUNGIBLE_API_PORT ?? '3456', 10);
-  startMcpHttpServer(mcpPort);
-  startApiServer(apiPort, { quiet: true });
+  // Both start functions reject on listen errors. Never let that crash the TUI;
+  // EADDRINUSE is already warned about by the servers themselves.
+  const warnStartup = (tag: string) => (e: NodeJS.ErrnoException) => {
+    if (e?.code !== 'EADDRINUSE') console.warn(`[${tag}]`, e?.message ?? e);
+  };
+  startMcpHttpServer(mcpPort).catch(warnStartup('fungible-mcp'));
+  startApiServer(apiPort, { quiet: true }).catch(warnStartup('fungible-api'));
 
   render(<App />);
 }

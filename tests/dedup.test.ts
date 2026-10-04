@@ -6,6 +6,7 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
+import { applyTagRules } from '../core/tag-rules.js';
 import { deduplicateCsvVsPlaid, getCsvPlaidDupeCandidates } from '../core/dedup.js';
 import { deleteDuplicate, deleteAllDuplicates } from '../core/accounts.js';
 import { seedTx } from './helpers/seedDb.js';
@@ -415,6 +416,103 @@ describe('edit transfer on dedup', () => {
     expect(await deduplicateCsvVsPlaid()).toBe(0);
     expect((await row(manual)).manual_category).toBe('Dining');
     expect((await row(plaid)).manual_category).toBeNull();
+  });
+
+  describe('tag rule suppressions', () => {
+    const tagId = async (name: string) => {
+      await db.execute({ sql: 'INSERT OR IGNORE INTO tags (name) VALUES (?)', args: [name] });
+      return Number((await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [name] })).rows[0].id);
+    };
+    const suppress = (txId: string, tag: number) =>
+      db.execute({ sql: 'INSERT OR IGNORE INTO tag_rule_suppressions (transaction_id, tag_id) VALUES (?, ?)', args: [txId, tag] });
+    const suppressed = async (txId: string) =>
+      (await db.execute({ sql: 'SELECT tag_id FROM tag_rule_suppressions WHERE transaction_id = ? ORDER BY tag_id', args: [txId] }))
+        .rows.map((r) => Number(r.tag_id));
+    const rule = (tag: number) =>
+      db.execute({ sql: "INSERT INTO tag_rules (match_type, pattern, tag_id) VALUES ('name', 'latte', ?)", args: [tag] });
+    beforeEach(async () => { await db.execute('DELETE FROM tag_rules'); });
+
+    it('moves the CSV row\'s suppression to the Plaid row and removes the CSV row\'s', async () => {
+      const { csv, plaid } = await pair();
+      const coffee = await tagId('coffee');
+      await suppress(csv, coffee);
+      await deduplicateCsvVsPlaid();
+      expect(await suppressed(plaid)).toEqual([coffee]);
+      expect(await suppressed(csv)).toEqual([]);
+    });
+
+    it('a later applyTagRules does not re-add the removed tag on the Plaid row', async () => {
+      const { csv, plaid } = await pair();
+      const coffee = await tagId('coffee');
+      await rule(coffee);
+      await suppress(csv, coffee);
+      await deduplicateCsvVsPlaid();
+      await applyTagRules();
+      expect(await tagNames(plaid)).toEqual([]);
+    });
+
+    it('only the suppressed tag stays off; other rule tags still apply', async () => {
+      const { csv, plaid } = await pair();
+      const coffee = await tagId('coffee');
+      const treat = await tagId('treat');
+      await rule(coffee);
+      await rule(treat);
+      await suppress(csv, coffee);
+      await deduplicateCsvVsPlaid();
+      await applyTagRules();
+      expect(await tagNames(plaid)).toEqual(['treat']);
+    });
+
+    it('does not touch suppressions of an unrelated pair or the Plaid row\'s own', async () => {
+      const a = await pair();
+      const b = await pair({ name: 'GROCER', amount: 40 }, { name: 'GROCER', amount: 40 });
+      const t1 = await tagId('t1');
+      const t2 = await tagId('t2');
+      await suppress(a.csv, t1);
+      await suppress(a.plaid, t2);
+      await suppress(b.csv, t2);
+      await deduplicateCsvVsPlaid();
+      expect(await suppressed(a.plaid)).toEqual([t1, t2]);
+      expect(await suppressed(b.plaid)).toEqual([t2]);
+    });
+
+    it('with no suppressions, nothing is written', async () => {
+      const { plaid } = await pair();
+      await deduplicateCsvVsPlaid();
+      expect(await suppressed(plaid)).toEqual([]);
+      expect((await db.execute('SELECT COUNT(*) AS n FROM tag_rule_suppressions')).rows[0].n).toBe(0);
+    });
+
+    it('is idempotent when the Plaid row already has the same suppression', async () => {
+      const { csv, plaid } = await pair();
+      const coffee = await tagId('coffee');
+      await suppress(csv, coffee);
+      await suppress(plaid, coffee);
+      expect(await deduplicateCsvVsPlaid()).toBe(1);
+      expect(await suppressed(plaid)).toEqual([coffee]);
+    });
+
+    it('deleteAllDuplicates transfers suppressions for every pair', async () => {
+      const a = await pair({ source: 'manual' });
+      const b = await pair({ source: 'manual', name: 'GROCER', amount: 40 }, { name: 'GROCER', amount: 40 });
+      const t1 = await tagId('t1');
+      const t2 = await tagId('t2');
+      await suppress(a.csv, t1);
+      await suppress(b.csv, t2);
+      await deleteAllDuplicates([a.csv, b.csv]);
+      expect(await suppressed(a.plaid)).toEqual([t1]);
+      expect(await suppressed(b.plaid)).toEqual([t2]);
+      expect(await suppressed(a.csv)).toEqual([]);
+      expect(await suppressed(b.csv)).toEqual([]);
+    });
+
+    it('review-tab delete (deleteDuplicate) transfers suppressions too', async () => {
+      const { csv, plaid } = await pair({ source: 'manual' });
+      const coffee = await tagId('coffee');
+      await suppress(csv, coffee);
+      await deleteDuplicate(csv);
+      expect(await suppressed(plaid)).toEqual([coffee]);
+    });
   });
 
   describe('user-confirmed duplicate deletes (review tab)', () => {
