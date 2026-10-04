@@ -20,6 +20,7 @@ import {
   clearOverridesBulk,
   setIgnoredBulk,
   addTransaction,
+  normalizeAmount,
 } from '../core/transactions.js';
 
 let txId = 0;
@@ -224,6 +225,83 @@ describe('addTransaction', () => {
     await expect(addTransaction({
       accountId: 'no-such-account', date: '2026-08-24', name: 'X', amount: 1, category: 'Shopping',
     })).rejects.toThrow(/no account/i);
+  });
+
+  describe('amount validation', () => {
+    const add = (amount: number) => addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: 'Amt', amount, category: 'Shopping',
+    });
+    const amountOf = async (id: string) =>
+      Number((await db.execute({ sql: 'SELECT amount FROM transactions WHERE id = ?', args: [id] })).rows[0]!.amount);
+    const counts = async () => ({
+      tx: Number((await db.execute('SELECT COUNT(*) c FROM transactions')).rows[0]!.c),
+      tags: Number((await db.execute('SELECT COUNT(*) c FROM transaction_tags')).rows[0]!.c),
+    });
+
+    it.each([
+      [0.1 + 0.2, 0.3],
+      [4.505, 4.51],
+      [-4.505, -4.51], // half rounds away from zero, symmetric
+      [2.675, 2.68],
+      [-2.675, -2.68],
+      // 1.005 is really 1.00499999999999989..., and we round the double, so it lands on 1
+      [1.005, 1],
+      [12.34, 12.34],
+      [999999999.99, 999999999.99],
+      [-999999999.99, -999999999.99],
+      [2914, 2914],
+      [-80, -80],
+      [0.004, 0],
+    ])('stores %s as %s', async (input, expected) => {
+      const id = await add(input);
+      expect(await amountOf(id)).toBe(expected);
+    });
+
+    // -0 is covered by the pure normalizeAmount describe: libsql reads a stored -0
+    // back as 0, so asserting on the row could never fail.
+
+    it.each([
+      ['NaN', NaN, /amount/i],
+      ['Infinity', Infinity, /amount/i],
+      ['-Infinity', -Infinity, /amount/i],
+      ['1e9', 1e9, /1,?000,?000,?000|1e9/],
+      ['-1e9', -1e9, /1,?000,?000,?000|1e9/],
+      ['1e9+0.5', 1e9 + 0.5, /1,?000,?000,?000|1e9/],
+      ['999999999.996 (rounds up to the limit)', 999999999.996, /1,?000,?000,?000|1e9/],
+      ['1e15', 1e15, /1,?000,?000,?000|1e9/],
+      ['1e308', 1e308, /1,?000,?000,?000|1e9/],
+      ['-1e308', -1e308, /1,?000,?000,?000|1e9/],
+      ['a string', '5' as unknown as number, /amount/i],
+    ])('rejects %s and writes nothing', async (_n, amount, msg) => {
+      const before = await counts();
+      const err = await add(amount).catch((e: Error) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/amount/i);
+      expect((err as Error).message).toMatch(msg);
+      expect(await counts()).toEqual(before);
+    });
+
+    it('reports a bad amount before looking up a bad account', async () => {
+      await expect(addTransaction({
+        accountId: 'no-such-account', date: '2026-08-24', name: 'X', amount: NaN, category: 'Shopping',
+      })).rejects.toThrow(/amount/i);
+    });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('normalizeAmount (pure)', () => {
+  it('never returns -0', () => {
+    for (const x of [-0, -0.004, -0.0049999]) expect(Object.is(normalizeAmount(x), 0)).toBe(true);
+  });
+  it.each([[999999999.996], [-999999999.996], [999999999.995]])('rejects %s (rounds up to the limit)', (x) => {
+    expect(() => normalizeAmount(x)).toThrow(/1,000,000,000/);
+  });
+  it.each([[999999999.994, 999999999.99]])('accepts %s -> %s', (x, y) => {
+    expect(normalizeAmount(x)).toBe(y);
+  });
+  it.each([[true], [null], [undefined], ['5'], [[]], [{}]])('rejects non-number %j', (x) => {
+    expect(() => normalizeAmount(x)).toThrow(/finite number/);
   });
 });
 

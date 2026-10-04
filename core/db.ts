@@ -8,7 +8,16 @@ const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// libsql defaults to busy_timeout=0, so a second process (TUI/GUI plus the MCP
+// server) writing the same file fails instantly with SQLITE_BUSY instead of
+// waiting its turn. Wait up to this long for the other writer to commit.
+export const BUSY_TIMEOUT_MS = 5000;
+
 export const db: Client = createClient({ url: `file:${DB_PATH}` });
+// Not awaited (no top-level await: this module is bundled into the Electron
+// main process). The file-backed libsql client runs statements synchronously
+// on one connection, so the pragma takes effect before any later query.
+db.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`).catch(() => {});
 
 export async function initDb() {
   // Create all tables (idempotent)

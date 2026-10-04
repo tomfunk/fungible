@@ -97,12 +97,23 @@ export type TrendsRange = 'week' | 'month' | 'quarter' | 'year';
 const Q_FROM = ['01', '04', '07', '10'];
 const Q_TO   = ['03', '06', '09', '12'];
 
+// Upper bound on periods one call may produce (~192 years of weeks). Real
+// ranges are a few dozen periods; a malformed or absurd bound (e.g. a year
+// parsed as 99999999) would otherwise spin for billions of iterations.
+export const MAX_PERIODS = 10_000;
+
 export function generatePeriods(
   range: TrendsRange,
   from: string,
   to: string,
 ): Array<{ label: string; from: string; to: string }> {
   const result: Array<{ label: string; from: string; to: string }> = [];
+  const push = (p: { label: string; from: string; to: string }) => {
+    if (result.length >= MAX_PERIODS) {
+      throw new Error(`generatePeriods: ${range} range ${from}..${to} exceeds the ${MAX_PERIODS}-period limit`);
+    }
+    result.push(p);
+  };
 
   if (range === 'month') {
     let y = parseInt(from.slice(0, 4));
@@ -110,7 +121,7 @@ export function generatePeriods(
     const endY = parseInt(to.slice(0, 4));
     const endM = parseInt(to.slice(5, 7));
     while (y < endY || (y === endY && m <= endM)) {
-      result.push({ label: `${MONTHS[m - 1]} ${y}`, from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-31` });
+      push({ label: `${MONTHS[m - 1]} ${y}`, from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-31` });
       if (++m > 12) { m = 1; y++; }
     }
   } else if (range === 'quarter') {
@@ -119,21 +130,21 @@ export function generatePeriods(
     const endY = parseInt(to.slice(0, 4));
     const endQ = Math.floor((parseInt(to.slice(5, 7)) - 1) / 3) + 1;
     while (y < endY || (y === endY && q <= endQ)) {
-      result.push({ label: `Q${q} ${y}`, from: `${y}-${Q_FROM[q - 1]}-01`, to: `${y}-${Q_TO[q - 1]}-31` });
+      push({ label: `Q${q} ${y}`, from: `${y}-${Q_FROM[q - 1]}-01`, to: `${y}-${Q_TO[q - 1]}-31` });
       if (++q > 4) { q = 1; y++; }
     }
   } else if (range === 'year') {
     let y = parseInt(from.slice(0, 4));
     const endY = parseInt(to.slice(0, 4));
     while (y <= endY) {
-      result.push({ label: `${y}`, from: `${y}-01-01`, to: `${y}-12-31` });
+      push({ label: `${y}`, from: `${y}-01-01`, to: `${y}-12-31` });
       y++;
     }
   } else {
     let current = from;
     while (current <= to) {
       const end = addDays(current, 6);
-      result.push({ label: weekLabel(current, end), from: current, to: end });
+      push({ label: weekLabel(current, end), from: current, to: end });
       current = addDays(current, 7);
     }
   }

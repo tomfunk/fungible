@@ -172,17 +172,17 @@ export function Trends() {
         )}
         {!chartTypeLocked && (
           <div className="pillGroup" title="Chart type">
-            <button className={chartType === 'bar' ? 'pillActive' : 'pill'} onClick={() => setChartType('bar')}>
+            <button aria-pressed={chartType === 'bar'} className={chartType === 'bar' ? 'pillActive' : 'pill'} onClick={() => setChartType('bar')}>
               Bars
             </button>
-            <button className={chartType === 'line' ? 'pillActive' : 'pill'} onClick={() => setChartType('line')}>
+            <button aria-pressed={chartType === 'line'} className={chartType === 'line' ? 'pillActive' : 'pill'} onClick={() => setChartType('line')}>
               Line
             </button>
           </div>
         )}
         <div className={`pillGroup ${styles.rangePills}`}>
           {TRENDS_RANGES.map((r) => (
-            <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
+            <button key={r} aria-pressed={r === range} className={r === range ? 'pillActive' : 'pill'} onClick={() => setRange(r)}>
               {RANGE_LABELS[r]}
             </button>
           ))}

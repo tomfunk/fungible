@@ -22,6 +22,25 @@ export function isValidIsoDate(s: string): boolean {
 
 // ── Single-transaction mutations ───────────────────────────────────────────────
 
+/** Exclusive magnitude limit for a manually entered amount. */
+export const MAX_MANUAL_AMOUNT = 1e9;
+
+/**
+ * Validate and round a hand-entered amount to cents (half away from zero,
+ * never -0). The range check is on the rounded value, so 999999999.996 —
+ * which rounds up to the limit — is rejected.
+ */
+export function normalizeAmount(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    throw new Error('Transaction amount must be a finite number.');
+  }
+  const rounded = Math.sign(raw) * Math.round(Math.abs(raw) * 100) / 100 + 0;
+  if (Math.abs(rounded) >= MAX_MANUAL_AMOUNT) {
+    throw new Error('Transaction amount must be less than 1,000,000,000 in absolute value.');
+  }
+  return rounded;
+}
+
 /**
  * Insert a hand-entered transaction — for a real bank transaction Plaid's
  * `transactionsSync` never reports (a genuine feed gap, not something our
@@ -56,7 +75,8 @@ export async function addTransaction(input: {
   category: string;
   merchantName?: string;
 }): Promise<string> {
-  const { accountId, date, amount, category } = input;
+  const { accountId, date, category } = input;
+  const amount = normalizeAmount(input.amount);
   const name = input.name.trim();
   const merchantName = input.merchantName?.trim() || null;
 

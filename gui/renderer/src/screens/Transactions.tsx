@@ -828,14 +828,14 @@ function AddModal({
         <div className="pillGroup">
           <button
             type="button"
-            className={kind === 'expense' ? 'pillActive' : 'pill'}
+            aria-pressed={kind === 'expense'} className={kind === 'expense' ? 'pillActive' : 'pill'}
             onClick={() => setKind('expense')}
           >
             Expense
           </button>
           <button
             type="button"
-            className={kind === 'income' ? 'pillActive' : 'pill'}
+            aria-pressed={kind === 'income'} className={kind === 'income' ? 'pillActive' : 'pill'}
             onClick={() => setKind('income')}
           >
             Income

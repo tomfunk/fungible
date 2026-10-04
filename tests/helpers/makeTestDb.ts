@@ -1,6 +1,6 @@
 import { createClient } from '@libsql/client';
 
-const SCHEMA = `
+export const SCHEMA = `
   CREATE TABLE accounts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
