@@ -1,12 +1,11 @@
 import React from 'react';
-import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import { render } from 'ink-testing-library';
-import { render as inkRender } from 'ink';
 import { fmtValue, fmtDialValue, type CanvasSpec } from '../../core/canvas-agent.js';
 import type { CanvasHistoryEntry } from '../../core/canvas-history.js';
 import { Canvas, CanvasView, type LoadedCanvasSpec } from '../../tui/Canvas.js';
 import { waitFor } from '../helpers/waitFor.js';
+import { renderAtWidth } from './helpers/renderAtWidth.js';
 
 // core/canvas-history.ts does real readFileSync/writeFileSync against
 // ~/.fungible paths — mocked here so list-row persistence tests (further below)
@@ -643,46 +642,9 @@ describe('CanvasView — long dial label stays on one line', () => {
 // ink-testing-library hardcodes its virtual terminal to 100 columns, which is wide
 // enough that this row never actually gets squeezed — so a plain `render()` call
 // exercises the "value wider than the nominal column" half of the fix but not the
-// "genuinely narrow terminal" half. `renderAtWidth` below reimplements
+// "genuinely narrow terminal" half. `renderAtWidth` (tests/tui/helpers) reimplements
 // ink-testing-library's own render() (see node_modules/ink-testing-library) with a
 // configurable `columns`, so the squeeze case gets covered too.
-
-function renderAtWidth(width: number, tree: React.ReactElement) {
-  class Stdout extends EventEmitter {
-    columns = width;
-    frames: string[] = [];
-    _lastFrame?: string;
-    write = (frame: string) => { this.frames.push(frame); this._lastFrame = frame; };
-    lastFrame = () => this._lastFrame;
-  }
-  class Stderr extends EventEmitter {
-    frames: string[] = [];
-    _lastFrame?: string;
-    write = (frame: string) => { this.frames.push(frame); this._lastFrame = frame; };
-    lastFrame = () => this._lastFrame;
-  }
-  class Stdin extends EventEmitter {
-    isTTY = true;
-    write = () => {};
-    setEncoding = () => {};
-    setRawMode = () => {};
-    resume = () => {};
-    pause = () => {};
-    ref = () => {};
-    unref = () => {};
-    read = () => null;
-  }
-  const stdout = new Stdout();
-  const instance = inkRender(tree, {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stderr: new Stderr() as unknown as NodeJS.WriteStream,
-    stdin: new Stdin() as unknown as NodeJS.ReadStream,
-    debug: true,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  return { lastFrame: stdout.lastFrame, unmount: instance.unmount };
-}
 
 const LONG_LABEL_AND_VALUE_SPEC: CanvasSpec = {
   title: 'Long Label And Value Test',
