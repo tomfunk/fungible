@@ -167,6 +167,36 @@ describe('read tools', () => {
       expect((await mcp.callTool('list_transactions', { limit: 2 })).text.split('\n')).toHaveLength(2);
     });
 
+    it('treats LIKE wildcards and backslashes in search as literal text', async () => {
+      for (const [id, name] of [['w1', '100% Cash'], ['w2', '100X Cash'], ['w3', 'a_b'], ['w4', 'axb'], ['w5', 'back\\slash']]) {
+        await seedTx(db, { id, account_id: 'chk', date: day(9), name, amount: 1, category: 'Food' });
+      }
+      const names = async (search: string) =>
+        (await mcp.callTool('list_transactions', { search })).text.split('\n').filter(Boolean);
+      const has = (lines: string[], id: string) => lines.some((l) => l.includes(`[${id}]`));
+      const pct = await names('100%');
+      expect(has(pct, 'w1')).toBe(true);
+      expect(has(pct, 'w2')).toBe(false);
+      const us = await names('a_b');
+      expect(has(us, 'w3')).toBe(true);
+      expect(has(us, 'w4')).toBe(false);
+      expect(has(await names('back\\slash'), 'w5')).toBe(true);
+      expect(has(await names('k\\s'), 'w5')).toBe(true);
+      expect(has(await names('100X'), 'w2')).toBe(true);
+      expect(has(await names('CASH'), 'w1')).toBe(true);
+    });
+
+    it('escapes wildcards in the display_name clause too', async () => {
+      for (const [id, dn] of [['d1', '50% Off'], ['d2', '50X Off'], ['d3', 'p_q'], ['d4', 'pxq']]) {
+        await seedTx(db, { id, account_id: 'chk', date: day(9), name: `RAW ${id}`, amount: 1, category: 'Food' });
+        await db.execute({ sql: 'UPDATE transactions SET display_name = ? WHERE id = ?', args: [dn, id] });
+      }
+      const run = async (search: string) =>
+        (await mcp.callTool('list_transactions', { search })).text;
+      const pct = await run('50%'); expect(pct).toContain('[d1]'); expect(pct).not.toContain('[d2]');
+      const us = await run('p_q'); expect(us).toContain('[d3]'); expect(us).not.toContain('[d4]');
+    });
+
     it('defaults to 50 rows and enforces 1..500', async () => {
       for (let i = 0; i < 60; i++) await seedTx(db, { account_id: 'chk', date: day(10), name: `Bulk ${i}`, amount: 1, category: 'Food' });
       expect((await mcp.callTool('list_transactions', {})).text.split('\n')).toHaveLength(50);

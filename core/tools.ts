@@ -640,8 +640,9 @@ async function executeToolImpl(
         args.push(from, to);
       }
       if (input['search']) {
-        conditions.push('(t.name LIKE ? OR t.display_name LIKE ?)');
-        args.push(`%${str('search')}%`, `%${str('search')}%`);
+        conditions.push("(t.name LIKE ? ESCAPE '\\' OR t.display_name LIKE ? ESCAPE '\\')");
+        const pat = `%${str('search').replace(/[\\%_]/g, '\\$&')}%`;
+        args.push(pat, pat);
       }
       const where = 'WHERE ' + conditions.join(' AND ');
       const limit = input['limit'] ? num('limit') : 50;
