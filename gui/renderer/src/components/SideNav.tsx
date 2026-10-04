@@ -27,6 +27,7 @@ export function SideNav({
       {SCREEN_ORDER.map((s) => (
         <button
           key={s}
+          aria-current={s === active ? 'page' : undefined}
           className={s === active ? styles.itemActive : styles.item}
           onClick={() => onSelect(s)}
         >
