@@ -253,10 +253,16 @@ describe('fmtCompactSigned', () => {
 describe('fmtCompact boundaries', () => {
   it.each([
     [999, '$999.00'], [1_000, '$1,000.00'], [9_999, '$9,999.00'], [10_000, '$10.0K'],
-    // Pinned as-is: just under a million still renders in K, rounding up to 1000.0K.
-    [999_999, '$1000.0K'], [1_000_000, '$1.00M'], [-10_000, '-$10.0K'],
+    // Switches to M as soon as the K rendering would round to 1000.0K.
+    [999_949, '$999.9K'], [999_950, '$1.00M'], [999_999, '$1.00M'], [-999_999, '-$1.00M'],
+    [1_000_000, '$1.00M'], [-10_000, '-$10.0K'],
   ])('%d -> %s', (n, out) => {
     expect(fmtCompact(n)).toBe(out);
+  });
+
+  it('fmtCompactSigned switches to M at the same boundary', () => {
+    expect(fmtCompactSigned(999_999)).toBe('+$1.00M');
+    expect(fmtCompactSigned(-999_999)).toBe('-$1.00M');
   });
 });
 

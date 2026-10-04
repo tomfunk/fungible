@@ -78,7 +78,7 @@ describe('GUI Health', () => {
   it('spending stepper adjusts by $100 and shows reset when modified', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
-    const spendDial = screen.getByText('Monthly spending').closest('div')!.parentElement!;
+    const spendDial = screen.getByRole('group', { name: 'Monthly spending' });
     // Dollar dial, unfocused throughout this test -> comma-formatted text, not
     // a type="number" input; strip commas before comparing as numbers.
     const spendInput = () => spendDial.querySelector('input') as HTMLInputElement;
@@ -97,7 +97,7 @@ describe('GUI Health', () => {
   it('the spending dial shows raw digits while focused and comma-formats on blur', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
-    const spendDial = screen.getByText('Monthly spending').closest('div')!.parentElement!;
+    const spendDial = screen.getByRole('group', { name: 'Monthly spending' });
     const input = spendDial.querySelector('input') as HTMLInputElement;
     expect(input.type).toBe('text');
     expect(input.value).toMatch(/^-?[\d,]+$/);
@@ -120,7 +120,7 @@ describe('GUI Health', () => {
     // "Net worth" metric in Retirement panel shows "X% of FIRE target" — changes with withdrawal rate
     const netWorthRow = screen.getByText('Net worth').closest('div')!;
     const before = netWorthRow.textContent;
-    const wDial = screen.getByText('Withdrawal rate').closest('div')!.parentElement!;
+    const wDial = screen.getByRole('group', { name: 'Withdrawal rate' });
     const input = wDial.querySelector('input[type="number"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '8' } });
     await waitFor(() => {
@@ -132,7 +132,7 @@ describe('GUI Health', () => {
   it('growth rate steps by 1.0 (matching TUI), not 0.5', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Growth rate')).toBeTruthy());
-    const gDial = screen.getByText('Growth rate').closest('div')!.parentElement!;
+    const gDial = screen.getByRole('group', { name: 'Growth rate' });
     const before = (gDial.querySelector('input[type="number"]') as HTMLInputElement).value;
     const plus = Array.from(gDial.querySelectorAll('button')).find((b) => b.textContent === '+')!;
     await userEvent.click(plus);
@@ -146,7 +146,7 @@ describe('GUI Health', () => {
       await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
       expect(screen.getByRole('button', { name: 'Month' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Year' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Savings Rate' }).className).toBe('pillActive');
+      expect(screen.getByRole('button', { name: 'Savings Rate' }).getAttribute('aria-pressed')).toBe('true');
       expect(screen.getByRole('button', { name: 'Cash Runway' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Liquid Runway' })).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Debt Payoff' })).toBeTruthy();
@@ -159,8 +159,8 @@ describe('GUI Health', () => {
       renderScreen(<Health />);
       await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
       await userEvent.click(screen.getByRole('button', { name: 'Retirement Balance' }));
-      expect(screen.getByRole('button', { name: 'Retirement Balance' }).className).toBe('pillActive');
-      expect(screen.getByRole('button', { name: 'Savings Rate' }).className).toBe('pill');
+      expect(screen.getByRole('button', { name: 'Retirement Balance' }).getAttribute('aria-pressed')).toBe('true');
+      expect(screen.getByRole('button', { name: 'Savings Rate' }).getAttribute('aria-pressed')).toBe('false');
     });
 
     it('shows the live-assumptions caption only for Years to FIRE / Coast FIRE', async () => {
@@ -182,8 +182,8 @@ describe('GUI Health', () => {
       renderScreen(<Health />);
       await waitFor(() => expect(screen.getByText('History')).toBeTruthy());
       await userEvent.click(screen.getByRole('button', { name: 'Year' }));
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Year' }).className).toBe('pillActive'));
-      expect(screen.getByRole('button', { name: 'Month' }).className).toBe('pill');
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Year' }).getAttribute('aria-pressed')).toBe('true'));
+      expect(screen.getByRole('button', { name: 'Month' }).getAttribute('aria-pressed')).toBe('false');
     });
 
     it('omits the History section when there is no balance history', async () => {

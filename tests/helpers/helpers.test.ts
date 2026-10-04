@@ -8,6 +8,11 @@ import { makeTestDb } from './makeTestDb.js';
 import { decryptToken } from '../../core/crypto.js';
 import { useFixedClock } from './fakeClock.js';
 import { useTempCsv } from './tempCsv.js';
+import { makeTempDataDir, openTempDb, spawnWriter, assertSafeTempPath } from './tempFileDb.js';
+import { anthropicToolUse, anthropicText, interleave, openaiToolCall, openaiFinish, anthropicStream } from './makeLlmStream.js';
+import { symlinkSync, rmSync, mkdtempSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 describe('waitFor', () => {
   it('resolves once the assertion passes', async () => {
@@ -132,5 +137,85 @@ describe('seedPlaidItem / seedTx', () => {
     expect(rows).toMatchObject({ source: 'csv', manual_category: 'Dining', display_name: 'Latte', ignored: 1, pending: 1, original_date: '2024-12-30', amount: -5 });
     expect((await db.execute({ sql: 'SELECT source, pending, ignored FROM transactions WHERE id = ?', args: [a.id] })).rows[0])
       .toMatchObject({ source: 'plaid', pending: 0, ignored: 0 });
+  });
+});
+
+describe('tempFileDb safety guard', () => {
+  const home = path.join(os.homedir(), '.fungible');
+  it('refuses ~/.fungible and anything under it', () => {
+    expect(() => assertSafeTempPath(home)).toThrow(/protected|temp/);
+    expect(() => assertSafeTempPath(path.join(home, 'x'))).toThrow(/protected|temp/);
+    expect(() => assertSafeTempPath(path.join(home, 'fungible.db'))).toThrow();
+  });
+  it('refuses paths outside the OS temp dir', () => {
+    expect(() => assertSafeTempPath(path.join(os.homedir(), 'elsewhere'))).toThrow(/temp dir/);
+  });
+  it('refuses a symlink in tmp that points into ~/.fungible', () => {
+    const base = mkdtempSync(path.join(os.tmpdir(), 'guard-link-'));
+    const link = path.join(base, 'link');
+    // Works whether or not ~/.fungible exists (dangling links are resolved too).
+    try {
+      symlinkSync(home, link);
+      expect(() => assertSafeTempPath(link)).toThrow(/protected/);
+      expect(() => assertSafeTempPath(path.join(link, 'sub'))).toThrow(/protected/);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+  it('refuses an inherited FUNGIBLE_DATA_DIR', () => {
+    const t = makeTempDataDir();
+    const prev = process.env.FUNGIBLE_DATA_DIR;
+    process.env.FUNGIBLE_DATA_DIR = t.dir;
+    try { expect(() => assertSafeTempPath(t.dir)).toThrow(/protected/); }
+    finally {
+      if (prev === undefined) delete process.env.FUNGIBLE_DATA_DIR; else process.env.FUNGIBLE_DATA_DIR = prev;
+      t.cleanup();
+    }
+  });
+  it('makeTempDataDir lives under tmp and cleanup removes it', async () => {
+    const t = makeTempDataDir();
+    expect(existsSync(t.dir)).toBe(true);
+    const db = await openTempDb(t.dbPath);
+    await db.execute("INSERT INTO tags (name) VALUES ('a')");
+    expect((await db.execute('SELECT COUNT(*) c FROM tags')).rows[0].c).toBe(1);
+    db.close();
+    t.cleanup();
+    expect(existsSync(t.dir)).toBe(false);
+  });
+});
+
+describe('spawnWriter + db-writer-child', () => {
+  it('a single writer succeeds with consistent triples', async () => {
+    const t = makeTempDataDir();
+    try {
+      const db = await openTempDb(t.dbPath);
+      const r = await spawnWriter({ dataDir: t.dir, env: { WRITER_ID: 'a', WRITER_BATCHES: '10' } });
+      expect(r.report).toEqual({ id: 'a', ok: 10, errors: [] });
+      expect(r.exitCode).toBe(0);
+      const c = async (q: string) => Number((await db.execute(q)).rows[0].c);
+      expect(await c('SELECT COUNT(*) c FROM tags')).toBe(10);
+      expect(await c('SELECT COUNT(*) c FROM transactions')).toBe(10);
+      expect(await c('SELECT COUNT(*) c FROM transaction_tags')).toBe(10);
+      db.close();
+    } finally { t.cleanup(); }
+  }, 30_000);
+});
+
+describe('makeLlmStream', () => {
+  it('splits tool input across deltas and interleaves blocks in order', async () => {
+    const ev = interleave(anthropicToolUse(0, 'a', 'x', { k: 'vvvv' }, 3), anthropicToolUse(1, 'b', 'y', { z: 1 }, 2));
+    const seen: unknown[] = [];
+    for await (const e of anthropicStream(ev)) seen.push(e);
+    expect(seen).toHaveLength(ev.length);
+    const frags = ev.filter((e: any) => e.index === 0 && e.delta).map((e: any) => e.delta.partial_json);
+    expect(frags.length).toBe(3);
+    expect(JSON.parse(frags.join(''))).toEqual({ k: 'vvvv' });
+    expect(anthropicText(0, 'a', 'b')).toHaveLength(4);
+  });
+  it('openai tool_call: id/name on first chunk only, finish chunk separate', () => {
+    const c: any[] = openaiToolCall(0, 'id1', 'fn', { q: 1 }, 2);
+    expect(c[0].choices[0].delta.tool_calls[0]).toMatchObject({ id: 'id1', function: { name: 'fn' } });
+    expect(c[1].choices[0].delta.tool_calls[0].id).toBeUndefined();
+    expect(openaiFinish().choices[0].finish_reason).toBe('tool_calls');
   });
 });
