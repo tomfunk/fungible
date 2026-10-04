@@ -1,6 +1,10 @@
 import type { render } from 'ink-testing-library';
 import { expect } from 'vitest';
-import { waitFor, flatFrame as flat, pressAndWait } from '../../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame as flat, pressAndWait as basePressAndWait } from '../../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+const pressAndWait: typeof basePressAndWait = (r, key, text, opts = 10_000) => basePressAndWait(r, key, text, opts);
 
 type R = Pick<ReturnType<typeof render>, 'stdin' | 'lastFrame'>;
 

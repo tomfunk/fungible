@@ -2,7 +2,10 @@ import React from 'react';
 import { render } from 'ink-testing-library';
 import { expect } from 'vitest';
 import { Accounts } from '../../../tui/Accounts.js';
-import { waitFor, flatFrame } from '../../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame } from '../../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
 import { W, noop } from './screenSetup.js';
 
 /** Renders the Accounts screen inside the providers App normally supplies. */

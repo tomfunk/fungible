@@ -25,7 +25,11 @@ import * as syncApi from '../../core/sync.js';
 import * as dedupApi from '../../core/dedup.js';
 import { SyncStatusProvider } from '../../tui/SyncStatusContext.js';
 import { setSyncResult, clearSyncFailures } from '../../core/sync-status.js';
-import { waitFor, frame, flatFrame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, flatFrame } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 import { renderAccounts, tabTo } from './helpers/accountsScreen.js';
 

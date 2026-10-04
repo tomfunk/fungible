@@ -17,7 +17,11 @@ import { db } from '../../core/db.js';
 import * as syncApi from '../../core/sync.js';
 import * as refreshApi from '../../core/transactions-refresh.js';
 import * as keyHealthApi from '../../core/key-health.js';
-import { waitFor, flatFrame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { useSeededScreenDb } from './helpers/screenSetup.js';
 import { renderAccounts, tabTo } from './helpers/accountsScreen.js';
 

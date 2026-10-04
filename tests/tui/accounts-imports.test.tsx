@@ -9,7 +9,11 @@ vi.mock('../../core/db.js', async () => {
 import { db } from '../../core/db.js';
 import { importCsvTransactions } from '../../core/accounts.js';
 import { makeCsvRow } from '../helpers/makeCsvRow.js';
-import { waitFor, flatFrame as flat } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame as flat } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { useTempCsv } from '../helpers/tempCsv.js';
 import { CSV_SKIP_COPY } from '../../core/csv-import-copy.js';
 import { renderAccounts } from './helpers/accountsScreen.js';

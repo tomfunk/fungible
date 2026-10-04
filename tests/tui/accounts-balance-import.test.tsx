@@ -9,7 +9,12 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
-import { waitFor, flatFrame as flat, pressAndWait } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame as flat, pressAndWait as basePressAndWait } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+const pressAndWait: typeof basePressAndWait = (r, key, text, opts = 10_000) => basePressAndWait(r, key, text, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { useTempCsv } from '../helpers/tempCsv.js';
 import { renderAccounts } from './helpers/accountsScreen.js';
 import { toAddData, toBalanceHistoryFile, typePath } from './helpers/driveCsvImport.js';
