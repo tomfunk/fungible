@@ -5,6 +5,7 @@ import { registry } from '../../../gui/main/registry.js';
 import { RefreshProvider } from '../../../gui/renderer/src/hooks/useRefresh.js';
 import { FilterProvider } from '../../../gui/renderer/src/hooks/useFilter.js';
 import { FilterBar } from '../../../gui/renderer/src/components/FilterBar.js';
+import { SyncProgressProvider } from '../../../gui/renderer/src/hooks/useSyncProgress.js';
 import { UiPrefsProvider } from '../../../gui/renderer/src/hooks/useUiPrefs.js';
 import { NavContext } from '../../../gui/renderer/src/hooks/useNav.js';
 import type { Screen, TxFilter } from '../../../gui/shared/nav.js';
@@ -103,14 +104,16 @@ export function Providers({
 }) {
   return (
     <RefreshProvider>
-      <FilterProvider initial={initialFilter}>
-        <UiPrefsProvider>
-          <NavContext.Provider value={{ screen, txFilter, navigate }}>
-            {filterBar && <FilterBar />}
-            {children}
-          </NavContext.Provider>
-        </UiPrefsProvider>
-      </FilterProvider>
+      <SyncProgressProvider>
+        <FilterProvider initial={initialFilter}>
+          <UiPrefsProvider>
+            <NavContext.Provider value={{ screen, txFilter, navigate }}>
+              {filterBar && <FilterBar />}
+              {children}
+            </NavContext.Provider>
+          </UiPrefsProvider>
+        </FilterProvider>
+      </SyncProgressProvider>
     </RefreshProvider>
   );
 }
