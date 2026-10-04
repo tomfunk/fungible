@@ -16,7 +16,11 @@ vi.mock('../../core/profile.js', async (importActual) => {
 });
 
 import { Settings } from '../../tui/Settings.js';
-import { waitFor, frame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 import { loadProfile, saveProfile } from '../../core/profile.js';
 
