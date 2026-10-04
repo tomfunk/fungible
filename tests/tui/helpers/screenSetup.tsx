@@ -3,6 +3,7 @@ import { beforeEach, afterEach, vi } from 'vitest';
 import { cleanup } from 'ink-testing-library';
 import { EventEmitter } from 'node:events';
 import { db } from '../../../core/db.js';
+import { wipeScreenTables } from '../../helpers/wipeTables.js';
 import { seedTuiData } from '../../helpers/seedTuiData.js';
 import { loadProfile } from '../../../core/profile.js';
 import { RefreshProvider } from '../../../tui/RefreshContext.js';
@@ -43,11 +44,17 @@ export const noop = () => {};
 export function useSeededScreenDb(): void {
   beforeEach(async () => {
     vi.mocked(loadProfile).mockResolvedValue(null); // no household members unless a test sets one
-    for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
-                       'category_rules', 'name_rules', 'hidden_categories', 'balance_history', 'settings']) {
-      await db.execute(`DELETE FROM ${tbl}`);
-    }
+    await wipeScreenTables(db);
     await seedTuiData(db);
+  });
+  afterEach(() => cleanup());
+}
+
+/** Like useSeededScreenDb but leaves every table empty (for empty-state tests). */
+export function useEmptyScreenDb(): void {
+  beforeEach(async () => {
+    vi.mocked(loadProfile).mockResolvedValue(null);
+    await wipeScreenTables(db);
   });
   afterEach(() => cleanup());
 }
