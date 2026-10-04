@@ -93,13 +93,13 @@ export function Rules() {
       <div className={styles.topBar}>
         <h1 className={styles.title}>Rules</h1>
         <div className="tabGroup">
-          <button className={tab === 'rules' ? 'tabActive' : 'tab'} onClick={() => setTab('rules')}>
+          <button aria-pressed={tab === 'rules'} className={tab === 'rules' ? 'tabActive' : 'tab'} onClick={() => setTab('rules')}>
             Rules ({merged.length})
           </button>
-          <button className={tab === 'tags' ? 'tabActive' : 'tab'} onClick={() => setTab('tags')}>
+          <button aria-pressed={tab === 'tags'} className={tab === 'tags' ? 'tabActive' : 'tab'} onClick={() => setTab('tags')}>
             Tag rules ({tagRules.length})
           </button>
-          <button className={tab === 'categories' ? 'tabActive' : 'tab'} onClick={() => setTab('categories')}>
+          <button aria-pressed={tab === 'categories'} className={tab === 'categories' ? 'tabActive' : 'tab'} onClick={() => setTab('categories')}>
             Categories ({catDetails.length})
           </button>
         </div>
