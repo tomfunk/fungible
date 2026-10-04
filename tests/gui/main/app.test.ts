@@ -250,21 +250,27 @@ describe('window creation', () => {
     expect(o.minHeight).toBe(600);
   });
 
-  it('window.open is denied and handed to the OS browser', async () => {
+  it.each(['https://example.com/x', 'http://example.com/y'])('window.open %s is denied and handed to the OS browser', async (url) => {
     await boot();
-    const out = win().webContents.openHandler!({ url: 'https://example.com/x' });
+    const out = win().webContents.openHandler!({ url });
     expect(out).toEqual({ action: 'deny' });
-    expect(electronMock.shell.openExternal).toHaveBeenCalledExactlyOnceWith('https://example.com/x');
+    expect(electronMock.shell.openExternal).toHaveBeenCalledExactlyOnceWith(url);
   });
 
-  // SMELL S5: the handler forwards ANY url to shell.openExternal, including
-  // file:, smb: or custom-protocol URLs a compromised/odd page could request.
-  it('pins current behaviour: non-http(s) schemes are forwarded to openExternal', async () => {
+  it.each([
+    'file:///etc/passwd',
+    'smb://host/share',
+    'javascript:alert(1)',
+    'custom-app://do-thing',
+    'mailto:a@b.com',
+    'not a url',
+    '',
+  ])('refuses to open %j externally', async (url) => {
     await boot();
-    win().webContents.openHandler!({ url: 'file:///etc/passwd' });
-    expect(electronMock.shell.openExternal).toHaveBeenCalledWith('file:///etc/passwd');
+    const out = win().webContents.openHandler!({ url });
+    expect(out).toEqual({ action: 'deny' });
+    expect(electronMock.shell.openExternal).not.toHaveBeenCalled();
   });
-  it.todo('only http(s) URLs are passed to shell.openExternal (scheme allowlist)');
 
   it('dev: ELECTRON_RENDERER_URL is loaded as a URL', async () => {
     await boot({ ELECTRON_RENDERER_URL: 'http://localhost:5173' });

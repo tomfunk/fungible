@@ -56,15 +56,45 @@ describe('Accounts > Dupes', () => {
     expect(tags.map((t) => [t.transaction_id, Number(t.tag_id)])).toEqual([['plaid-1', 1]]);
   });
 
-  it('[X] deletes every listed CSV row at once (no confirmation today) and keeps the Plaid rows', async () => {
-    // NOTE: there is no confirm step before the bulk delete; this test documents the current behaviour.
+  it('[X] asks for confirmation first and deletes nothing until y', async () => {
     await db.execute("INSERT INTO accounts (id, name, type) VALUES ('a1', 'Checking', 'depository')");
     await seedPair(1);
     await seedPair(2);
     const r = await openDupes();
     await waitFor(() => expect(flatFrame(r)).toContain('Merchant 2'));
     await press(r, 'X');
+    await waitFor(() => expect(flatFrame(r)).toContain('Delete all 2 listed copies'));
+    expect(await ids()).toEqual(['csv-1', 'csv-2', 'plaid-1', 'plaid-2']);
+    await press(r, 'y');
     await waitFor(async () => expect(await ids()).toEqual(['plaid-1', 'plaid-2']));
     await waitFor(() => expect(flatFrame(r)).toContain('No duplicate candidates found.'));
+  });
+
+  it('[X] then n or Esc cancels without deleting', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type) VALUES ('a1', 'Checking', 'depository')");
+    await seedPair(1);
+    const r = await openDupes();
+    await waitFor(() => expect(flatFrame(r)).toContain('Merchant 1'));
+    await press(r, 'X');
+    await waitFor(() => expect(flatFrame(r)).toContain('Delete all 1 listed copy'));
+    await press(r, 'n');
+    await waitFor(() => expect(flatFrame(r)).not.toContain('Delete all 1 listed copy'));
+    await press(r, 'X');
+    await waitFor(() => expect(flatFrame(r)).toContain('Delete all 1 listed copy'));
+    await press(r, '\u001b');
+    await waitFor(() => expect(flatFrame(r)).not.toContain('Delete all 1 listed copy'));
+    expect(await ids()).toEqual(['csv-1', 'plaid-1']);
+    expect(flatFrame(r)).toContain('Merchant 1');
+  });
+
+  it('labels a manual-source candidate as manual, not CSV, and warns in the delete-all prompt', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type) VALUES ('a1', 'Checking', 'depository')");
+    await seedPair(1, { csvExtra: { id: 'manual-1', source: 'manual' } });
+    const r = await openDupes();
+    await waitFor(() => expect(flatFrame(r)).toContain('Merchant 1'));
+    expect(flatFrame(r)).toContain('MAN');
+    expect(flatFrame(r)).not.toContain('CSV');
+    await press(r, 'X');
+    await waitFor(() => expect(flatFrame(r)).toContain('1 manually entered transaction'));
   });
 });

@@ -42,36 +42,30 @@ async function accountRows() {
 describe('createManualAccount', () => {
   it('trims the name, stores type other/subtype manual and one balance row for today', async () => {
     const id = await createManualAccount('  Home  ', 250000);
-    expect(id.startsWith('manual-')).toBe(true);
+    expect(id).toMatch(/^manual-[0-9a-f-]{36}$/);
     const [a] = (await db.execute({ sql: 'SELECT name, type, subtype FROM accounts WHERE id = ?', args: [id] })).rows;
     expect({ ...a }).toEqual({ name: 'Home', type: 'other', subtype: 'manual' });
     expect(await history(id)).toEqual([{ balance: 250000, date: TODAY }]);
   });
 
-  // SUSPECTED BUG: id is `manual-${Date.now()}`, so two creations in the same
-  // millisecond collide. Under a fixed clock this is deterministic. The second
-  // INSERT INTO accounts hits the PRIMARY KEY and the whole batch throws (the
-  // first account is NOT silently overwritten), so the second account is lost
-  // with a UNIQUE constraint error. Pinned until ids get a random suffix.
-  it.fails('two accounts created in the same millisecond get distinct ids', async () => {
+  // Deterministic: useFixedClock() freezes Date.now(), so both calls share a ms.
+  it('two accounts created in the same millisecond get distinct ids', async () => {
     const a = await createManualAccount('Home', 1);
     const b = await createManualAccount('Car', 2);
     expect(b).not.toBe(a);
+    expect(await accountRows()).toHaveLength(2);
   });
 
-  it('same-millisecond collision: second creation throws and leaves the first account untouched', async () => {
-    const a = await createManualAccount('Home', 1);
-    await expect(createManualAccount('Car', 2)).rejects.toThrow(/UNIQUE|constraint/i);
-    const rows = await accountRows();
-    expect(rows).toHaveLength(1);
-    expect(String(rows[0].name)).toBe('Home');
-    expect(await history(a)).toEqual([{ balance: 1, date: TODAY }]);
+  it('manual ids keep the manual- prefix', async () => {
+    expect(await createManualAccount('Home', 1)).toMatch(/^manual-[0-9a-f-]{36}$/);
   });
 
-  it('createCsvAccount has the same Date.now() id scheme (collides in the same millisecond)', async () => {
+  it('createCsvAccount ids are distinct within a millisecond and keep the csv-acct- prefix', async () => {
     const a = await createCsvAccount('A', 'depository', 'checking');
-    expect(a.startsWith('csv-acct-')).toBe(true);
-    await expect(createCsvAccount('B', 'depository', 'checking')).rejects.toThrow(/UNIQUE|constraint/i);
+    const b = await createCsvAccount('B', 'depository', 'checking');
+    expect(a).toMatch(/^csv-acct-[0-9a-f-]{36}$/);
+    expect(b).toMatch(/^csv-acct-[0-9a-f-]{36}$/);
+    expect(b).not.toBe(a);
   });
 });
 

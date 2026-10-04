@@ -106,6 +106,16 @@ function loadWindowState(): WindowState {
   }
 }
 
+/** Only web links may leave the app; file:, smb:, custom schemes etc. are refused. */
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function createWindow() {
   const state = loadWindowState();
   const win = new BrowserWindow({
@@ -123,7 +133,7 @@ function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isSafeExternalUrl(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
 

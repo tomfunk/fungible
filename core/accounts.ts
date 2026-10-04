@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
@@ -39,13 +40,13 @@ export async function updateAccountValue(id: string, value: number): Promise<voi
 }
 
 export async function createCsvAccount(name: string, type: string, subtype: string | null): Promise<string> {
-  const id = `csv-acct-${Date.now()}`;
+  const id = `csv-acct-${randomUUID()}`;
   await db.execute({ sql: 'INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)', args: [id, name.trim(), type, subtype] });
   return id;
 }
 
 export async function createManualAccount(name: string, value: number): Promise<string> {
-  const id = `manual-${Date.now()}`;
+  const id = `manual-${randomUUID()}`;
   const today = new Date().toISOString().slice(0, 10);
   await db.batch([
     { sql: 'INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)', args: [id, name.trim(), 'other', 'manual'] },

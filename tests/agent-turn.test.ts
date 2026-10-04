@@ -20,7 +20,7 @@ vi.mock('../core/canvas-history.js', () => ({
 
 import { streamResponse } from '../core/llm-provider.js';
 import { executeTool } from '../core/tools.js';
-import { runAgentTurn, type AgentCallbacks } from '../core/agent.js';
+import { runAgentTurn, MAX_AGENT_ITERATIONS, type AgentCallbacks } from '../core/agent.js';
 
 /** Script streamResponse: one array of chunks per call. */
 function script(...turns: StreamChunk[][]) {
@@ -156,16 +156,30 @@ describe('runAgentTurn', () => {
     expect(history.filter((m) => m.role === 'tool_result').map((m) => (m as { tool_use_id: string }).tool_use_id)).toEqual(['a', 'b']);
   });
 
-  // FINDING: runAgentTurn is `while (true)` with no iteration cap, so a model
-  // that keeps requesting tools never terminates. Pinned as it.fails: when a cap
-  // is added this will start passing and the marker should be removed.
-  it.fails('stops a runaway tool loop after a bounded number of iterations', async () => {
+  it('stops a runaway tool loop after MAX_AGENT_ITERATIONS and tells the user', async () => {
     let calls = 0;
     vi.mocked(streamResponse).mockImplementation((async function* () {
-      if (++calls > 50) throw new Error('runaway: no iteration cap');
+      calls++;
       yield tool(`l${calls}`, 'list_accounts');
     }) as never);
-    await runAgentTurn('q', [], makeCallbacks());
-    expect(calls).toBeLessThanOrEqual(50);
+    vi.mocked(executeTool).mockResolvedValue('ok' as never);
+    const cb = makeCallbacks();
+    const history: Message[] = [];
+    await runAgentTurn('q', history, cb);
+    expect(MAX_AGENT_ITERATIONS).toBeGreaterThanOrEqual(10);
+    expect(calls).toBe(MAX_AGENT_ITERATIONS);
+    expect(executeTool).toHaveBeenCalledTimes(MAX_AGENT_ITERATIONS);
+    expect(cb.onText).toHaveBeenCalledWith(expect.stringContaining('Stopped after'));
+    expect(history.at(-1)).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: expect.stringContaining('Stopped after') }] });
+    expect(history.at(-2)).toEqual({ role: 'tool_result', tool_use_id: `l${MAX_AGENT_ITERATIONS}`, content: 'ok' });
+  });
+
+  it('finishing with text on the last allowed round does not trigger the cap notice', async () => {
+    const rounds = Array.from({ length: MAX_AGENT_ITERATIONS - 1 }, (_, i) => [tool(`r${i}`, 'list_accounts')]);
+    script(...rounds, [text('all done')]);
+    const cb = makeCallbacks();
+    await runAgentTurn('q', [], cb);
+    expect(streamResponse).toHaveBeenCalledTimes(MAX_AGENT_ITERATIONS);
+    expect(cb.onText.mock.calls.map((c) => c[0])).toEqual(['all done']);
   });
 });
