@@ -198,19 +198,30 @@ describe('OpenAI provider', () => {
     expect(chunks.filter((c) => c.type === 'tool_use')).toHaveLength(1);
   });
 
-  // PROBE RESULT (suspected bug, confirmed): the accumulator is never cleared
-  // after flushing, so a tool_calls finish chunk followed by a stop chunk emits
-  // every tool call twice. Not fixed in this PR; flip to a plain `it` when fixed.
-  it.fails('emits each tool call once even if a tool_calls finish is followed by a stop chunk', async () => {
+  it('emits each tool call once even if a tool_calls finish is followed by a stop chunk', async () => {
     const { chunks } = await run([...openaiToolCall(0, 'c1', 't', { a: 1 }), openaiFinish('tool_calls'), openaiFinish('stop')]);
     expect(chunks.filter((c) => c.type === 'tool_use')).toHaveLength(1);
   });
 
-  // PROBE RESULT (suspected bug, confirmed): tool calls are only flushed on a
-  // 'tool_calls'/'stop' finish_reason, so a stream that ends without one (or
-  // with 'length') silently drops them. Not fixed in this PR.
-  it.fails('does not silently drop accumulated tool calls when the stream ends without a finish reason', async () => {
+  it('flushes a complete tool call when the stream ends without a finish reason', async () => {
     const { chunks } = await run(openaiToolCall(0, 'c1', 't', { a: 1 }));
+    expect(chunks.filter((c) => c.type === 'tool_use')).toEqual([{ type: 'tool_use', id: 'c1', name: 't', input: { a: 1 } }]);
+  });
+
+  it('flushes a complete tool call on a length finish', async () => {
+    const { chunks } = await run([...openaiToolCall(0, 'c1', 't', { a: 1 }), openaiFinish('length')]);
     expect(chunks.filter((c) => c.type === 'tool_use')).toHaveLength(1);
+  });
+
+  it('drops a tool call with truncated arguments on a length finish', async () => {
+    const bad = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 't', arguments: '{"a":' } }] }, finish_reason: null }] }];
+    const { chunks } = await run([...bad, openaiFinish('length')]);
+    expect(chunks).toEqual([{ type: 'done' }]);
+  });
+
+  it('drops a tool call cut off mid-arguments when the stream ends', async () => {
+    const bad = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 't', arguments: '{"a":' } }] }, finish_reason: null }] }];
+    const { chunks } = await run(bad);
+    expect(chunks).toEqual([{ type: 'done' }]);
   });
 });
