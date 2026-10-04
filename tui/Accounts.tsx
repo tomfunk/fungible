@@ -40,6 +40,8 @@ import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, Edi
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+const dupeSourceLabel = (p: DupePair | undefined) => (p?.csvSource === 'manual' ? 'manual' : 'CSV');
+
 type MainView = 'accounts' | 'links' | 'add-data' | 'dupes';
 type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
 type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr' | 'excluded';
@@ -248,6 +250,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
+  // [X] opens a y/n confirmation instead of deleting straight away.
+  const [dupeConfirmAll, setDupeConfirmAll] = useState(false);
   // The dupe scan runs detached from loadAccounts, so the view can be opened
   // while it is still running. Without this an in-flight scan renders as
   // "No duplicate candidates found." — a false all-clear, and most likely
@@ -970,6 +974,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     // ── Dupes view ────────────────────────────────────────────────────────────
     if (mainView === 'dupes') {
+      if (dupeConfirmAll) {
+        if (input === 'y') {
+          const ids = dupes.map((p) => p.csvId);
+          setDupeConfirmAll(false);
+          void deleteAllDuplicates(ids).then(async () => {
+            const next = await getCsvPlaidDupeCandidates();
+            setDupes(next);
+            setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+          });
+        } else if (input === 'n' || key.escape) {
+          setDupeConfirmAll(false);
+        }
+        return;
+      }
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('accounts'); return; }
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
@@ -983,10 +1001,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         });
         return;
       }
-      if (input === 'X') {
-        deleteAllDuplicates(dupes.map((p) => p.csvId));
-        setDupes([]);
-        setDupeCursor(0);
+      if (input === 'X' && dupes.length > 0) {
+        setDupeConfirmAll(true);
         return;
       }
       return;
@@ -1249,7 +1265,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             : mainView === 'links'
             ? '↑↓ select  ·  [u] update link  ·  [r] refresh  ·  [s] sync'
             : mainView === 'dupes'
-            ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
+            ? dupeConfirmAll
+              ? '[y] delete all  ·  [n] / Esc cancel'
+              : `↑↓ select  ·  [x] delete ${dupeSourceLabel(dupes[dupeCursor])} copy  ·  [X] delete all`
             : ''}
         </Text>
       </Box>}
@@ -1522,14 +1540,30 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           ) : dupes.length === 0 ? (
             <Text color={C_POSITIVE}>No duplicate candidates found.</Text>
           ) : (
-            dupes.map((pair, i) => {
+            <>
+            {dupeConfirmAll && (
+              <ModalPanel borderColor={C_NEGATIVE}>
+                <Text bold color={C_NEGATIVE}>Delete all {dupes.length} listed {dupes.length === 1 ? 'copy' : 'copies'} — this cannot be undone</Text>
+                <Box marginTop={1} flexDirection="column">
+                  <Text dimColor>Keeps the Plaid transactions; edits and tags move across.</Text>
+                  {dupes.some((p) => p.csvSource === 'manual') && (
+                    <Text color={C_WARNING}>Includes {dupes.filter((p) => p.csvSource === 'manual').length} manually entered transaction{dupes.filter((p) => p.csvSource === 'manual').length === 1 ? '' : 's'}.</Text>
+                  )}
+                </Box>
+                <Box marginTop={1} gap={4}>
+                  <Text color={C_NEGATIVE}>[y] Yes, delete all</Text>
+                  <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
+                </Box>
+              </ModalPanel>
+            )}
+            {dupes.map((pair, i) => {
               const isSelected = i === dupeCursor;
               return (
                 <Box key={pair.csvId} flexDirection="column" marginBottom={1}>
                   <Box gap={2}>
                     <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶' : ' '}</Text>
                     <Text dimColor>{truncate(pair.accountName, 20).padEnd(20)}</Text>
-                    <Text color={C_WARNING}>CSV</Text>
+                    <Text color={C_WARNING}>{pair.csvSource === 'manual' ? 'MAN' : 'CSV'}</Text>
                     <Text dimColor>{pair.csvDate}</Text>
                     <Text color={isSelected ? C_ACCENT : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
                     <Text color={C_NEGATIVE}>${Math.abs(pair.csvAmount).toFixed(2)}</Text>
@@ -1543,7 +1577,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   </Box>
                 </Box>
               );
-            })
+            })}
+            </>
           )}
         </Box>
       )}
