@@ -166,8 +166,20 @@ describe('runAgentTurn', () => {
     const cb = makeCallbacks();
     const history: Message[] = [];
     await runAgentTurn('q', history, cb);
+    expect(MAX_AGENT_ITERATIONS).toBeGreaterThanOrEqual(10);
     expect(calls).toBe(MAX_AGENT_ITERATIONS);
+    expect(executeTool).toHaveBeenCalledTimes(MAX_AGENT_ITERATIONS);
     expect(cb.onText).toHaveBeenCalledWith(expect.stringContaining('Stopped after'));
-    expect(history.at(-1)).toMatchObject({ role: 'assistant' });
+    expect(history.at(-1)).toMatchObject({ role: 'assistant', content: [{ type: 'text', text: expect.stringContaining('Stopped after') }] });
+    expect(history.at(-2)).toEqual({ role: 'tool_result', tool_use_id: `l${MAX_AGENT_ITERATIONS}`, content: 'ok' });
+  });
+
+  it('finishing with text on the last allowed round does not trigger the cap notice', async () => {
+    const rounds = Array.from({ length: MAX_AGENT_ITERATIONS - 1 }, (_, i) => [tool(`r${i}`, 'list_accounts')]);
+    script(...rounds, [text('all done')]);
+    const cb = makeCallbacks();
+    await runAgentTurn('q', [], cb);
+    expect(streamResponse).toHaveBeenCalledTimes(MAX_AGENT_ITERATIONS);
+    expect(cb.onText.mock.calls.map((c) => c[0])).toEqual(['all done']);
   });
 });

@@ -250,11 +250,11 @@ describe('window creation', () => {
     expect(o.minHeight).toBe(600);
   });
 
-  it('window.open is denied and handed to the OS browser', async () => {
+  it.each(['https://example.com/x', 'http://example.com/y'])('window.open %s is denied and handed to the OS browser', async (url) => {
     await boot();
-    const out = win().webContents.openHandler!({ url: 'https://example.com/x' });
+    const out = win().webContents.openHandler!({ url });
     expect(out).toEqual({ action: 'deny' });
-    expect(electronMock.shell.openExternal).toHaveBeenCalledExactlyOnceWith('https://example.com/x');
+    expect(electronMock.shell.openExternal).toHaveBeenCalledExactlyOnceWith(url);
   });
 
   it.each([

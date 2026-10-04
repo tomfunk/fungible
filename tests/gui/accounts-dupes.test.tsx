@@ -171,6 +171,7 @@ describe('GUI Accounts: Dupes tab', () => {
     await seedPair(2, { csv: { source: 'manual' } });
     await openDupes();
     await userEvent.click(await screen.findByRole('button', { name: 'Delete all copies' }));
+    expect(screen.getByText('2 transactions that look like Plaid duplicates')).toBeTruthy();
     expect(screen.getByText('Includes 1 manually entered transaction.')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Yes, delete all' }));
     await waitFor(() => expect(screen.getByText('Deleted 2 duplicates')).toBeTruthy());
@@ -233,5 +234,24 @@ describe('GUI Accounts: Dupes tab', () => {
     const cells = Array.from(btn.closest('tr')!.querySelectorAll('td')).map((c) => c.textContent);
     // Source is the second column of the pair's first row.
     expect(cells[1]).toBe('Manual');
+    expect(screen.getByRole('button', { name: 'Delete all manual copies' })).toBeTruthy();
+    expect(screen.getByText('1 manual transaction that look like Plaid duplicates')).toBeTruthy();
+  });
+
+  it('delete manual copy removes the manual row, keeps the Plaid row, and shows the manual status', async () => {
+    await seedPair(1, { csv: { source: 'manual' } });
+    await openDupes();
+    await userEvent.click(await screen.findByRole('button', { name: 'delete manual copy' }));
+    await waitFor(() => expect(screen.getByText('Manual copy deleted')).toBeTruthy());
+    expect(await readTx(db, 'csv-1')).toBeNull();
+    expect(await readTx(db, 'plaid-1')).not.toBeNull();
+  });
+
+  it('the confirmation pluralizes the manual warning for two manual rows', async () => {
+    await seedPair(1, { csv: { source: 'manual' } });
+    await seedPair(2, { csv: { source: 'manual' } });
+    await openDupes();
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete all manual copies' }));
+    expect(screen.getByText('Includes 2 manually entered transactions.')).toBeTruthy();
   });
 });

@@ -219,6 +219,28 @@ describe('OpenAI provider', () => {
     expect(chunks).toEqual([{ type: 'done' }]);
   });
 
+  it('on a length finish emits only the complete call when another is cut off', async () => {
+    const cut = [{ choices: [{ delta: { tool_calls: [{ index: 1, id: 'c2', type: 'function', function: { name: 't2', arguments: '{"b":' } }] }, finish_reason: null }] }];
+    const { chunks } = await run([...openaiToolCall(0, 'c1', 't', { a: 1 }), ...cut, openaiFinish('length')]);
+    expect(chunks).toEqual([{ type: 'tool_use', id: 'c1', name: 't', input: { a: 1 } }, { type: 'done' }]);
+  });
+
+  it('drops a truncated call that has arguments but no name on a length finish', async () => {
+    const nameless = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { arguments: '{"a":' } }] }, finish_reason: null }] }];
+    const { chunks } = await run([...nameless, openaiFinish('length')]);
+    expect(chunks).toEqual([{ type: 'done' }]);
+  });
+
+  it('tolerates mid-stream chunks with empty choices or usage only', async () => {
+    const { chunks } = await run([
+      { choices: [] },
+      { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+      ...openaiToolCall(0, 'c1', 't', { a: 1 }),
+      openaiFinish('tool_calls'),
+    ]);
+    expect(chunks).toEqual([{ type: 'tool_use', id: 'c1', name: 't', input: { a: 1 } }, { type: 'done' }]);
+  });
+
   it('drops a tool call cut off mid-arguments when the stream ends', async () => {
     const bad = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 't', arguments: '{"a":' } }] }, finish_reason: null }] }];
     const { chunks } = await run(bad);
