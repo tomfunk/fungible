@@ -187,6 +187,13 @@ describe('initDb provenance migration', () => {
   });
 });
 
+describe('initDb leaves the migrated database structurally sound', () => {
+  it('passes integrity_check and foreign_key_check after the table rebuild', async () => {
+    expect((await db.execute('PRAGMA integrity_check')).rows.map((r) => r[0])).toEqual(['ok']);
+    expect((await db.execute('PRAGMA foreign_key_check')).rows).toEqual([]);
+  });
+});
+
 // #200: a CSV-imported account that predates the importCsvTransactions fix has
 // transactions but no balance_history row at all, which silently drops it out
 // of every net-worth/health query (they inner-join on MAX(date)). initDb
