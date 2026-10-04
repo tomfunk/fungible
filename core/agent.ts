@@ -138,6 +138,9 @@ async function dispatchTool(
 
 // ─── Agent loop ───────────────────────────────────────────────────────────────
 
+/** Upper bound on model/tool round-trips in one turn. */
+export const MAX_AGENT_ITERATIONS = 25;
+
 /**
  * Run one user turn through the agent loop.
  * Mutates `history` in place (appends messages).
@@ -152,7 +155,13 @@ export async function runAgentTurn(
 
   const system = buildSystemPrompt();
 
-  while (true) {
+  for (let iteration = 0; ; iteration++) {
+    if (iteration >= MAX_AGENT_ITERATIONS) {
+      const notice = `\n\n(Stopped after ${MAX_AGENT_ITERATIONS} tool-use rounds without finishing. Ask me to continue if you want me to keep going.)`;
+      callbacks.onText(notice);
+      history.push(makeAssistantMessage([{ type: 'text', text: notice.trim() }]));
+      break;
+    }
     const currentBlocks: ContentBlock[] = [];
     let   currentText = '';
 
