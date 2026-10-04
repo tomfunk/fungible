@@ -15,6 +15,14 @@ vi.mock('../../core/profile.js', async (importActual) => {
   return { ...actual, loadProfile: vi.fn(() => Promise.resolve(null)), saveProfile: vi.fn(() => Promise.resolve()) };
 });
 
+// The Canvas screen and App's spec watcher read canvas-spec.json / canvas-history.json
+// from the real data dir. Stub them so the suite never sees the developer's own
+// canvases: no spec on disk and an empty history, i.e. the Canvas empty state.
+vi.mock('../../core/canvas-history.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../core/canvas-history.js')>();
+  return { ...actual, CANVAS_SPEC_PATH: '/nonexistent/fungible-test/canvas-spec.json', loadHistory: vi.fn(() => []) };
+});
+
 import { db } from '../../core/db.js';
 import { App } from '../../tui/App.js';
 import { Dashboard } from '../../tui/Dashboard.js';
@@ -61,7 +69,7 @@ describe('App', () => {
     health: 'SNAPSHOT',
     rules: 'Whole Foods',
     accounts: 'Test Visa',
-    canvas: 'INPUTS',
+    canvas: 'Ask the agent',
   };
 
   it.each(SCREEN_NAV)('pressing $digit from Dashboard shows $screen', async ({ digit, screen, header }) => {
