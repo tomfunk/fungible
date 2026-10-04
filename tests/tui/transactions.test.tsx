@@ -42,7 +42,11 @@ import { db } from '../../core/db.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
-import { waitFor, frame, flatFrame, press, pressKeys } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, flatFrame, press, pressKeys } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';

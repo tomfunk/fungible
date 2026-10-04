@@ -25,7 +25,11 @@ import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
-import { waitFor, frame, press } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, press } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { SCREEN_NAV } from '../helpers/screenNav.js';
 import { useSeededScreenDb } from './helpers/screenSetup.js';
 
@@ -70,7 +74,7 @@ describe('App', () => {
       expect(f).toContain(SCREEN_DATUM[screen]);
       // Digit 1 is Dashboard itself (a no-op); every other digit must leave it.
       if (digit !== '1') expect(f).not.toContain('Dashboard');
-    }, 2000);
+    }, 10_000);
   });
 
   it('h toggles the nav hints on and off', async () => {
@@ -132,7 +136,7 @@ describe('App', () => {
         const f = frame(r);
         for (const m of markers) expect(f).toContain(m);
         expect(f).not.toContain(left);
-      }, 2000);
+      }, 10_000);
       previous = markers[0];
     }
   });

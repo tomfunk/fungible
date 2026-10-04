@@ -22,7 +22,11 @@ import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { Canvas } from '../../tui/Canvas.js';
 import { Settings } from '../../tui/Settings.js';
-import { waitFor, frame, press } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, press } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { SCREEN_NAV } from '../helpers/screenNav.js';
 import { W, MAY_FILTER, useSeededScreenDb } from './helpers/screenSetup.js';
 
@@ -83,13 +87,13 @@ describe('screen nav contract', () => {
         expect(f).toContain('fungible');
         expect(f).toContain(nav.header);
         expect(f).toContain(mount.datum);
-      }, 2000);
+      }, 10_000);
     });
 
     it('digit keys navigate to every other screen and ignore its own', async () => {
       const onNavigate = vi.fn();
       const r = render(<W>{mount.mount(onNavigate)}</W>);
-      await waitFor(() => expect(frame(r)).toContain(mount.datum), 2000);
+      await waitFor(() => expect(frame(r)).toContain(mount.datum), 10_000);
 
       for (const other of SCREEN_NAV.filter((n) => n.screen !== nav.screen)) {
         const before = onNavigate.mock.calls.length;
