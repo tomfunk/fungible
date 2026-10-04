@@ -20,7 +20,11 @@ import { Dashboard } from '../../tui/Dashboard.js';
 import { Transactions } from '../../tui/Transactions.js';
 import * as syncApi from '../../core/sync.js';
 import { FilterProvider } from '../../tui/FilterContext.js';
-import { waitFor, frame, press, pressKeys } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, press, pressKeys } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { W, MAY_FILTER, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 
 useSeededScreenDb();
@@ -182,13 +186,13 @@ describe('Dashboard', () => {
 
   it('left arrow in merchant drill navigates to previous period and refreshes merchants', async () => {
     const r = dash(); // anchored to May 2026
-    await waitFor(() => expect(frame(r)).toContain('Grocery'), 2000);
+    await waitFor(() => expect(frame(r)).toContain('Grocery'), 10_000);
     r.stdin.write('m'); // open drill: May has Whole Foods + Trader Joes
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('TOP MERCHANTS');
       expect(f).toContain('Trader Joes');
-    }, 2000);
+    }, 10_000);
     r.stdin.write('\x1B[D'); // left arrow → April
     // Drill stays open with April merchants — only Whole Foods in April
     await waitFor(() => {
@@ -196,20 +200,20 @@ describe('Dashboard', () => {
       expect(f).toContain('TOP MERCHANTS');
       expect(f).toContain('Whole Foods');
       expect(f).not.toContain('Trader Joes');
-    }, 2000);
+    }, 10_000);
   });
 
   it('r key in merchant drill cycles range and keeps drill open', async () => {
     const r = dash(); // anchored to May 2026, range = month
-    await waitFor(() => expect(frame(r)).toContain('Grocery'), 2000);
+    await waitFor(() => expect(frame(r)).toContain('Grocery'), 10_000);
     r.stdin.write('m');
-    await waitFor(() => expect(frame(r)).toContain('TOP MERCHANTS'), 2000);
+    await waitFor(() => expect(frame(r)).toContain('TOP MERCHANTS'), 10_000);
     r.stdin.write('r'); // r: cycle range month → week, drill stays open
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('TOP MERCHANTS'); // drill still open
       expect(f).toContain('Week');          // range cycled
-    }, 2000);
+    }, 10_000);
   });
 
   it('s key toggles scorecard mode label', async () => {

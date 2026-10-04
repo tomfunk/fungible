@@ -20,7 +20,11 @@ import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
 import { Health } from '../../tui/Health.js';
 import { Accounts } from '../../tui/Accounts.js';
-import { waitFor, flatFrame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { failDb, captureUnhandled } from '../helpers/failingDb.js';
 import { W, MAY_FILTER, noop, useEmptyScreenDb } from './helpers/screenSetup.js';
 

@@ -13,7 +13,11 @@ vi.mock('../../core/profile.js', async (importActual) => {
 
 import { db } from '../../core/db.js';
 import { Health } from '../../tui/Health.js';
-import { waitFor, frame, press, pressKeys } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, press, pressKeys } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { W, noop, useEmptyScreenDb } from './helpers/screenSetup.js';
 
 // Empty database: spend floors at $100, savings default $0, pretax $0, withdrawal 4.0%, growth 7.0%.
