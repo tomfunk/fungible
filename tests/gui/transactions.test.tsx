@@ -11,7 +11,7 @@ vi.mock('../../core/db.js', async () => {
 
 import { db } from '../../core/db.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
-import { installBridge, renderScreen } from './helpers/renderGui.js';
+import { installBridge, renderScreen, saveCsvStub } from './helpers/renderGui.js';
 import { Transactions } from '../../gui/renderer/src/screens/Transactions.js';
 import { registry } from '../../gui/main/registry.js';
 
@@ -23,9 +23,15 @@ beforeEach(async () => {
   }
   await seedTuiData(db);
   installBridge();
+  saveCsvStub.calls = [];
+  saveCsvStub.result = true;
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  saveCsvStub.calls = [];
+  saveCsvStub.result = true;
+});
 
 describe('GUI Transactions', () => {
   it('renders all seeded transactions with count', async () => {
@@ -255,6 +261,34 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Dining' }));
     await waitFor(() => expect(screen.getByText(/Set category to "Dining" for 3 transactions/)).toBeTruthy());
+
+    // Outcome in the DB: exactly the 3 Grocery rows moved and are pinned; nothing else changed.
+    const res = await db.execute('SELECT id, category, manual_category FROM transactions ORDER BY id');
+    const byId = Object.fromEntries(res.rows.map((r) => [r.id as string, r]));
+    for (const id of ['tx-groc-1', 'tx-groc-2', 'tx-groc-apr']) {
+      expect(byId[id]).toMatchObject({ category: 'Dining', manual_category: 'Dining' });
+    }
+    expect(byId['tx-dining-1']).toMatchObject({ category: 'Dining', manual_category: null });
+    expect(byId['tx-bills-1']).toMatchObject({ category: 'Bills & Utilities', manual_category: null });
+    expect(byId['tx-shopping']).toMatchObject({ category: 'Shopping', manual_category: null });
+    expect(byId['tx-income']).toMatchObject({ category: 'Income', manual_category: null });
+  });
+
+  it('bulk categorize with one of three rows selected changes only that row', async () => {
+    renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
+    await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
+    const row = screen.getByText('Trader Joes').closest('tr')!;
+    await userEvent.click(row.querySelector('input[type="checkbox"]')!);
+    await userEvent.click(screen.getByRole('button', { name: 'Categorize' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Dining' }));
+    await waitFor(() => expect(screen.getByText(/Set category to "Dining" for 1 transaction/)).toBeTruthy());
+
+    const res = await db.execute("SELECT id, category, manual_category FROM transactions WHERE id LIKE 'tx-groc%' ORDER BY id");
+    expect(res.rows.map((r) => [r.id, r.category, r.manual_category])).toEqual([
+      ['tx-groc-1', 'Grocery', null],
+      ['tx-groc-2', 'Dining', 'Dining'],
+      ['tx-groc-apr', 'Grocery', null],
+    ]);
   });
 
   it('the "+ Add" button opens the Add modal, and saving creates a whole-row-purple manual transaction', async () => {
@@ -341,6 +375,63 @@ describe('GUI Transactions', () => {
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ filter: { categories: ['Grocery'] }, from: '2026-05-01', to: '2026-05-31' }),
     );
+  });
+
+  it('Export writes the filtered rows to a CSV named for the range, with signs and quoting', async () => {
+    // A merchant name with a comma and quotes must be RFC 4180 quoted.
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-groc-q', 'test-credit', '2026-05-20', 'Joe''s, "Best" Market', 10.00, 'Grocery', 0, 0)`,
+    );
+    renderScreen(<Transactions />, {
+      txFilter: { from: '2026-05-01', to: '2026-05-31' },
+      initialFilter: { categories: ['Grocery'] },
+    });
+    await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.getByText('Exported transactions')).toBeTruthy());
+
+    expect(saveCsvStub.calls).toHaveLength(1);
+    const { csv, name } = saveCsvStub.calls[0];
+    expect(name).toBe('transactions-2026-05-01-to-2026-05-31.csv');
+    const lines = csv.trim().split('\n');
+    expect(lines[0]).toBe('date,name,display_name,amount,category,account,tags,is_ignored,is_pending');
+    // Ordered by date; stored outflow (positive) is exported negative.
+    expect(lines.slice(1)).toEqual([
+      '2026-05-06,Whole Foods,Whole Foods,-120.00,Grocery,Test Visa,,false,false',
+      '2026-05-14,Trader Joes,Trader Joes,-85.00,Grocery,Test Visa,,false,false',
+      '2026-05-20,"Joe\'s, ""Best"" Market","Joe\'s, ""Best"" Market",-10.00,Grocery,Test Visa,,false,false',
+    ]);
+    expect(csv).not.toContain('Sweetgreen');
+    expect(csv).not.toContain('2026-04');
+  });
+
+  it('Export exports inflows as positive amounts', async () => {
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.getByText('Exported transactions')).toBeTruthy());
+    expect(saveCsvStub.calls[0].csv).toContain('2026-05-01,Direct Deposit,Direct Deposit,3500.00,Income,Test Checking,,false,false');
+  });
+
+  it('Export shows no success toast when the save dialog is cancelled', async () => {
+    saveCsvStub.result = false;
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(saveCsvStub.calls).toHaveLength(1));
+    // Export button re-enables once the attempt settles.
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText('Exported transactions')).toBeNull();
+  });
+
+  it('Export surfaces a failure as a toast', async () => {
+    saveCsvStub.result = new Error('EACCES: permission denied');
+    renderScreen(<Transactions />, { txFilter: { from: '2026-05-01', to: '2026-05-31' } });
+    await waitFor(() => expect(screen.getByText('6 transactions')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(screen.getByText('EACCES: permission denied')).toBeTruthy());
+    expect(screen.queryByText('Exported transactions')).toBeNull();
   });
 
   it('Export falls back to the full data span when no date range is picked', async () => {
