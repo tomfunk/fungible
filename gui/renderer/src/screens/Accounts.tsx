@@ -33,6 +33,13 @@ const TARGET_GROUP: Record<ImportTarget['kind'], string> = {
   plaid: 'Linked accounts', csv: 'CSV accounts', manual: 'Manual assets',
 };
 
+/** "CSV" if every listed row is a CSV import, "manual" if all hand-entered, '' for a mix. */
+function dupeGroupLabel(dupes: { csvSource: 'csv' | 'manual' }[]): string {
+  if (dupes.every((p) => p.csvSource === 'csv')) return 'CSV';
+  if (dupes.every((p) => p.csvSource === 'manual')) return 'manual';
+  return '';
+}
+
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
   const dt = new Date(d + 'T12:00:00');
@@ -47,6 +54,7 @@ export function Accounts() {
 
   const accounts = useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [];
   const dupes = useQuery(() => api.accounts.getCsvPlaidDupeCandidates(), [reloadKey]) ?? [];
+  const manualDupeCount = dupes.filter((p) => p.csvSource === 'manual').length;
   const members = useQuery(() => api.profile.getHouseholdMembers(), [reloadKey]) ?? [];
   const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
   // One row per Plaid connection — the Links tab manages items, not accounts.
@@ -65,6 +73,7 @@ export function Accounts() {
   const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   // The connection whose sync cursor is about to be deleted, if any.
   const [cursorItem, setCursorItem] = useState<LinkedItem | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   // The import being undone / re-pointed, if any.
   const [undoImp, setUndoImp] = useState<ImportRow | null>(null);
   const [moveImp, setMoveImp] = useState<ImportRow | null>(null);
@@ -518,16 +527,12 @@ export function Accounts() {
           ) : (
             <>
               <div className={styles.dupeBar}>
-                <span className="dim">{dupes.length} CSV transaction{dupes.length === 1 ? '' : 's'} that look like Plaid duplicates</span>
+                <span className="dim">{[dupes.length, dupeGroupLabel(dupes), `transaction${dupes.length === 1 ? '' : 's'}`].filter(Boolean).join(' ')} that look like Plaid duplicates</span>
                 <button
                   className={styles.rowBtnDangerSolid}
-                  onClick={async () => {
-                    await api.accounts.deleteAllDuplicates(dupes.map((p) => p.csvId));
-                    showStatus(`Deleted ${dupes.length} duplicate${dupes.length === 1 ? '' : 's'}`, 2500);
-                    reload();
-                  }}
+                  onClick={() => setConfirmDeleteAll(true)}
                 >
-                  Delete all CSV copies
+                  {['Delete all', dupeGroupLabel(dupes), 'copies'].filter(Boolean).join(' ')}
                 </button>
               </div>
               <table className={styles.table}>
@@ -546,7 +551,7 @@ export function Accounts() {
                     <React.Fragment key={pair.csvId}>
                       <tr className={styles.dupeCsvRow}>
                         <td className="dim">{pair.accountName}</td>
-                        <td className="warn">CSV</td>
+                        <td className="warn">{pair.csvSource === 'manual' ? 'Manual' : 'CSV'}</td>
                         <td className="num dim">{pair.csvDate}</td>
                         <td>{pair.csvName}</td>
                         <td className="num neg">${Math.abs(pair.csvAmount).toFixed(2)}</td>
@@ -555,11 +560,11 @@ export function Accounts() {
                             className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
                             onClick={async () => {
                               await api.accounts.deleteDuplicate(pair.csvId);
-                              showStatus('CSV copy deleted');
+                              showStatus(pair.csvSource === 'manual' ? 'Manual copy deleted' : 'CSV copy deleted');
                               reload();
                             }}
                           >
-                            delete CSV copy
+                            delete {pair.csvSource === 'manual' ? 'manual' : 'CSV'} copy
                           </button>
                         </td>
                       </tr>
@@ -685,6 +690,37 @@ export function Accounts() {
             void syncNewInstitutions();
           }}
         />
+      )}
+
+      {confirmDeleteAll && (
+        <Modal title="Delete all listed copies" onClose={() => setConfirmDeleteAll(false)} accent="var(--negative)">
+          <p>
+            Delete all {dupes.length} listed {dupes.length === 1 ? 'copy' : 'copies'}? This cannot be undone.
+          </p>
+          <p className="dim">Keeps the Plaid transactions; edits and tags move across.</p>
+          {manualDupeCount > 0 && (
+            <p className="warn">
+              Includes {manualDupeCount} manually entered transaction{manualDupeCount === 1 ? '' : 's'}.
+            </p>
+          )}
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={() => setConfirmDeleteAll(false)}>
+              Cancel
+            </button>
+            <button
+              className="btnPrimary"
+              onClick={async () => {
+                const ids = dupes.map((p) => p.csvId);
+                setConfirmDeleteAll(false);
+                await api.accounts.deleteAllDuplicates(ids);
+                showStatus(`Deleted ${ids.length} duplicate${ids.length === 1 ? '' : 's'}`, 2500);
+                reload();
+              }}
+            >
+              Yes, delete all
+            </button>
+          </div>
+        </Modal>
       )}
 
       {cursorItem && (
