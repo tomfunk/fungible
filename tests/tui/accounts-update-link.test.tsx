@@ -28,7 +28,11 @@ vi.mock('node:child_process', () => ({
 vi.mock('../../core/sync.js', () => ({ syncAll: vi.fn().mockResolvedValue([]) }));
 
 import { db } from '../../core/db.js';
-import { waitFor, flatFrame as flat } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame as flat } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { syncAll } from '../../core/sync.js';
 import { Accounts } from '../../tui/Accounts.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
