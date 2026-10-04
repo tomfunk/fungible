@@ -25,7 +25,12 @@ beforeEach(async () => {
   installBridge();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // Tests turn the keyboard shortcuts on; clearing here (not at the end of a
+  // test body) means a failing test cannot leak the setting into the next one.
+  localStorage.removeItem('fungible-keys');
+});
 
 describe('GUI Transactions', () => {
   it('renders all seeded transactions with count', async () => {
@@ -51,7 +56,6 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
-    localStorage.removeItem('fungible-keys');
   });
 
   it('Escape reversing a drill-in returns to the dashboard on the same month', async () => {
@@ -70,7 +74,6 @@ describe('GUI Transactions', () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith('dashboard', { range: 'month', anchor: '2026-05-01' }),
     );
-    localStorage.removeItem('fungible-keys');
   });
 
   // Search now lives in the shared FilterBar, not on Transactions itself —
@@ -313,7 +316,6 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
     await userEvent.keyboard('n');
     await waitFor(() => expect(screen.getByText('Add transaction')).toBeTruthy());
-    localStorage.removeItem('fungible-keys');
   });
 
   it('a manually-added transaction can be deleted, like a CSV row', async () => {
