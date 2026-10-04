@@ -18,6 +18,8 @@ Per-screen keyboard reference for the TUI. The desktop GUI mirrors most of these
 | `9` | Canvas |
 | `q` | Quit |
 | `f` | Filter panel (Dashboard, Transactions, Trends) |
+| `h` | Toggle key hints on every screen |
+| `` ` `` | Focus the agent chat (`Esc` returns when the input is empty) |
 | `Esc` | Back / step back one filter level |
 
 ## Settings `[0]`
@@ -28,6 +30,7 @@ Per-screen keyboard reference for the TUI. The desktop GUI mirrors most of these
 | `Enter` | Edit selected field |
 | `a` | Add spouse (if none) or add child |
 | `d` | Remove spouse or selected child |
+| `← →` | Change theme (applies after restart) or toggle **Include key** (put `~/.fungible/key` in daily backups, off by default) when that row is selected |
 | `Esc` | Back to Dashboard |
 
 Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse year**, **Child name/birth year** for each child. Editing is inline — type to update, `Enter` to confirm, `Esc` to cancel.
@@ -41,13 +44,14 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 | `Tab` | Cycle views: Categories → Flex → Account → Owner (Owner shown once an account has an owner) |
 | `↑ ↓` | Select row in the active view |
 | `Enter` | Drill into transactions for the selected row |
-| `m` | Top merchants for the selected category (Categories view, not in scorecard) |
+| `m` | Top merchants for the selected category (Categories view, not in scorecard); `↑ ↓` select, `Enter` opens that merchant's transactions, `Esc` closes |
 | `Space` | Toggle account filter (Account view) |
 | `c` | Clear account filter (Account view) |
 | `s` | Toggle scorecard — categories over / under the typical month |
 | `x` | In scorecard: switch compact bars ↔ delta columns |
 | `f` | Open filter panel |
 | `/` | Search transactions by name (regex); filters category totals live |
+| `S` | Sync all accounts now (bypasses the 15-min cooldown) |
 
 In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account. In **Owner** view, spending is split by the owner assigned to each account.
 
@@ -64,15 +68,26 @@ In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER
 | `f` | Open filter panel |
 | `a` | Show all transactions (clears the shared filter, search, and dates) |
 | `u` | Filter to Uncategorized (keeps other filter dimensions) |
+| `n` | Add a transaction by hand (Date, Name, Amount, Type, Account, Category; `Enter` saves) |
 | `Enter` | Edit selected transaction |
+| `E` | Set one category on all visible transactions (use `/` or `f` to narrow first) |
 | `g` | Tag panel: add/remove tags on selected transaction |
 | `G` | Tag all visible transactions at once (use `/` to filter first) |
 | `c` | Undo manual category override |
-| `i` | Ignore / un-ignore selected transaction |
-| `x` | Delete selected transaction (CSV-imported only) |
+| `C` | Clear manual category overrides on all visible transactions |
+| `d` | Restore the original posted date (only when the date was edited) |
+| `i` | Ignore / un-ignore selected transaction (not offered for hand-added rows) |
+| `I` | Ignore all visible transactions, or un-ignore them all if the selected one is already ignored |
+| `x` | Delete selected transaction (CSV-imported or hand-added only) |
+| `e` | Export the visible transactions to CSV |
+| `S` | Sync all accounts now (bypasses the 15-min cooldown) |
 | `Esc` | Step back one filter level at a time; after a drill-in, reverses it and returns to the originating screen |
 
-The **edit panel** has four fields navigated with `↑ ↓`: **Name** (display name override), **Category** (cycle with `← →`), **Pattern**, and **Match type**. Leave Pattern empty and `Enter` saves the change to just this transaction. Fill in Pattern and `Enter` creates a category rule (and/or name rule) that applies to all matching transactions.
+`x`, `C`, `I` and the other single-key actions apply immediately with no confirmation. `E`, `C` and `I` act on every transaction currently shown, capped at the 200 rows the list loads.
+
+`e` asks for a destination path (default `~/transactions-export-YYYY-MM-DD.csv`), then `Enter` writes it. If the file exists you are asked to overwrite (`y` / `n`). The export covers the full result for the current filter, search, and date range, not just the rows on screen.
+
+The **edit panel** has five fields navigated with `↑ ↓`: **Name** (display name override), **Category** (cycle with `← →`), **Date** (`YYYY-MM-DD`; the original posted date stays recoverable with `d`), **Pattern**, and **Match type**. Leave Pattern empty and `Enter` saves the change to just this transaction. Fill in Pattern and `Enter` creates a category rule (and/or name rule) that applies to all matching transactions.
 
 ## Trends `[3]`
 
@@ -84,6 +99,7 @@ The **edit panel** has four fields navigated with `↑ ↓`: **Name** (display n
 | `Enter` | Drill into transactions for selected period |
 | `f` | Open filter panel |
 | `/` | Search transactions by name; hides view selector and shows net-style bars for matches |
+| `S` | Sync all accounts now (bypasses the 15-min cooldown) |
 | `Esc` | Clear active search (or navigate back) |
 
 ## Filter panel `[f]`
@@ -111,6 +127,9 @@ Everything selected in a section means "no constraint" for that dimension. The f
 | `Tab` | Toggle: by account ↔ by type |
 | `r` | Cycle history range (Week / Month / Quarter / Year) |
 | `↑ ↓` | Scroll history |
+| `f` | Filter the chart by account or type (depends on the current view) |
+
+In the filter, `↑ ↓` moves, `Space` toggles the selected account (or type), `a` includes everything again, and `f` or `Esc` closes it. With nothing toggled, everything is included.
 
 Shows assets (depository, investment, manual), liabilities (credit), and net worth. History shows one snapshot per period (last sync within each bucket), scrollable with up/down. To fill in earlier history, see [Importing balance history](#importing-balance-history) (Accounts → Add Data → `[b]`).
 
@@ -120,11 +139,12 @@ Shows assets (depository, investment, manual), liabilities (credit), and net wor
 |-----|--------|
 | `↑ ↓` | Select tag |
 | `/` | Search tags |
+| `s` | Cycle sort: name → most recent → oldest |
 | `Enter` | Open tag detail (income / expenses / category breakdown) |
 | `t` | View all transactions for selected tag |
 | `a` | Add new tag |
 | `n` | Rename selected tag |
-| `x` | Delete selected tag |
+| `x` | Delete selected tag (immediately, no confirmation) |
 
 In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
 
@@ -141,9 +161,15 @@ Displays a full financial picture across four sections:
 |-----|--------|
 | `↑ ↓` | Select assumption dial |
 | `← →` | Adjust selected dial value |
+| `Enter` | Type a value for the selected dial (`Enter` confirm, `Esc` cancel) |
 | `r` | Reset selected dial to default |
+| `t` | History view (`t` or `Esc` to close) |
 
-**Dials:** Monthly spending (±$100, default = avg past 12 months), Monthly savings (±$100, default = avg surplus), Withdrawal rate (±0.5%, default = 4%), Growth rate (±1%, default = 7%).
+**Dials:** Monthly spending (±$100, default = avg past 12 months), Monthly savings (±$100, default = avg surplus), Pretax savings (±$100, default $0), Withdrawal rate (±0.5%, default = 4%), Growth rate (±1%, default = 7%).
+
+**Pretax savings** is for 401k/HSA contributions that never show up in transactions. It is added to income when computing the savings rate (the take-home rate is shown alongside) and to savings when estimating years to FIRE. Unlike the other dials it is saved (settings key `pretax_monthly`) and survives restarts.
+
+**History** charts one metric per period, newest at the bottom: `← →` switches metric (savings rate, cash runway, liquid runway, debt payoff, retirement balance, years to FIRE, Coast FIRE), `↑ ↓` scrolls, `r` cycles the range (Week / Month / Quarter / Year). Years to FIRE and Coast FIRE apply today's growth and withdrawal assumptions to each period's past balance.
 
 Liquid assets = cash + brokerage (excludes 401k, IRA, pension).
 
@@ -159,7 +185,7 @@ Three sections, cycle with `Tab`: **Rules**, **Tag Rules**, **Categories**.
 | `/` | Search rules |
 | `a` | Add rule |
 | `Enter` | Edit selected rule |
-| `x` | Delete selected rule |
+| `x` | Delete selected rule (immediately, no confirmation) |
 
 The **Rules** list shows category rules and name rules in one table — `TYPE | PATTERN | AMOUNT | CATEGORY | NAME` — and a rule that sets both a category and a display name is one row. A rule scoped to one account shows `@account` at the end of its row.
 
@@ -176,7 +202,7 @@ The **tag rule form** has: Match type (`all` / `name` / `regex`), Pattern (hidde
 | `↑ ↓` | Select category |
 | `a` | Add new category |
 | `Enter` | Edit selected category (Name, Flexibility, Hidden — navigated with `↑ ↓`) |
-| `x` | Delete category (resets affected transactions to Uncategorized) |
+| `x` | Delete category immediately, no confirmation (resets affected transactions to Uncategorized) |
 | `v` | Toggle hidden from list |
 | `f` | Cycle flexibility tier from list: none → fixed → flexible → discretionary |
 
@@ -186,11 +212,10 @@ The **tag rule form** has: Match type (`all` / `name` / `regex`), Pattern (hidde
 |-----|--------|
 | `Tab` | Cycle views: Accounts → Links → Add Data → Dupes |
 | `↑ ↓` | Select account |
-| `Enter` | Edit selected account (nickname, type, subtype, APR — navigated with `↑ ↓`, `← →` to cycle) |
+| `Enter` | Edit selected account (nickname, owner, type, subtype, APR, excluded — navigated with `↑ ↓`, `← →` to cycle; owner appears once household members exist) |
 | `v` | Update value (manual assets only) |
 | `s` | Force sync (bypasses 15-min cooldown) |
-| `x` | Delete selected account |
-| `l` | Link a new bank account via Plaid |
+| `x` | Delete selected account (asks `y` / `n`) |
 
 **Links** tab lists one row per Plaid connection rather than per account, since a
 single connection can back many accounts.
@@ -231,11 +256,11 @@ roughly the last day — and cannot widen the history window. If what you are
 missing is older than that, Plaid almost certainly already has it, which makes
 `[d]` the free fix and `[r]` a wasted charge.
 
-**Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[b]` import balance history, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
+To link a new bank, use Add Data. **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[b]` import balance history, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 
 **Import history** appears on the Add Data view once a CSV has been imported. `↑↓` selects an import; `[u]` undoes it, removing the transactions it created and the record of it; `[v]` moves it to a different account, for a file imported into the wrong one. Both confirm first — undo names any categories, renames, or tags of yours that would be lost.
 
-**Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
+**Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all. Both act immediately, with no confirmation.
 
 ### Importing balance history
 
@@ -270,6 +295,9 @@ An AI-generated financial calculator, built on demand by the agent. Ask the agen
 | `Enter` | Type a value directly for selected dial |
 | `r` | Reset selected dial to default |
 | `/` | Open history browser |
+| `Esc` | Back to Dashboard |
+
+Canvases with editable lists (e.g. income or expense rows) add: `Enter` edits the selected cell, `a` adds a row, `d` deletes the selected row, and `← →` steps a start or end year.
 
 **History mode** (press `/` to enter):
 
