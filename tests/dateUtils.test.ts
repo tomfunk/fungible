@@ -5,6 +5,7 @@ import {
   navigatePeriod,
   formatPeriodLabel,
   generatePeriods,
+  MAX_PERIODS,
 } from '../core/dateUtils.js';
 
 // Helper: create a date at noon local time to avoid DST edge cases
@@ -373,5 +374,52 @@ describe('generatePeriods', () => {
     expect(generatePeriods('week', '2025-01-06', '2025-01-06')).toEqual([
       { label: 'Jan 6–12 2025', from: '2025-01-06', to: '2025-01-12' },
     ]);
+  });
+
+  it.each([
+    ['week', '2025-01-06', '2025-01-20', ['2025-01-06', '2025-01-13', '2025-01-20']],
+    ['month', '2024-11-15', '2025-01-02', ['2024-11-01', '2024-12-01', '2025-01-01']],
+    ['year', '2023-06-01', '2025-02-01', ['2023-01-01', '2024-01-01', '2025-01-01']],
+  ] as const)('%s ranges are unchanged by the cap', (range, from, to, froms) => {
+    expect(generatePeriods(range, from, to).map((p) => p.from)).toEqual(froms);
+  });
+
+  it.each(['week', 'month', 'quarter', 'year'] as const)('%s with from after to yields no periods', (range) => {
+    expect(generatePeriods(range, '2025-06-01', '2024-01-01')).toEqual([]);
+  });
+
+  it('a range of exactly MAX_PERIODS periods completes', () => {
+    expect(generatePeriods('quarter', '0001-01-01', '2500-12-31')).toHaveLength(MAX_PERIODS);
+  });
+
+  it.each([
+    ['week', '1900-01-01', '2900-01-01'],
+    ['month', '1000-01-01', '2000-01-01'],
+    ['quarter', '0001-01-01', '2501-01-01'],
+  ] as const)('%s range over the cap throws a clear error instead of spinning', (range, from, to) => {
+    expect(() => generatePeriods(range, from, to)).toThrow(/exceeds the 10000-period limit/);
+  });
+
+  it('a month range to year 9999 (~120k periods) fails fast with the cap error', () => {
+    expect(() => generatePeriods('month', '2025-01-01', '9999-12-31')).toThrow(/period limit/);
+  });
+
+  it('a non-numeric bound yields no periods for month/year (no loop entered)', () => {
+    expect(generatePeriods('month', '2025-01-01', 'garbage')).toEqual([]);
+    expect(generatePeriods('year', 'garbage', '2025-01-01')).toEqual([]);
+  });
+  // Boundary per branch: N periods completes, N+1 throws (pins >= vs >, and that
+  // every branch routes through the cap).
+  it.each([
+    ['week', '2025-01-06', (n: number) => { const d = new Date('2025-01-06T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 7 * (n - 1)); return d.toISOString().slice(0, 10); }],
+    ['month', '0001-01-01', (n: number) => `${String(1 + Math.floor((n - 1) / 12)).padStart(4, '0')}-${String(((n - 1) % 12) + 1).padStart(2, '0')}-01`],
+  ] as const)('%s: exactly MAX_PERIODS completes, one more throws', (range, from, toFor) => {
+    expect(generatePeriods(range, from, toFor(MAX_PERIODS))).toHaveLength(MAX_PERIODS);
+    expect(() => generatePeriods(range, from, toFor(MAX_PERIODS + 1))).toThrow(/period limit/);
+  });
+
+  it('week range with a non-date `to` throws the cap error instead of looping forever', () => {
+    // Lexicographic compare made "2025-01-01" <= "garbage" always true.
+    expect(() => generatePeriods('week', '2025-01-01', 'garbage')).toThrow(/period limit/);
   });
 });
