@@ -95,4 +95,21 @@ describe('NetWorth', () => {
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));
     expect(frame(r)).not.toContain('Excluded (not in net worth)');
   });
+
+  it('[r] cycles the history range month -> quarter -> year -> week -> month with the right periods and values', async () => {
+    await db.execute(`INSERT INTO balance_history (account_id, balance, date) VALUES
+      ('test-checking', 4000, '2026-03-31'), ('test-credit', -400, '2026-03-31'),
+      ('test-checking', 4500, '2026-04-30'), ('test-credit', -420, '2026-04-30')`);
+    const r = networth();
+    const hist = () => frame(r).split('\n').filter((l) => /^\s*(Mar|Apr|May|Q\d|W\d+|2026)\b/.test(l)).map((l) => l.replace(/\s+/g, ' ').replace(/ [█░]+$/, '').trim());
+    await waitFor(() => expect(hist()).toEqual(['Mar 2026 +$4,400.00', 'Apr 2026 +$4,920.00', 'May 2026 +$5,450.00']));
+    await press(r, 'r');
+    await waitFor(() => expect(hist()).toEqual(['Q1 2026 +$4,400.00', 'Q2 2026 +$5,450.00']));
+    await press(r, 'r');
+    await waitFor(() => expect(hist()).toEqual(['2026 +$5,450.00']));
+    await press(r, 'r');
+    await waitFor(() => expect(hist()).toEqual(['W13 2026 +$4,400.00', 'W17 2026 +$4,920.00', 'W20 2026 +$5,450.00']));
+    await press(r, 'r');
+    await waitFor(() => expect(hist()).toEqual(['Mar 2026 +$4,400.00', 'Apr 2026 +$4,920.00', 'May 2026 +$5,450.00']));
+  });
 });

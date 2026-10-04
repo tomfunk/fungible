@@ -17,7 +17,7 @@ vi.mock('../../core/profile.js', async (importActual) => {
 
 import { db } from '../../core/db.js';
 import { Tags } from '../../tui/Tags.js';
-import { waitFor, frame } from '../helpers/waitFor.js';
+import { waitFor, frame, flatFrame, press, pressKeys } from '../helpers/waitFor.js';
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
 
 useSeededScreenDb();
@@ -126,5 +126,54 @@ describe('Tags', () => {
     // Gross: Outflow $300.00 (not netted down to $200.00), Inflow $100.00.
     expect(f).toContain('300.00');
     expect(f).toContain('100.00');
+  });
+
+  it('[x] deletes the selected tag and its transaction_tags rows, leaving other tags alone', async () => {
+    await db.execute("INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-groc-1', 1), ('tx-dining-1', 2)");
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    await press(r, 'x');
+    await waitFor(() => expect(flatFrame(r)).toContain('Deleted "travel"'));
+    await waitFor(async () => expect((await db.execute('SELECT name FROM tags ORDER BY name')).rows.map((x) => x.name)).toEqual(['work']));
+    const tt = (await db.execute('SELECT transaction_id, tag_id FROM transaction_tags')).rows;
+    expect(tt.map((x) => [x.transaction_id, Number(x.tag_id)])).toEqual([['tx-dining-1', 2]]);
+    expect(frame(r)).toContain('work');
+    expect(frame(r)).not.toMatch(/travel\s+\d+ tx/); // the status line still names it; the row is gone
+  });
+
+  it('[a] creates a tag from the typed name: row written and listed', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    await press(r, 'a');
+    await waitFor(() => expect(frame(r)).toContain('New Tag'));
+    await pressKeys(r, [...'newtag']);
+    await press(r, '\r');
+    await waitFor(async () => expect((await db.execute("SELECT name FROM tags WHERE name = 'newtag'")).rows).toHaveLength(1));
+    await waitFor(() => expect(frame(r)).toContain('newtag'));
+    expect(flatFrame(r)).toContain('3 tags');
+  });
+
+  it.each([['empty', ''], ['whitespace-only', '   ']])('[a] with an %s name does not create a tag and stays in add mode', async (_label, typed) => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    await press(r, 'a');
+    await waitFor(() => expect(frame(r)).toContain('New Tag'));
+    await pressKeys(r, [...typed]);
+    await press(r, '\r');
+    await new Promise((res) => setTimeout(res, 100));
+    expect(frame(r)).toContain('New Tag');
+    expect((await db.execute('SELECT name FROM tags ORDER BY name')).rows.map((x) => x.name)).toEqual(['travel', 'work']);
+  });
+
+  it('[n] with the name cleared then Enter leaves the name unchanged', async () => {
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    await press(r, 'n');
+    await waitFor(() => expect(frame(r)).toContain('Rename Tag'));
+    await pressKeys(r, Array(10).fill('\x7f')); // backspace over the prefilled name
+    await press(r, '\r');
+    await new Promise((res) => setTimeout(res, 100));
+    expect(frame(r)).toContain('Rename Tag');
+    expect((await db.execute('SELECT name FROM tags ORDER BY name')).rows.map((x) => x.name)).toEqual(['travel', 'work']);
   });
 });
