@@ -1,5 +1,3 @@
-// DRAFT for after PR #239 (fix/add-transaction-amount-bounds) merges.
-// Place at tests/normalize-amount-properties.test.ts (core fief). Requires tests/helpers/prng.ts.
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../core/db.js', async () => {
