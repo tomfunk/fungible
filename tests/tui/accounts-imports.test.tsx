@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import React from 'react';
-import { render, cleanup } from 'ink-testing-library';
+import { cleanup } from 'ink-testing-library';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
@@ -9,33 +8,16 @@ vi.mock('../../core/db.js', async () => {
 
 import { db } from '../../core/db.js';
 import { importCsvTransactions } from '../../core/accounts.js';
-import { Accounts } from '../../tui/Accounts.js';
-import { RefreshProvider } from '../../tui/RefreshContext.js';
-import { TypingContext } from '../../tui/TypingContext.js';
 import { makeCsvRow } from '../helpers/makeCsvRow.js';
-import { waitFor, flatFrame as flat, pressAndWait } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, flatFrame as flat } from '../helpers/waitFor.js';
+
+// Screen loads run slower under coverage/CI load; give every wait generous headroom.
+const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
+vi.setConfig({ testTimeout: 30_000 });
 import { useTempCsv } from '../helpers/tempCsv.js';
 import { CSV_SKIP_COPY } from '../../core/csv-import-copy.js';
-
-function renderAccounts() {
-  return render(
-    <RefreshProvider>
-      <TypingContext.Provider value={() => {}}>
-        <Accounts onNavigate={() => {}} showHints={false} />
-      </TypingContext.Provider>
-    </RefreshProvider>,
-  );
-}
-
-/** Tab twice: Accounts → Links → Add Data, where import history lives. */
-async function toAddData(r: ReturnType<typeof render>) {
-  // One tab at a time: the two writes land in the same tick otherwise and Ink
-  // processes only the first.
-  r.stdin.write('\t');
-  await waitFor(() => expect(flat(r)).toContain('Links'));
-  r.stdin.write('\t');
-  await waitFor(() => expect(flat(r)).toContain('Import CSV file'));
-}
+import { renderAccounts } from './helpers/accountsScreen.js';
+import { toAddData, toCsvFile, toCsvPreview, typePath } from './helpers/driveCsvImport.js';
 
 const CFG = makeCsvRow();
 
@@ -222,37 +204,22 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
     '2025-01-07,,3.00',
   ].join('\n') + '\n';
 
-  async function toPreview(r: ReturnType<typeof render>, path: string) {
-    await addAccount('chk', 'Checking');
-    await pressAndWait(r, '\t', 'Links');
-    await pressAndWait(r, '\t', 'Import CSV file');
-    await pressAndWait(r, 'c', 'path to your CSV file');
-    for (const ch of path) r.stdin.write(ch);
-    await waitFor(() => expect(flat(r)).toContain(path.slice(-10)));
-    await pressAndWait(r, '\r', 'Which column is the DATE?');
-    await pressAndWait(r, '\r', 'Which column is the DESCRIPTION');
-    await pressAndWait(r, '\r', 'How is the amount structured?');
-    await pressAndWait(r, 's', 'Which column is the AMOUNT?');
-    await pressAndWait(r, '\u001b[B', '▶ Description');
-    await pressAndWait(r, '\u001b[B', '▶ Amount');
-    await pressAndWait(r, '\r', 'does a positive number mean');
-    await pressAndWait(r, 'o', 'Which account do these');
-    await pressAndWait(r, '\r', 'Ready to import');
-  }
+  // The import wizard needs an account to land the rows in.
+  beforeEach(async () => { await addAccount('chk', 'Checking'); });
 
   const txNames = async () =>
     (await db.execute('SELECT name, amount FROM transactions ORDER BY date')).rows.map((x) => [x.name, Number(x.amount)]);
 
   it('previews a good row and a $-prefixed amount as real amounts', async () => {
     const r = renderAccounts();
-    await toPreview(r, csv(MIXED));
+    await toCsvPreview(r, csv(MIXED));
     expect(flat(r)).toMatch(/2025-01-02 AMAZON\s+\$25\.00/);
     expect(flat(r)).toMatch(/2025-01-03 COFFEE\s+\$4\.50/);
   });
 
   it('marks unreadable, blank and bad-date rows instead of showing $0.00 or a raw date', async () => {
     const r = renderAccounts();
-    await toPreview(r, csv(MIXED));
+    await toCsvPreview(r, csv(MIXED));
     const f = flat(r);
     expect(f).toMatch(/GARBAGE\s+invalid\b/);
     expect(f).toMatch(/BLANKAMT\s+blank\b/);
@@ -263,19 +230,19 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
 
   it('counts every row that will be skipped, including ones past the preview', async () => {
     const r = renderAccounts();
-    await toPreview(r, csv(MIXED));
+    await toCsvPreview(r, csv(MIXED));
     expect(flat(r)).toContain('4 rows will be skipped');
   });
 
   it('shows no skip footer when every row is good', async () => {
     const r = renderAccounts();
-    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n'));
+    await toCsvPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n'));
     expect(flat(r)).not.toContain('will be skipped');
   });
 
   it('reports skips with file line numbers after import and writes only the good rows', async () => {
     const r = renderAccounts();
-    await toPreview(r, csv(MIXED));
+    await toCsvPreview(r, csv(MIXED));
     r.stdin.write('y');
     await waitFor(() => expect(flat(r)).toContain('Import complete'));
     const f = flat(r);
@@ -290,7 +257,7 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
 
   it('says "1 row will be skipped" for a single bad row', async () => {
     const r = renderAccounts();
-    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n2025-01-03,GARBAGE,12abc\n'));
+    await toCsvPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n2025-01-03,GARBAGE,12abc\n'));
     expect(flat(r)).toContain('1 row will be skipped');
     expect(flat(r)).not.toContain('1 rows');
   });
@@ -298,7 +265,7 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
   it('lists at most 5 skipped lines and counts the rest', async () => {
     const bad = Array.from({ length: 7 }, (_, i) => `2025-02-0${i + 1},BAD${i},xx`);
     const r = renderAccounts();
-    await toPreview(r, csv(['Date,Description,Amount', '2025-01-02,AMAZON,25.00', ...bad].join('\n') + '\n'));
+    await toCsvPreview(r, csv(['Date,Description,Amount', '2025-01-02,AMAZON,25.00', ...bad].join('\n') + '\n'));
     r.stdin.write('y');
     await waitFor(() => expect(flat(r)).toContain('Import complete'));
     const f = flat(r);
@@ -312,7 +279,7 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
   it('reports the true file line when a blank line precedes the bad row', async () => {
     const r = renderAccounts();
     // line 1 header, 2 good, 3 blank, 4 good, 5 bad amount (rowIndex 2 -> rowIndex+2 would say 4)
-    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n\n2025-01-03,COFFEE,4.50\n2025-01-04,GARBAGE,xx\n'));
+    await toCsvPreview(r, csv('Date,Description,Amount\n2025-01-02,AMAZON,25.00\n\n2025-01-03,COFFEE,4.50\n2025-01-04,GARBAGE,xx\n'));
     r.stdin.write('y');
     await waitFor(() => expect(flat(r)).toContain('Import complete'));
     expect(flat(r)).toContain(`line 5: ${CSV_SKIP_COPY.bad_amount}`);
@@ -322,7 +289,7 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
   it('reports the true file line when a quoted embedded newline precedes the bad row', async () => {
     const r = renderAccounts();
     // record 1 spans lines 2-3, so the bad row starts on line 4 (rowIndex+2 would say 3)
-    await toPreview(r, csv('Date,Description,Amount\n2025-01-02,"AMAZON\nPRIME",25.00\n2025-01-04,GARBAGE,xx\n'));
+    await toCsvPreview(r, csv('Date,Description,Amount\n2025-01-02,"AMAZON\nPRIME",25.00\n2025-01-04,GARBAGE,xx\n'));
     r.stdin.write('y');
     await waitFor(() => expect(flat(r)).toContain('Import complete'));
     expect(flat(r)).toContain(`line 4: ${CSV_SKIP_COPY.bad_amount}`);
@@ -332,12 +299,9 @@ describe('TUI Accounts — CSV import skips bad rows', () => {
   it('shows the unterminated-quote error and stays on the path step', async () => {
     const r = renderAccounts();
     const path = csv('Date,Description,Amount\n2025-01-02,"AMAZON,25.00\n2025-01-03,X,1.00\n');
-    await pressAndWait(r, '\t', 'Links');
-    await pressAndWait(r, '\t', 'Import CSV file');
-    await pressAndWait(r, 'c', 'path to your CSV file');
-    for (const ch of path) r.stdin.write(ch);
-    await waitFor(() => expect(flat(r)).toContain(path.slice(-10)));
-    await pressAndWait(r, '\r', 'CSV has an unterminated quote starting on line 2');
+    await toCsvFile(r);
+    await typePath(r, path);
+    await waitFor(() => expect(flat(r)).toContain('CSV has an unterminated quote starting on line 2'));
     expect(flat(r)).toContain('path to your CSV file');
     expect(flat(r)).not.toContain('Which column is the DATE?');
   });
