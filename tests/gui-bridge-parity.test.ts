@@ -185,10 +185,22 @@ function listSourceFiles(dir: string): string[] {
   return out;
 }
 
+// The real tree is read-only for the life of a test run, so each file is parsed (Babel is slow
+// under coverage instrumentation) at most once and shared by every test via this index.
+const fileUsesCache = new Map<string, CoreUse[]>();
+function coreUsesInFile(f: string): CoreUse[] {
+  let uses = fileUsesCache.get(f);
+  if (!uses) {
+    uses = coreUsesInSource(readFileSync(f, 'utf-8'), f, realRead);
+    fileUsesCache.set(f, uses);
+  }
+  return uses;
+}
+
 function collectCoreUses(dir: string, skipFiles = new Set<string>()): CoreUse[] {
   return listSourceFiles(dir)
     .filter((f) => !skipFiles.has(relative(ROOT, f)))
-    .flatMap((f) => coreUsesInSource(readFileSync(f, 'utf-8'), f, realRead));
+    .flatMap(coreUsesInFile);
 }
 
 /** True when `name` is referenced as an identifier anywhere outside import declarations. */
@@ -437,7 +449,7 @@ describe('dynamic core loads (fixtures)', () => {
   });
 });
 
-describe('GUI bridge feature parity with TUI', () => {
+describe('GUI bridge feature parity with TUI', { timeout: 30_000 }, () => {
   let registryNames: Set<string>;
   let registryPaths: Set<string>;
   let rendererUses: CoreUse[];
@@ -455,8 +467,10 @@ describe('GUI bridge feature parity with TUI', () => {
     );
     rendererUses = collectCoreUses(join(ROOT, 'gui/renderer/src'));
     mainUses = collectCoreUses(join(ROOT, 'gui/main'), new Set(['gui/main/registry.ts']));
-    registryUses = coreUsesInSource(readFileSync(join(ROOT, 'gui/main/registry.ts'), 'utf-8'), join(ROOT, 'gui/main/registry.ts'), realRead);
-  });
+    registryUses = coreUsesInFile(join(ROOT, 'gui/main/registry.ts'));
+    // Build the whole import index once, here, so per-test bodies only filter cached results.
+    collectCoreUses(join(ROOT, 'tui'));
+  }, 120_000);
 
   it('every core function used by a TUI screen is bridged or accounted for', () => {
     const tuiImports = collectTuiCoreImports();
