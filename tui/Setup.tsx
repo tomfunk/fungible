@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';

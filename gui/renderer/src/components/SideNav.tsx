@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Screen } from '../../../shared/nav.js';
 import { SCREEN_LABELS, SCREEN_ORDER, SCREEN_DIGITS } from '../../../shared/nav.js';
 import { useUiPrefs } from '../hooks/useUiPrefs.js';
@@ -27,6 +27,7 @@ export function SideNav({
       {SCREEN_ORDER.map((s) => (
         <button
           key={s}
+          aria-current={s === active ? 'page' : undefined}
           className={s === active ? styles.itemActive : styles.item}
           onClick={() => onSelect(s)}
         >

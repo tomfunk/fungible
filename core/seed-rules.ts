@@ -2,7 +2,6 @@ import { db } from './db.js';
 import { categorize } from './categorize.js';
 
 // Generic starter rules — common merchants and POS patterns.
-// Edit scripts/seed-rules.ts to add your own personal rules.
 const RULES: { priority: number; match_type: 'name' | 'regex'; pattern: string; category: string }[] = [
   // ── POS / payment processors (high-confidence category signals) ────────────
   { priority: 9, match_type: 'regex', pattern: '^TST[*\\s]', category: 'Food & Drink' },   // Toast POS

@@ -80,7 +80,7 @@ export function DialRow({
     format === 'percent' ? '%' : format === 'months' ? 'mo' : format === 'years' ? 'yr' : undefined;
 
   return (
-    <div className={styles.dial}>
+    <div className={styles.dial} role="group" aria-label={label}>
       <div className={styles.dialHeader}>
         <span className={styles.dialLabel}>{label}</span>
       </div>

@@ -1,10 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { tokenizeCsvDetailed } from './csv-tokenize.js';
 
 export type ParsedCsv = {
   headers: string[];
   rows: string[][];
+  /** 1-based source line each data row starts on (parallel to `rows`); differs
+   *  from index + 2 when the file has blank lines or quoted embedded newlines. */
+  lines: number[];
   /** Basename, not the full path: it identifies the import in the UI without
    *  storing where on disk the user keeps their statements. */
   fileName: string;
@@ -13,39 +17,42 @@ export type ParsedCsv = {
   fileHash: string;
 };
 
+/** Pure text parser. Throws on an unterminated quote (silent data loss otherwise).
+ *  Blank records are dropped; fields are trimmed. */
+export function parseCsvText(text: string): Pick<ParsedCsv, 'headers' | 'rows' | 'lines'> {
+  const { records, unterminatedQuoteLine } = tokenizeCsvDetailed(text);
+  if (unterminatedQuoteLine !== null) {
+    throw new Error(`CSV has an unterminated quote starting on line ${unterminatedQuoteLine}`);
+  }
+  // A single-field record that is empty/whitespace (including a bare "") is
+  // treated as a blank line and dropped; multi-field records like `,,` are kept.
+  const kept = records.filter((r) => !(r.fields.length === 1 && r.fields[0].trim() === ''));
+  if (kept.length === 0) return { headers: [], rows: [], lines: [] };
+  const trimmed = kept.map((r) => r.fields.map((f) => f.trim()));
+  return { headers: trimmed[0], rows: trimmed.slice(1), lines: kept.slice(1).map((r) => r.line) };
+}
+
+// Bank exports are often Windows-1252, which is not valid UTF-8. Try strict
+// UTF-8 first (ignoreBOM keeps any BOM in the string, as before), then fall
+// back to Windows-1252 rather than emitting U+FFFD replacement characters.
+function decodeCsvBytes(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}
+
 export function parseCSV(filePath: string): ParsedCsv {
   const bytes = fs.readFileSync(filePath);
-  const text = bytes.toString('utf8').trim();
-  const lines = text.split('\n');
-  const parse = (line: string) =>
-    line.match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g)?.map((v) => v.replace(/^"|"$/g, '').trim()) ?? [];
-  const headers = parse(lines[0]);
-  const rows = lines.slice(1).filter(Boolean).map(parse);
   return {
-    headers,
-    rows,
+    ...parseCsvText(decodeCsvBytes(bytes)),
     fileName: path.basename(filePath),
     fileHash: crypto.createHash('sha256').update(bytes).digest('hex'),
   };
 }
 
-export function parseDate(raw: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
-    const [m, d, y] = raw.split('/');
-    const fullYear = y.length === 2 ? (parseInt(y) < 50 ? `20${y}` : `19${y}`) : y;
-    return `${fullYear}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  return raw;
-}
-
-export function parseCurrencyAmount(raw: string): number {
-  const s = raw.trim();
-  const negative = s.startsWith('(') && s.endsWith(')');
-  const cleaned = s.replace(/[$,()]/g, '');
-  const value = parseFloat(cleaned);
-  return negative ? -value : value;
-}
+export { parseDate } from './csv-date.js';
 
 /**
  * The idempotency key for a CSV transaction, scoped to an account by the unique

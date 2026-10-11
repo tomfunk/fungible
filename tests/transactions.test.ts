@@ -6,6 +6,7 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
+import { saveCategoryRule } from '../core/rules.js';
 import {
   setTransactionCategory,
   clearTransactionOverride,
@@ -15,21 +16,23 @@ import {
   clearTransactionDate,
   deleteTransaction,
   upsertCategoryRule,
+  releaseSourcePin,
   upsertNameRule,
   setTransactionCategoryBulk,
   clearOverridesBulk,
   setIgnoredBulk,
   addTransaction,
+  normalizeAmount,
 } from '../core/transactions.js';
 
 let txId = 0;
-async function insertTx(opts: { name?: string; category?: string; manual_category?: string; ignored?: number; amount?: number }) {
+async function insertTx(opts: { name?: string; category?: string; manual_category?: string; ignored?: number; amount?: number; source?: string }) {
   txId++;
   const id = `tx${txId}`;
   await db.execute({
-    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, ignored, pending)
-          VALUES (?, 'acct1', '2025-01-15', ?, ?, ?, ?, ?, 0)`,
-    args: [id, opts.name ?? 'Test', opts.amount ?? 10, opts.category ?? 'Shopping', opts.manual_category ?? null, opts.ignored ?? 0],
+    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, ignored, pending, source)
+          VALUES (?, 'acct1', '2025-01-15', ?, ?, ?, ?, ?, 0, ?)`,
+    args: [id, opts.name ?? 'Test', opts.amount ?? 10, opts.category ?? 'Shopping', opts.manual_category ?? null, opts.ignored ?? 0, opts.source ?? 'plaid'],
   });
   return id;
 }
@@ -225,6 +228,77 @@ describe('addTransaction', () => {
       accountId: 'no-such-account', date: '2026-08-24', name: 'X', amount: 1, category: 'Shopping',
     })).rejects.toThrow(/no account/i);
   });
+
+  describe('amount validation', () => {
+    const add = (amount: number) => addTransaction({
+      accountId: 'acct1', date: '2026-08-24', name: 'Amt', amount, category: 'Shopping',
+    });
+    const amountOf = async (id: string) =>
+      Number((await db.execute({ sql: 'SELECT amount FROM transactions WHERE id = ?', args: [id] })).rows[0]!.amount);
+    const counts = async () => ({
+      tx: Number((await db.execute('SELECT COUNT(*) c FROM transactions')).rows[0]!.c),
+      tags: Number((await db.execute('SELECT COUNT(*) c FROM transaction_tags')).rows[0]!.c),
+    });
+
+    it.each([
+      [0.1 + 0.2, 0.3],
+      [4.505, 4.51],
+      [-4.505, -4.51], // half rounds away from zero, symmetric
+      [2.675, 2.68],
+      [-2.675, -2.68],
+      // 1.005 is really 1.00499999999999989..., and we round the double, so it lands on 1
+      [1.005, 1],
+      [12.34, 12.34],
+      [999999999.99, 999999999.99],
+      [-999999999.99, -999999999.99],
+      [2914, 2914],
+      [-80, -80],
+      [0.004, 0],
+    ])('stores %s as %s', async (input, expected) => {
+      const id = await add(input);
+      expect(await amountOf(id)).toBe(expected);
+    });
+
+    // -0 is covered by the pure normalizeAmount describe: libsql reads a stored -0
+    // back as 0, so asserting on the row could never fail.
+
+    it.each([
+      ['NaN', NaN, /amount/i],
+      ['Infinity', Infinity, /amount/i],
+      ['-Infinity', -Infinity, /amount/i],
+      ['1e9', 1e9, /1,?000,?000,?000|1e9/],
+      ['-1e9', -1e9, /1,?000,?000,?000|1e9/],
+      ['999999999.996 (rounds up to the limit)', 999999999.996, /1,?000,?000,?000|1e9/],
+      ['1e308', 1e308, /1,?000,?000,?000|1e9/],
+      ['a string', '5' as unknown as number, /amount/i],
+    ])('rejects %s and writes nothing', async (_n, amount, msg) => {
+      const before = await counts();
+      const err = await add(amount).catch((e: Error) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/amount/i);
+      expect((err as Error).message).toMatch(msg);
+      expect(await counts()).toEqual(before);
+    });
+
+    it('reports a bad amount before looking up a bad account', async () => {
+      await expect(addTransaction({
+        accountId: 'no-such-account', date: '2026-08-24', name: 'X', amount: NaN, category: 'Shopping',
+      })).rejects.toThrow(/amount/i);
+    });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('normalizeAmount (pure)', () => {
+  it.each([[999999999.996], [-999999999.996], [999999999.995]])('rejects %s (rounds up to the limit)', (x) => {
+    expect(() => normalizeAmount(x)).toThrow(/1,000,000,000/);
+  });
+  it.each([[999999999.994, 999999999.99]])('accepts %s -> %s', (x, y) => {
+    expect(normalizeAmount(x)).toBe(y);
+  });
+  it.each([[true], [null], [undefined], ['5'], [[]], [{}]])('rejects non-number %j', (x) => {
+    expect(() => normalizeAmount(x)).toThrow(/finite number/);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -299,6 +373,17 @@ describe('clearOverridesBulk', () => {
     const u = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [unpinned] })).rows[0] as unknown as { category: string };
     expect(u.category).toBe('Shopping');
   });
+
+  it('leaves source=manual rows pinned with their category intact', async () => {
+    const manual = await insertTx({ name: 'Cash Tip', category: 'Dining', manual_category: 'Dining', source: 'manual' });
+    const synced = await insertTx({ name: 'Cash Tip', category: 'Dining', manual_category: 'Dining' });
+    await clearOverridesBulk([manual, synced]);
+    const m = (await db.execute({ sql: 'SELECT category, manual_category FROM transactions WHERE id = ?', args: [manual] })).rows[0] as unknown as { category: string; manual_category: string | null };
+    expect(m.category).toBe('Dining');
+    expect(m.manual_category).toBe('Dining');
+    const s = (await db.execute({ sql: 'SELECT manual_category FROM transactions WHERE id = ?', args: [synced] })).rows[0] as unknown as { manual_category: string | null };
+    expect(s.manual_category).toBeNull();
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -320,6 +405,16 @@ describe('setIgnoredBulk', () => {
     await setIgnoredBulk([id], false);
     const row = (await db.execute({ sql: 'SELECT ignored FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as { ignored: number };
     expect(row.ignored).toBe(0);
+  });
+
+  it('skips source=manual rows but still ignores the rest of the selection', async () => {
+    const manual = await insertTx({ source: 'manual' });
+    const synced = await insertTx({});
+    await setIgnoredBulk([manual, synced], true);
+    const rows = (await db.execute('SELECT id, ignored FROM transactions')).rows as unknown as { id: string; ignored: number }[];
+    const map = Object.fromEntries(rows.map((r) => [r.id, r.ignored]));
+    expect(map[manual]).toBe(0);
+    expect(map[synced]).toBe(1);
   });
 });
 
@@ -372,5 +467,54 @@ describe('setTransactionDate', () => {
     await expect(setTransactionDate(id, '2025-13-01')).rejects.toThrow(/Invalid transaction date/);
     await expect(setTransactionDate(id, '2025-02-30')).rejects.toThrow(/Invalid transaction date/);
     expect(await dateOf(id)).toEqual({ date: '2025-01-15', original_date: null });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('accepting a rule suggestion releases the source pin', () => {
+  async function rowOf(id: string) {
+    return (await db.execute({ sql: 'SELECT category, manual_category FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as { category: string; manual_category: string | null };
+  }
+
+  it('upsertCategoryRule with sourceTransactionId unpins the source and keeps its category', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Uncategorized' });
+    const other = await insertTx({ name: 'COSTCO #2', category: 'Uncategorized' });
+    await setTransactionCategory(src, 'Groceries');
+    await upsertCategoryRule('COSTCO', 'name', 'Groceries', src);
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: null });
+    expect((await rowOf(other)).category).toBe('Groceries');
+  });
+
+  it('without sourceTransactionId the pin is kept (Pattern-typed path unchanged)', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Uncategorized' });
+    await setTransactionCategory(src, 'Groceries');
+    await upsertCategoryRule('COSTCO', 'name', 'Groceries');
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: 'Groceries' });
+  });
+
+  it('saveCategoryRule (conflict repoint) with sourceTransactionId unpins the source', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Uncategorized' });
+    await upsertCategoryRule('COSTCO', 'name', 'Shopping');
+    await setTransactionCategory(src, 'Groceries');
+    const ruleId = ((await db.execute('SELECT id FROM category_rules')).rows[0] as unknown as { id: number }).id;
+    await saveCategoryRule({
+      pattern: 'COSTCO', matchType: 'name', category: 'Groceries',
+      minAmount: null, maxAmount: null, editingId: ruleId, sourceTransactionId: src,
+    });
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: null });
+  });
+
+  it('never unpins source=manual rows', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Groceries', manual_category: 'Groceries', source: 'manual' });
+    expect(await releaseSourcePin(src)).toBe(false);
+    await upsertCategoryRule('COSTCO', 'name', 'Groceries', src);
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: 'Groceries' });
+  });
+
+  it('is a no-op for a missing id or an already-unpinned row', async () => {
+    const id = await insertTx({ name: 'X', category: 'Shopping' });
+    expect(await releaseSourcePin('nope')).toBe(false);
+    expect(await releaseSourcePin(id)).toBe(false);
+    expect(await rowOf(id)).toEqual({ category: 'Shopping', manual_category: null });
   });
 });

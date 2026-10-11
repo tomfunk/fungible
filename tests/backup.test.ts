@@ -24,9 +24,12 @@ vi.mock('../core/db.js', async () => {
 import { db } from '../core/db.js';
 import { backupDb } from '../core/backup.js';
 import { setSetting, BACKUP_INCLUDE_KEY_KEY } from '../core/settings.js';
+import { useFixedClock, FIXED_NOW_ISO } from './helpers/fakeClock.js';
+
+useFixedClock();
 
 const BACKUP_DIR = path.join(TEST_DATA_DIR, 'backups');
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = FIXED_NOW_ISO.slice(0, 10);
 const BACKUP_PATH = path.join(BACKUP_DIR, `fungible.${TODAY}.bak`);
 const KEY_PATH = path.join(TEST_DATA_DIR, 'key');
 const KEY_BACKUP_PATH = path.join(BACKUP_DIR, `key.${TODAY}.bak`);

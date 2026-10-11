@@ -1,8 +1,7 @@
-import React from 'react';
 import { Text } from 'ink';
 export { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, fmtSpan, sortTags, type TagSort } from '../core/fmt.js';
 export {
-  BAR_WIDTH, bar, truncate, padTruncate,
+  bar, truncate, padTruncate,
   periodLabel, periodLabelWidth, HISTORY_RANGES, HISTORY_RANGE_LABELS, type HistoryRange,
 } from './charUtils.js';
 

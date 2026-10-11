@@ -1,4 +1,3 @@
-import React from 'react';
 import { Text } from 'ink';
 import { SelectableRow } from './SelectableRow.js';
 import { TruncatedText } from './TruncatedText.js';
@@ -46,8 +45,8 @@ export function DialRow({
           older history entry, or a future LLM slip past the ≤18-char guideline)
           renders as one line instead of wrapping and dragging every column after
           it onto a second/third line — see TruncatedText for the mechanism. */}
-      <TruncatedText width={labelWidth} color={selected ? C_ACCENT : undefined}>{label}</TruncatedText>
-      <TruncatedText width={valueBoxWidth} color={resolvedValueColor} wrap="truncate-middle">
+      <TruncatedText width={labelWidth} noShrink color={selected ? C_ACCENT : undefined}>{label}</TruncatedText>
+      <TruncatedText width={valueBoxWidth} noShrink color={resolvedValueColor} wrap="truncate-middle">
         {'[ '}{displayValue.padStart(valueWidth)}
         {editing && <Text color={C_ACCENT}>{CURSOR}</Text>}
         {' ]'}

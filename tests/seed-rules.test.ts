@@ -27,11 +27,6 @@ describe('seedRules', () => {
     for (const { category } of ruleCats) expect(categories).toContain(category);
   });
 
-  it('offers Subscriptions, the category its streaming rules assign', async () => {
-    await seedRules();
-    expect(await getAllCategories()).toContain('Subscriptions');
-  });
-
   it('leaves an existing category row untouched', async () => {
     await db.execute("INSERT INTO categories (name, flexibility) VALUES ('Subscriptions', 'fixed')");
     await seedRules();

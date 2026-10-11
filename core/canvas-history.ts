@@ -108,7 +108,7 @@ export async function resolveAndWriteCanvasSpec(spec: CanvasSpec, historyId: str
   return resolved;
 }
 
-export function buildPriorCanvasesSection(prompt: string): string {
+function buildPriorCanvasesSection(prompt: string): string {
   const priorCanvases = searchHistory(prompt).slice(0, 3);
   if (!priorCanvases.length) return '';
   const entries = priorCanvases.map(

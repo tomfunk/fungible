@@ -247,6 +247,4 @@ export {
   savingsRateSeverity,
   runwaySeverity,
   debtPayoffSeverity,
-  type FireRunwayInputs,
-  type FireRunwayMetrics,
 } from './health-metrics.js';

@@ -15,7 +15,7 @@ export type Scorecard = {
 // share of the category's own baseline — $40 over on a $60 baseline matters,
 // $40 over on a $4,000 baseline doesn't.
 export const SIGNIFICANCE_FLOOR = 50;
-export const SIGNIFICANCE_SHARE = 0.15;
+const SIGNIFICANCE_SHARE = 0.15;
 
 export function isSignificantDelta(delta: number, baseline: number): boolean {
   return Math.abs(delta) >= Math.max(SIGNIFICANCE_FLOOR, SIGNIFICANCE_SHARE * baseline);

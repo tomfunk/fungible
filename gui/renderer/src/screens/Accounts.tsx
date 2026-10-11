@@ -3,20 +3,24 @@ import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
+import { useSyncProgress } from '../hooks/useSyncProgress.js';
 import { useKeyStatus } from '../hooks/useKeyStatus.js';
 import { Modal } from '../components/Modal.js';
+import { BalanceHistoryImportModal } from '../components/BalanceHistoryImportModal.js';
 import type { LinkedAccount, ImportTarget, LinkedItem } from '../../../../core/queries.js';
 import type { ImportRow } from '../../../../core/imports.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { SyncControl } from '../components/SyncControl.js';
-import { fmtTimeAgo, fmtSyncedAt } from '../../../../core/fmt.js';
+import { fmtTimeAgo, fmtSyncedAt, fmtBalanceAge } from '../../../../core/fmt.js';
 import {
   describeRefreshProgress, describeRefreshResult, POLL_DELAYS_MS,
   type RefreshProgress, type RefreshResult,
 } from '../../../../core/transactions-refresh-format.js';
 import { resolveCsvAmount } from '../../../../core/csv-amount.js';
+import { parseDate } from '../../../../core/csv-date.js';
+import { previewCsvSkips, summarizeCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../../../../core/csv-import-copy.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
@@ -28,6 +32,13 @@ const TAB_LABELS: Record<Tab, string> = {
 const TARGET_GROUP: Record<ImportTarget['kind'], string> = {
   plaid: 'Linked accounts', csv: 'CSV accounts', manual: 'Manual assets',
 };
+
+/** "CSV" if every listed row is a CSV import, "manual" if all hand-entered, '' for a mix. */
+function dupeGroupLabel(dupes: { csvSource: 'csv' | 'manual' }[]): string {
+  if (dupes.every((p) => p.csvSource === 'csv')) return 'CSV';
+  if (dupes.every((p) => p.csvSource === 'manual')) return 'manual';
+  return '';
+}
 
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
@@ -43,6 +54,7 @@ export function Accounts() {
 
   const accounts = useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [];
   const dupes = useQuery(() => api.accounts.getCsvPlaidDupeCandidates(), [reloadKey]) ?? [];
+  const manualDupeCount = dupes.filter((p) => p.csvSource === 'manual').length;
   const members = useQuery(() => api.profile.getHouseholdMembers(), [reloadKey]) ?? [];
   const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
   // One row per Plaid connection — the Links tab manages items, not accounts.
@@ -54,12 +66,14 @@ export function Accounts() {
   const [deleteAcct, setDeleteAcct] = useState<LinkedAccount | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [balanceImportOpen, setBalanceImportOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   // The connection whose credentials are being updated, if any. Distinct from
   // linkOpen: that adds a new item, this re-authorizes an existing one.
   const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   // The connection whose sync cursor is about to be deleted, if any.
   const [cursorItem, setCursorItem] = useState<LinkedItem | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   // The import being undone / re-pointed, if any.
   const [undoImp, setUndoImp] = useState<ImportRow | null>(null);
   const [moveImp, setMoveImp] = useState<ImportRow | null>(null);
@@ -76,7 +90,12 @@ export function Accounts() {
   // The item whose poll is in flight, held in a ref so the unmount cleanup can
   // read it without re-subscribing on every refresh.
   const refreshingItemIdRef = useRef<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const [localSyncing, setLocalSyncing] = useState(false);
+  // Also true while ANY sync is running, including the startup sync or a
+  // click on FilterBar's sync button on another screen — so this screen's
+  // own disabled-state/label stay accurate regardless of what triggered it.
+  const globalSyncing = useSyncProgress();
+  const syncing = localSyncing || globalSyncing;
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
   // user-triggered path), pushed from main — used to badge account rows.
@@ -88,7 +107,7 @@ export function Accounts() {
 
   async function forceSync() {
     if (syncing) return;
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const results = await api.sync.syncAll(true);
       const failed = results.filter((r) => r.error);
@@ -108,7 +127,7 @@ export function Accounts() {
     } catch {
       showStatus('Sync failed', 3000);
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
     }
   }
 
@@ -122,7 +141,7 @@ export function Accounts() {
     const accts = await api.queries.getLinkedAccounts();
     const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
     if (itemIds.length === 0) return;
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const results = await api.sync.syncAll(true, itemIds);
       const failed = results.filter((r) => r.error);
@@ -136,7 +155,7 @@ export function Accounts() {
     } catch {
       showStatus('Sync failed', 3000);
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
     }
   }
 
@@ -147,7 +166,7 @@ export function Accounts() {
     if (syncing) return;
     const label = item.institution_name ?? 'connection';
     setCursorItem(null);
-    setSyncing(true);
+    setLocalSyncing(true);
     try {
       const result = await api.sync.deleteCursorAndResync(item.item_id);
       if (result?.error) {
@@ -162,7 +181,7 @@ export function Accounts() {
     } catch {
       showStatus(`Resync failed: ${label}`, 3000);
     } finally {
-      setSyncing(false);
+      setLocalSyncing(false);
     }
   }
 
@@ -231,7 +250,7 @@ export function Accounts() {
         <h1 className={styles.title}>Accounts</h1>
         <div className="tabGroup">
           {TABS.map((t) => (
-            <button key={t} className={t === tab ? 'tabActive' : 'tab'} onClick={() => setTab(t)}>
+            <button key={t} aria-pressed={t === tab} className={t === tab ? 'tabActive' : 'tab'} onClick={() => setTab(t)}>
               {TAB_LABELS[t]}
               {t === 'dupes' && dupes.length > 0 ? ` (${dupes.length})` : ''}
               {t === 'links' && failingItems.size > 0 ? <span className="neg"> ⚠</span> : ''}
@@ -286,6 +305,10 @@ export function Accounts() {
                           <span className="neg">⚠ sync failed</span>
                         ) : awaiting ? (
                           <span className="warn">◷ awaiting first sync</span>
+                        ) : acct.balance_age ? (
+                          <span className={acct.balance_age.isStale ? 'warn' : 'dim'}>
+                            {fmtBalanceAge(acct.balance_age)}
+                          </span>
                         ) : acct.item_last_synced_at !== null ? (
                           <span className="dim">synced <span className="pos">{fmtSyncedAt(acct.item_last_synced_at)}</span></span>
                         ) : acct.last_synced ? (
@@ -434,6 +457,10 @@ export function Accounts() {
             <div className={styles.addTitle}>Import CSV</div>
             <div className="dim">Upload a statement export and map its columns</div>
           </button>
+          <button className={styles.addCard} onClick={() => setBalanceImportOpen(true)}>
+            <div className={styles.addTitle}>Import balance history</div>
+            <div className="dim">Past balances from a date,account,balance file</div>
+          </button>
           <button className={styles.addCard} onClick={() => setManualOpen(true)}>
             <div className={styles.addTitle}>Manual asset</div>
             <div className="dim">House, car, or other asset tracked by value</div>
@@ -500,16 +527,12 @@ export function Accounts() {
           ) : (
             <>
               <div className={styles.dupeBar}>
-                <span className="dim">{dupes.length} CSV transaction{dupes.length === 1 ? '' : 's'} that look like Plaid duplicates</span>
+                <span className="dim">{[dupes.length, dupeGroupLabel(dupes), `transaction${dupes.length === 1 ? '' : 's'}`].filter(Boolean).join(' ')} that look like Plaid duplicates</span>
                 <button
                   className={styles.rowBtnDangerSolid}
-                  onClick={async () => {
-                    await api.accounts.deleteAllDuplicates(dupes.map((p) => p.csvId));
-                    showStatus(`Deleted ${dupes.length} duplicate${dupes.length === 1 ? '' : 's'}`, 2500);
-                    reload();
-                  }}
+                  onClick={() => setConfirmDeleteAll(true)}
                 >
-                  Delete all CSV copies
+                  {['Delete all', dupeGroupLabel(dupes), 'copies'].filter(Boolean).join(' ')}
                 </button>
               </div>
               <table className={styles.table}>
@@ -528,7 +551,7 @@ export function Accounts() {
                     <React.Fragment key={pair.csvId}>
                       <tr className={styles.dupeCsvRow}>
                         <td className="dim">{pair.accountName}</td>
-                        <td className="warn">CSV</td>
+                        <td className="warn">{pair.csvSource === 'manual' ? 'Manual' : 'CSV'}</td>
                         <td className="num dim">{pair.csvDate}</td>
                         <td>{pair.csvName}</td>
                         <td className="num neg">${Math.abs(pair.csvAmount).toFixed(2)}</td>
@@ -537,11 +560,11 @@ export function Accounts() {
                             className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
                             onClick={async () => {
                               await api.accounts.deleteDuplicate(pair.csvId);
-                              showStatus('CSV copy deleted');
+                              showStatus(pair.csvSource === 'manual' ? 'Manual copy deleted' : 'CSV copy deleted');
                               reload();
                             }}
                           >
-                            delete CSV copy
+                            delete {pair.csvSource === 'manual' ? 'manual' : 'CSV'} copy
                           </button>
                         </td>
                       </tr>
@@ -636,11 +659,22 @@ export function Accounts() {
       {csvOpen && (
         <CsvImportModal
           onClose={() => setCsvOpen(false)}
-          onDone={(imported, skipped) => {
+          onDone={({ imported, skipped, skippedRows }) => {
             setCsvOpen(false);
-            showStatus(`Imported ${imported} · skipped ${skipped}`, 4000);
+            showStatus(csvDoneMessage(imported, skipped, skippedRows), skipped > 0 ? 12000 : 4000);
             reload();
             setTab('accounts');
+          }}
+        />
+      )}
+
+      {balanceImportOpen && (
+        <BalanceHistoryImportModal
+          onClose={() => setBalanceImportOpen(false)}
+          onDone={(r) => {
+            setBalanceImportOpen(false);
+            showStatus(`Net worth history updated. Added ${r.inserted}, replaced ${r.overwritten}, skipped ${r.skipped}.`, 4000);
+            reload();
           }}
         />
       )}
@@ -656,6 +690,37 @@ export function Accounts() {
             void syncNewInstitutions();
           }}
         />
+      )}
+
+      {confirmDeleteAll && (
+        <Modal title="Delete all listed copies" onClose={() => setConfirmDeleteAll(false)} accent="var(--negative)">
+          <p>
+            Delete all {dupes.length} listed {dupes.length === 1 ? 'copy' : 'copies'}? This cannot be undone.
+          </p>
+          <p className="dim">Keeps the Plaid transactions; edits and tags move across.</p>
+          {manualDupeCount > 0 && (
+            <p className="warn">
+              Includes {manualDupeCount} manually entered transaction{manualDupeCount === 1 ? '' : 's'}.
+            </p>
+          )}
+          <div className="modalActions">
+            <button className="btnSecondary" onClick={() => setConfirmDeleteAll(false)}>
+              Cancel
+            </button>
+            <button
+              className="btnPrimary"
+              onClick={async () => {
+                const ids = dupes.map((p) => p.csvId);
+                setConfirmDeleteAll(false);
+                await api.accounts.deleteAllDuplicates(ids);
+                showStatus(`Deleted ${ids.length} duplicate${ids.length === 1 ? '' : 's'}`, 2500);
+                reload();
+              }}
+            >
+              Yes, delete all
+            </button>
+          </div>
+        </Modal>
       )}
 
       {cursorItem && (
@@ -919,6 +984,9 @@ function EditAccountModal({
   const [subtype, setSubtype] = useState(
     initialSubtypes.includes(acct.subtype ?? '') ? (acct.subtype ?? '') : (initialSubtypes[0] ?? ''),
   );
+  // Only write type/subtype when the user changed them: the select's seeded value
+  // can differ from the stored one (unknown or NULL subtype) and must not be persisted.
+  const [typeTouched, setTypeTouched] = useState(false);
   const [apr, setApr] = useState(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
   const [excluded, setExcluded] = useState(acct.excluded);
 
@@ -927,7 +995,7 @@ function EditAccountModal({
 
   async function save() {
     const aprVal = apr.trim() ? parseFloat(apr) : null;
-    await api.accounts.updateAccountTypeSubtype(acct.id, type, subtype.trim() || null);
+    if (typeTouched) await api.accounts.updateAccountTypeSubtype(acct.id, type, subtype.trim() || null);
     await api.accounts.updateAccountNickname(acct.id, nickname.trim() || null);
     await api.accounts.updateAccountOwner(acct.id, owner.trim() || null);
     if (isDebt) await api.accounts.updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
@@ -964,6 +1032,7 @@ function EditAccountModal({
         <select
           value={type}
           onChange={(e) => {
+            setTypeTouched(true);
             setType(e.target.value);
             setSubtype(SUBTYPES[e.target.value]?.[0] ?? '');
           }}
@@ -976,7 +1045,10 @@ function EditAccountModal({
         </select>
         <label>Subtype</label>
         {subtypes.length > 0 ? (
-          <select value={subtype} onChange={(e) => setSubtype(e.target.value)}>
+          <select value={subtype} onChange={(e) => {
+              setTypeTouched(true);
+              setSubtype(e.target.value);
+            }}>
             {subtypes.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -1232,9 +1304,37 @@ function MoveImportModal({ imp, onClose, onDone }: {
 
 // ── CSV import wizard (single-form, unlike the TUI's step flow) ─────────────
 
-type CsvData = { path: string; headers: string[]; rows: string[][]; fileName: string; fileHash: string };
+/** Done message for a CSV import. Uses the true source line core reports;
+ *  rowIndex + 2 is only a fallback (it ignores blank lines and embedded newlines). */
+function csvDoneMessage(imported: number, skipped: number, skippedRows: CsvSkippedRow[]): string {
+  let msg = `Imported ${imported} · skipped ${skipped}`;
+  if (skippedRows.length === 0) return msg;
+  const { summary, shown, hiddenCount } = previewCsvSkips(skippedRows);
+  msg += ` (${summary})`;
+  const lines = shown.map((r) => `line ${r.line ?? r.rowIndex + 2}: ${CSV_SKIP_COPY[r.reason]}`);
+  return `${msg}. ${lines.join('; ')}${hiddenCount > 0 ? `; …and ${hiddenCount} more` : ''}`;
+}
 
-function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imported: number, skipped: number) => void }) {
+type CsvData = { path: string; headers: string[]; rows: string[][]; lines: number[]; fileName: string; fileHash: string };
+
+function PreviewDate({ raw }: { raw: string }) {
+  const iso = parseDate(raw);
+  return iso === null
+    ? <td className="num warn" data-date-state="invalid" title={`Unreadable date: ${raw}`}>invalid date</td>
+    : <td className="num dim" data-date-state="ok">{iso}</td>;
+}
+
+function PreviewAmount({ result }: { result: ReturnType<typeof resolveCsvAmount> | null }) {
+  if (result === null) return <td className="num warn" data-amount-state="pending">—</td>;
+  if (!result.ok) {
+    return result.reason === 'empty_amount'
+      ? <td className="num warn" data-amount-state="blank">blank</td>
+      : <td className="num warn" data-amount-state="invalid">invalid</td>;
+  }
+  return <td className="num warn" data-amount-state="ok">${Math.abs(result.amount).toFixed(2)}</td>;
+}
+
+function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (result: { imported: number; skipped: number; skippedRows: CsvSkippedRow[] }) => void }) {
   const [csv, setCsv] = useState<CsvData | null>(null);
   const [dateCol, setDateCol] = useState<number>(-1);
   const [nameCol, setNameCol] = useState<number>(-1);
@@ -1256,7 +1356,13 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
   const [error, setError] = useState('');
 
   async function pick() {
-    const result = await api.files.pickCsv();
+    let result: Awaited<ReturnType<typeof api.files.pickCsv>>;
+    try {
+      result = await api.files.pickCsv();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not read that file');
+      return;
+    }
     if (!result) return;
     if (result.headers.length === 0) {
       setError('No columns found in that file');
@@ -1298,18 +1404,33 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
     accountId !== '' &&
     (amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0);
 
-  function previewAmount(row: string[]): string {
-    const columnsChosen = amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0;
-    if (!columnsChosen) return '—';
-    const amount = resolveCsvAmount(row, {
+  const columnsChosen = amountMode === 'single' ? amountCol >= 0 : debitCol >= 0 && creditCol >= 0;
+
+  function amountOf(row: string[]) {
+    return resolveCsvAmount(row, {
       amountMode,
       amountCol: amountCol >= 0 ? amountCol : null,
       debitCol: debitCol >= 0 ? debitCol : null,
       creditCol: creditCol >= 0 ? creditCol : null,
       positiveIsInflow,
     });
-    return `$${Math.abs(amount).toFixed(2)}`;
   }
+
+  // Same checks, same order, as core importCsvTransactions, so the preview
+  // cannot promise a row that the import will then skip.
+  function skipReason(row: string[]): CsvSkippedRow['reason'] | null {
+    if (!(row[nameCol] ?? '').trim()) return 'missing_name';
+    if (parseDate(row[dateCol] ?? '') === null) return 'bad_date';
+    const amount = amountOf(row);
+    return amount.ok ? null : amount.reason;
+  }
+
+  const willSkip: CsvSkippedRow[] = valid
+    ? csv!.rows.flatMap((row, rowIndex) => {
+        const reason = skipReason(row);
+        return reason ? [{ rowIndex, reason }] : [];
+      })
+    : [];
 
   async function doImport() {
     if (!csv || !valid || importing) return;
@@ -1323,8 +1444,8 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
         debitCol: amountMode === 'split' ? debitCol : null,
         creditCol: amountMode === 'split' ? creditCol : null,
         positiveIsInflow,
-      }, { name: csv.fileName, hash: csv.fileHash });
-      onDone(result.imported, result.skipped);
+      }, { name: csv.fileName, hash: csv.fileHash }, csv.lines);
+      onDone({ imported: result.imported, skipped: result.skipped, skippedRows: result.skippedRows });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Import failed');
       setImporting(false);
@@ -1492,13 +1613,18 @@ function CsvImportModal({ onClose, onDone }: { onClose: () => void; onDone: (imp
                 <tbody>
                   {csv.rows.slice(0, 5).map((row, i) => (
                     <tr key={i}>
-                      <td className="num dim">{row[dateCol] ?? ''}</td>
+                      <PreviewDate raw={row[dateCol] ?? ''} />
                       <td>{row[nameCol] ?? ''}</td>
-                      <td className="num warn">{previewAmount(row)}</td>
+                      <PreviewAmount result={columnsChosen ? amountOf(row) : null} />
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {willSkip.length > 0 && (
+                <p className="warn" data-testid="csv-skip-footer">
+                  {willSkip.length} {willSkip.length === 1 ? 'row' : 'rows'} will be skipped: {summarizeCsvSkips(willSkip)}
+                </p>
+              )}
             </div>
           )}
 

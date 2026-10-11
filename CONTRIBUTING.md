@@ -41,7 +41,7 @@ core/         Business logic: queries, rules, categorization, date utils
 tui/          Terminal UI (React/Ink components, one file per screen)
 mcp/          MCP server — exposes tools to Claude
 api/          HTTP API server (same tools as MCP, over REST)
-tests/        Test files, mirroring the core/ structure
+tests/        Tests: core at the top level, tui/, gui/ and e2e/ in subfolders (see docs/testing.md)
 scripts/      CLI scripts: CSV import, Plaid link, rule seeding
 bin/          Entry point for the fungible CLI
 ```
@@ -68,10 +68,12 @@ chore/short-description
 
 ### Tests
 
+- Tests ship with the change. Bug fixes get a failing-first test.
 - Query-level logic should have test coverage in `tests/queries.test.ts` (or the relevant test file)
 - Tests use a shared in-memory DB initialized via `tests/helpers/makeTestDb.ts`
 - Follow the existing `insertTx` / `describe` + `it` pattern
-- **Any new interactive feature in a TUI screen must have a corresponding test in `tests/tui/screens.test.tsx`** that simulates the key press and asserts on the rendered output. This catches bugs like unawaited async calls that only surface at runtime. Use the `waitFor` helper and `r.stdin.write(key)` to simulate user input.
+- **Any new interactive feature in a TUI screen must have a test in that screen's file, `tests/tui/<screen>.test.tsx`,** that simulates the key press and asserts on the rendered output. This catches bugs like unawaited async calls that only surface at runtime. Use the `waitFor` helper and `r.stdin.write(key)` to simulate user input.
+- See [`docs/testing.md`](docs/testing.md) for the kinds of test, what each should assert, and the shared helpers.
 
 ### Version bump
 
@@ -85,7 +87,7 @@ Before opening an issue, check if one already exists. When filing a bug, include
 
 1. Fork the repo and push your branch to your fork
 2. Open a PR against `dev` (PRs against `main` are rejected by CI — only `dev → main` release promotions land there)
-3. Make sure `npm test` and `npm run typecheck` pass
+3. Make sure `npm test` and `npm run typecheck` pass, and that the change includes its tests
 4. Include a short description of what changed and why
 
 ## License

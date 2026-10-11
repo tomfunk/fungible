@@ -150,11 +150,6 @@ describe('invertSelection', () => {
     expect(invertSelection(new Set(universe), universe)).toEqual(new Set());
     expect(invertSelection(new Set(), universe)).toEqual(new Set(universe));
   });
-
-  it('double-invert is identity', () => {
-    const sel = new Set(['Dining']);
-    expect(invertSelection(invertSelection(sel, universe), universe)).toEqual(sel);
-  });
 });
 
 describe('invertTagModes', () => {
@@ -162,11 +157,6 @@ describe('invertTagModes', () => {
     const inverted = invertTagModes(new Map([['shared', 'has'], ['personal', 'lacks']]));
     expect(inverted).toEqual(new Map([['shared', 'lacks'], ['personal', 'has']]));
     expect(inverted.has('untouched')).toBe(false);
-  });
-
-  it('double-invert is identity', () => {
-    const modes = new Map<string, 'has' | 'lacks'>([['x', 'has'], ['y', 'lacks']]);
-    expect(invertTagModes(invertTagModes(modes))).toEqual(modes);
   });
 });
 

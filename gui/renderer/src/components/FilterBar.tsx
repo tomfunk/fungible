@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useSync } from '../hooks/useSync.js';

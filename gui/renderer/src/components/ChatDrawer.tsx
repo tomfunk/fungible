@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNav } from '../hooks/useNav.js';
 import { useFilter } from '../hooks/useFilter.js';
 import type { Screen, TxFilter } from '../../../shared/nav.js';

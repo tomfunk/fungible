@@ -20,3 +20,6 @@ playwright-report/
 .fiefdom/worktrees/
 .fiefdom/bin/
 .fiefdom/cross-fief-requests.log
+
+# Test coverage output
+coverage/

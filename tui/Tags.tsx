@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
@@ -10,6 +10,7 @@ import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatu
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -17,6 +18,7 @@ const SORT_ORDER: TagSort[] = ['name', 'recent', 'oldest'];
 const SORT_LABEL: Record<TagSort, string> = { name: 'name', recent: 'most recent', oldest: 'oldest' };
 
 export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean; initialFilter?: TxFilter }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const { filter, setFilter } = useFilter();
   const [tags, setTags] = useState<Tag[]>([]);
@@ -29,11 +31,11 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
 
-  function load() { void getAllTags().then(setTags); }
+  function load() { void track(getAllTags()).then(setTags); }
 
   const initialNavDone = useRef(false);
   useEffect(() => {
-    void getAllTags().then((loaded) => {
+    void track(getAllTags()).then((loaded) => {
       setTags(loaded);
       if (!initialNavDone.current) {
         initialNavDone.current = true;
@@ -50,7 +52,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
   useEffect(() => { setTyping(mode === 'search' || mode === 'add' || mode === 'rename'); }, [mode]);
 
   function openDetail(tag: Tag) {
-    void getTagSummary(tag.name).then(setTagSummary);
+    void track(getTagSummary(tag.name)).then(setTagSummary);
     setCatCursor(0);
     setMode('detail');
   }
@@ -81,10 +83,9 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
     if (mode === 'add') {
       if (key.escape) { setMode('list'); setNewName(''); return; }
       if (key.return && newName.trim()) {
-        createTag(newName.trim());
+        void createTag(newName.trim()).then(load);
         setNewName('');
         setMode('list');
-        load();
         return;
       }
       if (key.backspace || key.delete) { setNewName((n) => n.slice(0, -1)); return; }
@@ -97,8 +98,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       if (key.return && newName.trim()) {
         const tag = visibleTags[cursor];
         if (tag) {
-          renameTag(tag.id, newName.trim());
-          load();
+          void renameTag(tag.id, newName.trim()).then(load);
         }
         setNewName('');
         setMode('list');
@@ -114,13 +114,13 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       if (key.leftArrow) {
         const next = Math.max(0, cursor - 1);
         setCursor(next);
-        if (visibleTags[next]) { void getTagSummary(visibleTags[next].name).then(setTagSummary); setCatCursor(0); }
+        if (visibleTags[next]) { void track(getTagSummary(visibleTags[next].name)).then(setTagSummary); setCatCursor(0); }
         return;
       }
       if (key.rightArrow) {
         const next = Math.min(visibleTags.length - 1, cursor + 1);
         setCursor(next);
-        if (visibleTags[next]) { void getTagSummary(visibleTags[next].name).then(setTagSummary); setCatCursor(0); }
+        if (visibleTags[next]) { void track(getTagSummary(visibleTags[next].name)).then(setTagSummary); setCatCursor(0); }
         return;
       }
       if (key.upArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }
@@ -161,10 +161,9 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
     if (input === 'n' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
     if (input === 'x' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
-      deleteTag(tag.id);
       showStatus(`Deleted "${tag.name}"`);
       setCursor((c) => Math.max(0, c - 1));
-      load();
+      void deleteTag(tag.id).then(load);
       return;
     }
     if (key.return && visibleTags[cursor]) {
@@ -180,6 +179,8 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
 
   const tag = visibleTags[cursor];
   const maxCategorySpend = tagSummary?.byCategory[0]?.total ?? 1;
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

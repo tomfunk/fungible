@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getAllRules, getAllNameRules, getAllTagRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, getLinkedAccounts, type Rule, type NameRule, type TagRuleRow, type CategoryDetail, type LinkedAccount } from '../core/queries.js';
 import {
@@ -16,6 +16,7 @@ import { useTerminalWidth, FLEX_COLORS, C_ACCENT, C_DIM, C_MANUAL, C_NEUTRAL, C_
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, ColumnHeader, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
@@ -39,6 +40,7 @@ function amountLabel(min: number | null, max: number | null): string {
 }
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
@@ -115,17 +117,17 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const catNameW = Math.max(12, inner - 28);
 
   function load() {
-    void getAllRules().then(setRules);
-    void getAllNameRules().then(setNameRules);
-    void getAllTagRules().then(setTagRules);
-    void getTagOptions().then(setTagOptions);
-    void getUncategorizedCount().then(setUncategorized);
-    void getHiddenCategorySet().then(setHiddenSet);
-    void getAllCategories().then(setCategories);
-    void getCategoryDetails().then(setCatDetails);
+    void track(getAllRules()).then(setRules);
+    void track(getAllNameRules()).then(setNameRules);
+    void track(getAllTagRules()).then(setTagRules);
+    void track(getTagOptions()).then(setTagOptions);
+    void track(getUncategorizedCount()).then(setUncategorized);
+    void track(getHiddenCategorySet()).then(setHiddenSet);
+    void track(getAllCategories()).then(setCategories);
+    void track(getCategoryDetails()).then(setCatDetails);
     // Drop not-yet-synced institution placeholders — they have no transactions,
     // so they don't belong in an account picker.
-    void getLinkedAccounts().then((accts) => setAccounts(accts.filter((a) => !a.awaitingFirstSync)));
+    void track(getLinkedAccounts()).then((accts) => setAccounts(accts.filter((a) => !a.awaitingFirstSync)));
   }
 
   // Tag-rule form field order (pattern is hidden/ignored for match type 'all').
@@ -377,7 +379,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           const cat = categories[catListCursor];
           const nowHidden = !hiddenSet.has(cat);
           toggleHiddenCategory(cat, hiddenSet);
-          void getHiddenCategorySet().then(setHiddenSet);
+          void track(getHiddenCategorySet()).then(setHiddenSet);
           showStatus(`${cat} is now ${nowHidden ? 'hidden' : 'visible'}`);
           return;
         }
@@ -441,7 +443,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         const cat = catDetails[catListCursor];
         if (cat) {
           toggleHiddenCategory(cat.name, hiddenSet);
-          void getHiddenCategorySet().then(setHiddenSet);
+          void track(getHiddenCategorySet()).then(setHiddenSet);
         }
         return;
       }
@@ -532,6 +534,8 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   const PAGE = 20;
   const { visible } = usePagination(filteredRules, cursor, PAGE);
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

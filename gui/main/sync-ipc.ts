@@ -5,11 +5,16 @@ import { mergeSyncResult } from '../../core/sync-status.js';
 // On-demand /transactions/refresh gets its own channel rather than a registry
 // entry: the poll runs for minutes and streams progress, so the renderer needs
 // a progress push and a cancel path, not a single request/response call.
-export function registerSyncIpc() {
-  // itemId → the controller aborting its in-flight poll, so a later cancel or a
-  // window close can stop the timers and the sync it left running.
-  const inflight = new Map<string, AbortController>();
+// itemId → the controller aborting its in-flight poll, so a later cancel or a
+// window close can stop the timers and the sync it left running.
+const inflight = new Map<string, AbortController>();
 
+/** Abort every in-flight refresh poll (window closed: nobody is left to watch them). */
+export function abortInflightRefreshes() {
+  for (const controller of inflight.values()) controller.abort();
+}
+
+export function registerSyncIpc() {
   ipcMain.handle('sync:refresh', async (e, itemId: string) => {
     inflight.get(itemId)?.abort(); // never run two polls for one item at once
     const controller = new AbortController();

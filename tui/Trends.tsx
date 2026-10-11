@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, getPeriodTotals, getSearchMatchingPeriods, getSearchPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
@@ -15,6 +15,7 @@ import { StatCard, usePagination, SelectableRow, PageHeader, TextInput, useStatu
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
@@ -38,6 +39,7 @@ export function Trends({
   isActive?: boolean;
   showHints: boolean;
 }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const { filter: sharedFilter, setFilter } = useFilter();
   const [views, setViews] = useState<View[]>([
@@ -64,12 +66,12 @@ export function Trends({
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<number | null>(null);
   const { statusMsg, showStatus } = useStatusMessage();
-  useEffect(() => { void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
+  useEffect(() => { void track(getLastSyncedAt()).then(setLastSynced); }, [refreshKey]);
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(searchMode); }, [searchMode, setTyping]);
 
   useEffect(() => {
-    void buildTrendViews().then((loaded) => {
+    void track(buildTrendViews()).then((loaded) => {
       setViews(loaded);
       const cat = initialFilter?.focusCategory;
       if (cat) {
@@ -92,7 +94,7 @@ export function Trends({
   useEffect(() => {
     if (!view) return;
     const token = rowsGuard.begin();
-    void getPeriodTotals(view, range, sharedFilter).then((data) => {
+    void track(getPeriodTotals(view, range, sharedFilter)).then((data) => {
       if (!rowsGuard.isLatest(token)) return;
       setRows(data);
       setCursor(Math.max(0, data.length - 1));
@@ -104,7 +106,7 @@ export function Trends({
   useEffect(() => {
     if (!liveSearch) { setMatchCount(null); return; }
     const token = matchGuard.begin();
-    void getSearchMatchingPeriods(liveSearch, range, sharedFilter).then(({ count }) => {
+    void track(getSearchMatchingPeriods(liveSearch, range, sharedFilter)).then(({ count }) => {
       if (matchGuard.isLatest(token)) setMatchCount(count);
     });
   }, [liveSearch, range, sharedFilter]);
@@ -112,7 +114,7 @@ export function Trends({
   useEffect(() => {
     if (!search) { setSearchRows([]); return; }
     const token = searchGuard.begin();
-    void getSearchPeriodTotals(search, range, sharedFilter).then((data) => {
+    void track(getSearchPeriodTotals(search, range, sharedFilter)).then((data) => {
       if (!searchGuard.isLatest(token)) return;
       setSearchRows(data);
       setCursor(Math.max(0, data.length - 1));
@@ -230,6 +232,8 @@ export function Trends({
   const BAR_WIDTH = Math.max(8, inner - rowBase - 13 - 4);
   const HALF_BAR = Math.max(6, Math.floor((inner - rowBase - 13 - 4 - 1) / 2));
   const FLEX_BAR = Math.max(5, Math.floor((inner - rowBase - 13 - 8) / 3));
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

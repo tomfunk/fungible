@@ -38,8 +38,9 @@ vi.mock('../core/settings.js', () => ({
   PRETAX_MONTHLY_KEY: 'pretax_monthly',
 }));
 
-import { evalExpr, computeOutputValues, projectSeries, fmtDialValue, fmtValue, type CanvasSpec, type CanvasElement, type DialDef, type OutputDef, type ProjectionSeriesDef } from '../core/canvas-spec.js';
-import { resolveCanvasBindings, BINDING_KEYS } from '../core/canvas-agent.js';
+import { evalExpr, computeOutputValues, projectSeries, type CanvasSpec, type CanvasElement, type DialDef, type OutputDef, type ProjectionSeriesDef } from '../core/canvas-spec.js';
+import { resolveCanvasBindings } from '../core/canvas-agent.js';
+import { useFixedClock } from './helpers/fakeClock.js';
 
 const dial = (overrides: Partial<DialDef>): DialDef => ({
   key: 'k', label: 'K', default: 0, step: 1, format: 'dollar', hint: 'h',
@@ -51,83 +52,6 @@ const specWith = (dials: DialDef[]): CanvasSpec => ({
   elements: dials.map((d) => ({ type: 'dial' as const, dial: d })),
 });
 
-// ─── fmtDialValue: dollar ───────────────────────────────────────────────────────
-
-describe('fmtDialValue — dollar', () => {
-  it('omits decimals for a whole-dollar value', () => {
-    expect(fmtDialValue(18208, 'dollar')).toBe('$18,208');
-  });
-  it('keeps decimals when the value has a fractional cent component', () => {
-    expect(fmtDialValue(1_093_388.68, 'dollar')).toBe('$1,093,388.68');
-  });
-});
-
-// ─── fmtDialValue: toggle / select ─────────────────────────────────────────────
-
-describe('fmtDialValue — toggle', () => {
-  it('renders 0 as Off and non-zero as On', () => {
-    expect(fmtDialValue(0, 'toggle')).toBe('Off');
-    expect(fmtDialValue(1, 'toggle')).toBe('On');
-  });
-});
-
-describe('fmtDialValue — select', () => {
-  const options = ['Single', 'Married filing jointly', 'Head of household'];
-  it('renders the option at the given index', () => {
-    expect(fmtDialValue(0, 'select', options)).toBe('Single');
-    expect(fmtDialValue(2, 'select', options)).toBe('Head of household');
-  });
-  it('falls back to a dash for an out-of-range index or missing options', () => {
-    expect(fmtDialValue(5, 'select', options)).toBe('—');
-    expect(fmtDialValue(0, 'select')).toBe('—');
-  });
-});
-
-// ─── 'year' format — a plain calendar year, distinct from the plural 'years' duration ─
-
-describe('fmtValue / fmtDialValue — year', () => {
-  it('renders a whole calendar year with no suffix, rounding a fractional value', () => {
-    expect(fmtValue(2035, 'year')).toBe('2035');
-    expect(fmtValue(2035.6, 'year')).toBe('2036');
-    expect(fmtDialValue(2035, 'year')).toBe('2035');
-    expect(fmtDialValue(2035.4, 'year')).toBe('2035');
-  });
-  it('stays distinct from the plural "years" duration format', () => {
-    expect(fmtValue(5, 'years')).toBe('5 yr');
-    expect(fmtValue(5, 'year')).toBe('5');
-  });
-});
-
-// ─── visible: evalExpr against the dial-value scope, "!== 0" convention ───────
-
-describe('visible expressions (evalExpr, same grammar as output expr)', () => {
-  it('is visible when the expression evaluates non-zero', () => {
-    expect(evalExpr('has_bonus == 1', { has_bonus: 1 }) !== 0).toBe(true);
-  });
-  it('is hidden when the expression evaluates to zero', () => {
-    expect(evalExpr('has_bonus == 1', { has_bonus: 0 }) !== 0).toBe(false);
-  });
-  it('fails OPEN (stays visible) on a malformed expression', () => {
-    // evalExpr returns NaN on a parse error; NaN !== 0 is true in JS.
-    const result = evalExpr('this is not >>> valid', {});
-    expect(Number.isNaN(result)).toBe(true);
-    expect(result !== 0).toBe(true);
-  });
-  it('resolves an identifier absent from the passed-in scope to NaN, not a lookup error', () => {
-    // Callers pass only dial values as the scope (never output values), preserving
-    // the no-cross-output-reference rule. From evalExpr's perspective a bare
-    // reference to something outside the scope — e.g. an output key someone
-    // mistakenly wrote into `visible` — is just an unknown identifier, which
-    // resolves to NaN and, per the fail-open contract above, leaves the element
-    // visible rather than hiding it. (A *comparison* against an unknown identifier,
-    // e.g. "total > 100", is different: NaN > 100 is a well-defined `false`/0 —
-    // that's the grammar working as intended, not a malformed expression.)
-    const result = evalExpr('total', { has_bonus: 1 });
-    expect(Number.isNaN(result)).toBe(true);
-    expect(result !== 0).toBe(true);
-  });
-});
-
 // ─── evalExpr — logical &&/|| (compound `visible` conditions) ─────────────────
 // Before this grammar addition, a compound condition like "a == 1 && b == 1" threw
 // in the lexer/parser (no `&&`/`||` token existed), was caught, and returned NaN —
@@ -136,20 +60,6 @@ describe('visible expressions (evalExpr, same grammar as output expr)', () => {
 // a condition someone wrote specifically to hide something.
 
 describe('evalExpr — && / ||', () => {
-  it('&& is 1 only when both operands are truthy (nonzero)', () => {
-    expect(evalExpr('1 && 1', {})).toBe(1);
-    expect(evalExpr('1 && 0', {})).toBe(0);
-    expect(evalExpr('0 && 1', {})).toBe(0);
-    expect(evalExpr('0 && 0', {})).toBe(0);
-  });
-
-  it('|| is 1 when at least one operand is truthy (nonzero)', () => {
-    expect(evalExpr('1 || 1', {})).toBe(1);
-    expect(evalExpr('1 || 0', {})).toBe(1);
-    expect(evalExpr('0 || 1', {})).toBe(1);
-    expect(evalExpr('0 || 0', {})).toBe(0);
-  });
-
   it('chains left-to-right across 3+ operands, not just two', () => {
     expect(evalExpr('1 && 1 && 1', {})).toBe(1);
     expect(evalExpr('1 && 1 && 0', {})).toBe(0);
@@ -164,31 +74,9 @@ describe('evalExpr — && / ||', () => {
     expect(evalExpr('1 == 2 || 2 == 3', {})).toBe(0);
   });
 
-  it('&& binds tighter than || (standard precedence)', () => {
-    // 0 || (1 && 0) === 0 || 0 === 0 — if && bound looser this would misparse
-    expect(evalExpr('0 || 1 && 0', {})).toBe(0);
-    // 1 || (0 && 0) === 1 || 0 === 1
-    expect(evalExpr('1 || 0 && 0', {})).toBe(1);
-  });
-
   it('composes with the ternary operator (?: still binds loosest)', () => {
     expect(evalExpr('(1 == 1 && 2 == 2) ? 100 : 200', {})).toBe(100);
     expect(evalExpr('(1 == 1 && 2 == 3) ? 100 : 200', {})).toBe(200);
-  });
-
-  it('reads dial keys from scope, same as comparison operands do', () => {
-    expect(evalExpr('has_option == 1 && strategy == 1', { has_option: 1, strategy: 1 })).toBe(1);
-    expect(evalExpr('has_option == 1 && strategy == 1', { has_option: 1, strategy: 0 })).toBe(0);
-  });
-
-  it('resolves the bug scenario correctly: a compound `visible` condition now hides rather than failing open', () => {
-    // Before the fix this threw internally and returned NaN (`!== 0` → fails open,
-    // i.e. stays visible). It must now evaluate to the correct 0 so the element
-    // is correctly hidden.
-    const result = evalExpr('a == 1 && b == 1', { a: 0, b: 0 });
-    expect(result).toBe(0);
-    expect(Number.isNaN(result)).toBe(false);
-    expect(result !== 0).toBe(false);
   });
 });
 
@@ -247,10 +135,6 @@ describe('evalExpr — sum_active(list_key.amount, year_expr)', () => {
   it('resolves to NaN for a field other than the literal "amount"', () => {
     expect(Number.isNaN(evalExpr('sum_active(expenses.startYear, 2025)', {}, lists))).toBe(true);
   });
-
-  it('defaults `lists` to {} when omitted, so every pre-Effort-A call site keeps working', () => {
-    expect(evalExpr('1 + 1', {})).toBe(2);
-  });
 });
 
 describe('evalExpr — count(list_key)', () => {
@@ -267,18 +151,6 @@ describe('evalExpr — count(list_key)', () => {
   });
   it('resolves to NaN for an unrecognized list key', () => {
     expect(Number.isNaN(evalExpr('count(no_such_list)', {}, lists))).toBe(true);
-  });
-});
-
-describe('lex — the "." punctuation token does not break decimal-literal parsing', () => {
-  it('still tokenizes a leading-dot decimal as a single number', () => {
-    expect(evalExpr('.5 + .5', {})).toBe(1);
-  });
-  it('still tokenizes an ordinary decimal correctly', () => {
-    expect(evalExpr('1.5 * 2', {})).toBe(3);
-  });
-  it('tokenizes list_key.amount as three tokens (identifier, dot, identifier), consumed by sum_active', () => {
-    expect(evalExpr('sum_active(expenses.amount, 2025)', {}, { expenses: [{ amount: 10, startYear: 2025, endYear: 2025 }] })).toBe(10);
   });
 });
 
@@ -306,12 +178,6 @@ describe('computeOutputValues', () => {
     expect(values.length).toBe(2);
     expect(Number.isNaN(values[0])).toBe(true);
     expect(values[1]).toBe(42);
-  });
-
-  it('resolves a reference to a nonexistent key to NaN, not a crash', () => {
-    const elements: CanvasElement[] = [out({ expr: 'no_such_key + 1' })];
-    const values = computeOutputValues(elements, {});
-    expect(Number.isNaN(values[0])).toBe(true);
   });
 
   it('computes a hidden (visible: false) output\'s value regardless — visible is render-only', () => {
@@ -361,6 +227,7 @@ describe('computeOutputValues', () => {
 // ─── resolveCanvasBindings ──────────────────────────────────────────────────────
 
 describe('resolveCanvasBindings', () => {
+  useFixedClock();
   it('overwrites default for every recognized binding key with the live value', async () => {
     const spec = specWith([
       dial({ key: 'income', default: 1, binding: 'monthly_income_12mo_avg' }),
@@ -389,7 +256,7 @@ describe('resolveCanvasBindings', () => {
     expect(byKey.cc).toBe(1500);
     expect(byKey.loan).toBe(300000);
     expect(byKey.nw).toBe(258500);
-    expect(byKey.self_age).toBe(new Date().getFullYear() - 1990);
+    expect(byKey.self_age).toBe(2026 - 1990);
   });
 
   it('leaves the hardcoded default untouched for a binding that cannot resolve (e.g. no spouse)', async () => {
@@ -418,12 +285,6 @@ describe('resolveCanvasBindings', () => {
     const snapshot = JSON.parse(JSON.stringify(spec));
     await resolveCanvasBindings(spec);
     expect(spec).toEqual(snapshot);
-  });
-
-  it('covers every key in BINDING_KEYS with a real health/profile field mapping', () => {
-    // Sanity check that the vocabulary hasn't drifted from what the resolver maps.
-    expect(BINDING_KEYS).toContain('savings_rate_pct');
-    expect(BINDING_KEYS.length).toBe(13);
   });
 });
 

@@ -41,12 +41,9 @@ export function encryptToken(plaintext: string): string {
   return `${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted.toString('base64')}`;
 }
 
-/** Decrypts a token produced by encryptToken. Plaid tokens never contain ':', so
- *  a value without exactly two colons is treated as a legacy plaintext token. */
+/** Decrypts a token produced by encryptToken. */
 export function decryptToken(value: string): string {
-  const parts = value.split(':');
-  if (parts.length !== 3) return value; // legacy plaintext
-  const [ivB64, authTagB64, encB64] = parts;
+  const [ivB64, authTagB64, encB64] = value.split(':');
   const decipher = createDecipheriv(ALGORITHM, getKey(), Buffer.from(ivB64, 'base64'));
   decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
   return decipher.update(Buffer.from(encB64, 'base64')).toString('utf8') + decipher.final('utf8');

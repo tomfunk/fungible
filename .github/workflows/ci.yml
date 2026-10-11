@@ -16,7 +16,39 @@ jobs:
 
       - run: npm run typecheck
 
-      - run: node --no-warnings ./node_modules/.bin/vitest run
+      - run: npm run test:coverage
+
+      # Reporting only: no thresholds. Tolerates a missing summary (e.g. the
+      # suite crashed before coverage was written).
+      - name: Coverage summary
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const f = "coverage/coverage-summary.json";
+            if (!fs.existsSync(f)) { console.log("No coverage summary found."); process.exit(0); }
+            const j = JSON.parse(fs.readFileSync(f, "utf8"));
+            const pct = (x) => (x ? x.pct : 0).toFixed(1) + "%";
+            const t = j.total;
+            const areas = ["core", "api", "mcp", "tui", "gui"];
+            const sums = {};
+            for (const [file, m] of Object.entries(j)) {
+              if (file === "total") continue;
+              const rel = file.replace(process.cwd() + "/", "");
+              const a = rel.split("/")[0];
+              if (!areas.includes(a)) continue;
+              const s = (sums[a] ||= { total: 0, covered: 0 });
+              s.total += m.lines.total; s.covered += m.lines.covered;
+            }
+            const NL = String.fromCharCode(10);
+            let out = ["### Coverage", "", "| Metric | Overall |", "|---|---|"];
+            for (const k of ["lines", "statements", "branches", "functions"]) out.push("| " + k + " | " + pct(t[k]) + " |");
+            out.push("", "| Area | Lines |", "|---|---|");
+            for (const a of areas) { const s = sums[a]; out.push("| " + a + " | " + (s && s.total ? (100 * s.covered / s.total).toFixed(1) + "%" : "n/a") + " |"); }
+            out = out.join(NL) + NL;
+            if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out);
+            console.log(out);
+          '
 
   # Boot the real Electron app and assert it comes up. Complements the unit suite
   # (which stubs window.__bridge entirely) by exercising what only a live process

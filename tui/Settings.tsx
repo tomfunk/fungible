@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { handleNavKey } from './nav.js';

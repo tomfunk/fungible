@@ -93,7 +93,7 @@ beforeEach(async () => {
 afterEach(() => cleanup());
 
 describe('GUI Accounts — update link', () => {
-  it('offers "update link" on a connection row, not "repair"', async () => {
+  it('offers "update link" on a connection row, not "repair", and it opens the Plaid link flow', async () => {
     await addItem('item-a', 'Chase');
     await addAccount('acct-1', 'item-a');
     await links();
@@ -101,6 +101,10 @@ describe('GUI Accounts — update link', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'update link' })).toBeTruthy());
     // The old name described the ordinary add-a-bank flow this replaced.
     expect(screen.queryByRole('button', { name: 'repair' })).toBeNull();
+
+    // And it leads into the Plaid link flow.
+    await userEvent.click(screen.getByRole('button', { name: 'update link' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open Plaid in browser' })).toBeTruthy());
   });
 
   it('names the connection being updated', async () => {

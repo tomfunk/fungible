@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { applyTheme, THEMES, THEME_NAMES } from '../../tui/ui.js';
+import { applyTheme, THEMES } from '../../tui/ui.js';
 import * as ui from '../../tui/ui.js';
 
 // ui.ts exports the C_* constants as `let` bindings reassigned in place by
@@ -52,9 +52,5 @@ describe('applyTheme', () => {
     applyTheme('not-a-real-theme');
     expect(ui.C_POSITIVE).toBe(THEMES.default.positive);
     expect(ui.FLEX_COLORS).toEqual(THEMES.default.flex);
-  });
-
-  it('lists every THEMES key in THEME_NAMES', () => {
-    expect(THEME_NAMES.sort()).toEqual(Object.keys(THEMES).sort());
   });
 });

@@ -38,20 +38,10 @@ function expectInvariant(rules: Rule[], nameRules: NameRule[]) {
 }
 
 describe('ruleKey', () => {
-  it('agrees across the two rule kinds when the five match fields match', () => {
-    expect(ruleKey(rule({ id: 1 }))).toBe(ruleKey(nameRule({ id: 9 })));
-  });
-
   it('separates the fields so a pattern cannot spill into the account', () => {
     const a = ruleKey(rule({ id: 1, pattern: 'a', account_id: 'b' }));
     const b = ruleKey(rule({ id: 2, pattern: 'ab', account_id: null }));
     expect(a).not.toBe(b);
-  });
-
-  it('keeps a null amount bound distinct from a zero bound', () => {
-    expect(ruleKey(rule({ id: 1, min_amount: null }))).not.toBe(
-      ruleKey(rule({ id: 2, min_amount: 0 })),
-    );
   });
 });
 

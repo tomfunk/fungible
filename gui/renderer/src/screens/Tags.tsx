@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';

@@ -1,4 +1,3 @@
-import React from 'react';
 import { useUiPrefs } from '../hooks/useUiPrefs.js';
 import styles from './KeyHints.module.css';
 

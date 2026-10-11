@@ -358,7 +358,7 @@ export function Health() {
             <span className="sectionLabel">History</span>
             <div className={`pillGroup ${styles.rangePills}`}>
               {HISTORY_RANGES.map((r) => (
-                <button key={r} className={r === historyRange ? 'pillActive' : 'pill'} onClick={() => setHistoryRange(r)}>
+                <button key={r} aria-pressed={r === historyRange} className={r === historyRange ? 'pillActive' : 'pill'} onClick={() => setHistoryRange(r)}>
                   {HISTORY_RANGE_LABELS[r]}
                 </button>
               ))}
@@ -366,7 +366,7 @@ export function Health() {
           </div>
           <div className={`pillGroup ${styles.metricPills}`}>
             {HISTORY_METRICS.map((m) => (
-              <button key={m.key} className={m.key === historyMetric ? 'pillActive' : 'pill'} onClick={() => setHistoryMetric(m.key)}>
+              <button key={m.key} aria-pressed={m.key === historyMetric} className={m.key === historyMetric ? 'pillActive' : 'pill'} onClick={() => setHistoryMetric(m.key)}>
                 {m.label}
               </button>
             ))}

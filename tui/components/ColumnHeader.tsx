@@ -1,4 +1,3 @@
-import React from 'react';
 import { Box, Text } from 'ink';
 
 type Col = { label: string; width?: number; align?: 'left' | 'right' };

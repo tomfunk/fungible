@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt } from '../core/fmt.js';
+import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt, fmtBalanceAge, fmtPctSigned, fmtCompactSigned, fmtSpan, sortTags } from '../core/fmt.js';
+import { useFixedClock } from './helpers/fakeClock.js';
 import { MONTHS } from '../core/dateUtils.js';
 import { bar, truncate } from '../tui/charUtils.js';
 
@@ -48,11 +49,6 @@ describe('fmtTxAmount', () => {
   it('respects custom decimals', () => {
     expect(fmtTxAmount(1000, 0)).toBe('-$1,000');
   });
-
-  it('delegates to fmtSigned(-amount, decimals)', () => {
-    expect(fmtTxAmount(17.3)).toBe(fmtSigned(-17.3));
-    expect(fmtTxAmount(-17.3, 1)).toBe(fmtSigned(17.3, 1));
-  });
 });
 
 describe('fmtPct', () => {
@@ -78,35 +74,8 @@ describe('fmtMonths', () => {
     expect(fmtMonths(Infinity)).toBe('∞');
   });
 
-  it('returns ∞ for values over 999', () => {
-    expect(fmtMonths(1000)).toBe('∞');
-  });
-
   it('returns ∞ for NaN', () => {
     expect(fmtMonths(NaN)).toBe('∞');
-  });
-});
-
-describe('fmtCompact', () => {
-  it('abbreviates millions', () => {
-    expect(fmtCompact(1_838_641.96)).toBe('$1.84M');
-    expect(fmtCompact(3_870_000)).toBe('$3.87M');
-  });
-
-  it('abbreviates ten-thousands and above as K', () => {
-    expect(fmtCompact(68_619.40)).toBe('$68.6K');
-    expect(fmtCompact(21_493.79)).toBe('$21.5K');
-  });
-
-  it('falls through to full fmt below 10K', () => {
-    expect(fmtCompact(5_000)).toBe('$5,000.00');
-    expect(fmtCompact(999)).toBe('$999.00');
-  });
-
-  it('preserves sign for negative values', () => {
-    expect(fmtCompact(-2_000_000)).toBe('-$2.00M');
-    expect(fmtCompact(-50_000)).toBe('-$50.0K');
-    expect(fmtCompact(-5_000)).toBe('-$5,000.00');
   });
 });
 
@@ -221,5 +190,97 @@ describe('fmtSyncedAt', () => {
     expect(fmtSyncedAt(NOW - DAY)).toBe(`${MONTHS[dt.getMonth()]} ${dt.getDate()}`);
     // One millisecond inside the window is still relative.
     expect(fmtSyncedAt(NOW - DAY + 1)).toBe('23 hr ago');
+  });
+});
+
+describe('fmtBalanceAge', () => {
+  it.each([
+    [0, 'updated today'],
+    [1, 'updated 1d ago'],
+    [52, 'updated 52d ago'],
+  ])('days=%i -> %s', (days, expected) => {
+    expect(fmtBalanceAge({ days, isStale: false })).toBe(expected);
+  });
+});
+
+describe('fmtPctSigned', () => {
+  it.each([[2.5, '+2.5%'], [0, '+0.0%'], [-2.5, '-2.5%']])('%d -> %s', (n, out) => {
+    expect(fmtPctSigned(n)).toBe(out);
+  });
+  it('respects decimals', () => expect(fmtPctSigned(3, 0)).toBe('+3%'));
+});
+
+describe('fmtCompactSigned', () => {
+  it.each([
+    [0, '+$0.00'], [5, '+$5.00'], [-5, '-$5.00'], [25_000, '+$25.0K'], [-25_000, '-$25.0K'], [-2_500_000, '-$2.50M'],
+  ])('%d -> %s', (n, out) => {
+    expect(fmtCompactSigned(n)).toBe(out);
+  });
+});
+
+describe('fmtCompact boundaries', () => {
+  it.each([
+    [999, '$999.00'], [1_000, '$1,000.00'], [9_999, '$9,999.00'], [10_000, '$10.0K'],
+    // Switches to M as soon as the K rendering would round to 1000.0K.
+    [999_949, '$999.9K'], [999_950, '$1.00M'], [999_999, '$1.00M'], [-999_999, '-$1.00M'],
+    [1_000_000, '$1.00M'], [-10_000, '-$10.0K'],
+  ])('%d -> %s', (n, out) => {
+    expect(fmtCompact(n)).toBe(out);
+  });
+
+  it('fmtCompactSigned switches to M at the same boundary', () => {
+    expect(fmtCompactSigned(999_999)).toBe('+$1.00M');
+    expect(fmtCompactSigned(-999_999)).toBe('-$1.00M');
+  });
+});
+
+describe('fmtMonths boundary', () => {
+  it('999 is still finite, 999.1 is infinity', () => {
+    expect(fmtMonths(999)).toBe('999.0 mo');
+    expect(fmtMonths(999.1)).toBe('∞');
+  });
+});
+
+describe('fmtSyncedAt across years', () => {
+  useFixedClock('2026-07-29T12:00:00Z');
+
+  it('appends the year for a sync in a prior year', () => {
+    expect(fmtSyncedAt(new Date(2025, 11, 15, 12).getTime())).toBe('Dec 15 2025');
+  });
+  it('omits the year for a sync in the current year', () => {
+    expect(fmtSyncedAt(new Date(2026, 2, 3, 12).getTime())).toBe('Mar 3');
+  });
+});
+
+describe('fmtSpan', () => {
+  it('collapses to one month when both ends share it', () => expect(fmtSpan('2024-03-02', '2024-03-30')).toBe('2024-03'));
+  it('joins a range with an arrow', () => expect(fmtSpan('2024-01-15', '2025-06-01')).toBe('2024-01 → 2025-06'));
+  it.each([[null, '2024-01-01'], ['2024-01-01', null], [null, null]])('is an em dash when %s / %s is missing', (a, b) => {
+    expect(fmtSpan(a, b)).toBe('—');
+  });
+});
+
+describe('sortTags', () => {
+  const t = (name: string, earliest: string | null, latest: string | null) => ({ name, earliest, latest });
+  const tags = [
+    t('a', '2024-05-01', '2024-06-01'),
+    t('b', '2023-01-01', '2025-01-01'),
+    t('none', null, null),
+    t('c', '2025-02-01', '2025-03-01'),
+  ];
+
+  it('name keeps the incoming order', () => {
+    expect(sortTags(tags, 'name').map((x) => x.name)).toEqual(['a', 'b', 'none', 'c']);
+  });
+  it('recent orders by latest descending, undated last', () => {
+    expect(sortTags(tags, 'recent').map((x) => x.name)).toEqual(['c', 'b', 'a', 'none']);
+  });
+  it('oldest orders by earliest ascending, undated last', () => {
+    expect(sortTags(tags, 'oldest').map((x) => x.name)).toEqual(['b', 'a', 'c', 'none']);
+  });
+  it('does not mutate its input', () => {
+    const before = tags.map((x) => x.name);
+    sortTags(tags, 'recent');
+    expect(tags.map((x) => x.name)).toEqual(before);
   });
 });

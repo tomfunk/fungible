@@ -21,16 +21,18 @@ import { Box, Text } from 'ink';
  * `truncate-middle` for content whose edges (e.g. `[` and `]`) matter more
  * than its middle.
  */
-export function TruncatedText({ width, color, dimColor, bold, wrap = 'truncate-end', children }: {
+export function TruncatedText({ width, color, dimColor, bold, wrap = 'truncate-end', noShrink, children }: {
   width: number;
   color?: string;
   dimColor?: boolean;
   bold?: boolean;
   wrap?: 'truncate-end' | 'truncate-middle';
+  /** Keep the pinned width when a flex row is over-full, so a sibling shrinks instead. */
+  noShrink?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Box width={width}>
+    <Box width={width} flexShrink={noShrink ? 0 : undefined}>
       <Text color={color} dimColor={dimColor} bold={bold} wrap={wrap}>{children}</Text>
     </Box>
   );

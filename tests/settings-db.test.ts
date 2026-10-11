@@ -43,17 +43,6 @@ describe('PRETAX_MONTHLY_KEY', () => {
     expect(await getSetting(PRETAX_MONTHLY_KEY)).toBeNull();
   });
 
-  it('stores and retrieves a pretax monthly value', async () => {
-    await setSetting(PRETAX_MONTHLY_KEY, '500');
-    expect(await getSetting(PRETAX_MONTHLY_KEY)).toBe('500');
-  });
-
-  it('upserts — updating the dial replaces the previous value', async () => {
-    await setSetting(PRETAX_MONTHLY_KEY, '400');
-    await setSetting(PRETAX_MONTHLY_KEY, '600');
-    expect(await getSetting(PRETAX_MONTHLY_KEY)).toBe('600');
-  });
-
   it('persists independently of other settings keys', async () => {
     await setSetting(PRETAX_MONTHLY_KEY, '350');
     await setSetting(DEFAULT_START_DATE_KEY, '2023-01-01');

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -13,6 +13,12 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
+import { previewCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../core/csv-import-copy.js';
+import { previewBalanceSkips } from '../core/balance-import-copy.js';
+import { SKIPPED_ROWS_SHOWN } from '../core/skipped-rows.js';
+import { readFileSync, statSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { previewBalanceImport, commitBalanceImport, BALANCE_IMPORT_SKIP_COPY, BALANCE_IMPORT_MAX_BYTES, type BalanceImportPreview, type BalanceImportResult } from '../core/balance-import.js';
 import { getLinkedAccounts, getImportTargets, getLinkedItems, type LinkedAccount, type ImportTarget, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
@@ -28,13 +34,16 @@ import {
 } from '../core/imports.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
-import { fmtSyncedAt } from '../core/fmt.js';
+import { fmtSyncedAt, fmtBalanceAge } from '../core/fmt.js';
 import { handleNavKey } from './nav.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
 import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+const dupeSourceLabel = (p: DupePair | undefined) => (p?.csvSource === 'manual' ? 'manual' : 'CSV');
 
 type MainView = 'accounts' | 'links' | 'add-data' | 'dupes';
 type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
@@ -45,6 +54,10 @@ type AddStep =
   | 'link-days'
   | 'link-plaid'
   | 'file'
+  | 'bh-file'
+  | 'bh-preview'
+  | 'bh-map'
+  | 'bh-done'
   | 'map-date'
   | 'map-name'
   | 'map-amount-mode'
@@ -94,6 +107,7 @@ function fmtDate(d: string | null): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
@@ -103,7 +117,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Checked once on mount; a persistent banner above the Links list is the
   // right severity here since it affects every item at once, not a single row.
   const [keyHealth, setKeyHealth] = useState<KeyHealth | null>(null);
-  useEffect(() => { void checkKeyHealth().then(setKeyHealth); }, []);
+  useEffect(() => { void track(checkKeyHealth()).then(setKeyHealth); }, []);
 
   // Accounts view state
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
@@ -146,14 +160,28 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Default history window derived from the start date set during setup.
   const [defaultDays, setDefaultDays] = useState(MAX_DAYS_REQUESTED);
   useEffect(() => {
-    void getDefaultDaysRequested().then(setDefaultDays);
+    void track(getDefaultDaysRequested()).then(setDefaultDays);
   }, []);
 
   // CSV import state
   const [filePath, setFilePath] = useState('');
+  // Balance-history import (issue 58). Nothing is written until bh-preview is confirmed.
+  const [bhPath, setBhPath] = useState('');
+  const [bhError, setBhError] = useState('');
+  const [bhCsv, setBhCsv] = useState('');
+  const [bhPreview, setBhPreview] = useState<BalanceImportPreview | null>(null);
+  const [bhMap, setBhMap] = useState<Record<string, string | null>>({});
+  const [bhMapIdx, setBhMapIdx] = useState(0);
+  const [bhPick, setBhPick] = useState(0);
+  const [bhResult, setBhResult] = useState<BalanceImportResult | null>(null);
+  const [bhBusy, setBhBusy] = useState(false);
+  const bhNames = bhPreview
+    ? [...new Set([...bhPreview.unmatched.map((u) => u.name), ...bhPreview.ambiguous.map((a) => a.name)])]
+    : [];
   const [fileError, setFileError] = useState('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<string[][]>([]);
+  const [csvLines, setCsvLines] = useState<number[]>([]);
   const [csvFile, setCsvFile] = useState<{ name: string; hash: string }>({ name: '', hash: '' });
   // Prior imports of the exact same bytes, looked up when the file is loaded.
   const [priorImports, setPriorImports] = useState<ImportRow[]>([]);
@@ -176,7 +204,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [positiveIsInflow, setPositiveIsInflow] = useState(false);
   const [csvAccountCursor, setCsvAccountCursor] = useState(0);
   const [csvAccounts, setCsvAccounts] = useState<ImportTarget[]>([]);
-  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number; skippedRows: CsvSkippedRow[] } | null>(null);
 
   // Manual asset state
   const [manualName, setManualName] = useState('');
@@ -226,6 +254,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
+  // [X] opens a y/n confirmation instead of deleting straight away.
+  const [dupeConfirmAll, setDupeConfirmAll] = useState(false);
   // The dupe scan runs detached from loadAccounts, so the view can be opened
   // while it is still running. Without this an in-flight scan renders as
   // "No duplicate candidates found." — a false all-clear, and most likely
@@ -257,7 +287,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const syncElapsed = busyPhase === 'sync' ? elapsedSuffix : '';
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
+  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'bh-file', 'manual-name', 'manual-value', 'new-acct-name']);
   const TEXT_INPUT_MODES = new Set<AcctMode>(['edit', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
@@ -276,11 +306,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Resolves to the loaded list so callers can act on it — the post-link handler
   // reads the placeholder rows to learn which items need a first sync.
   async function loadAccounts(): Promise<LinkedAccount[]> {
-    const accts = await getLinkedAccounts();
+    const accts = await track(getLinkedAccounts());
     setLinkedAccounts(accts);
     // Cheap item-level query; kept in step with the account list so a sync or a
     // link updates both views at once.
-    void getLinkedItems().then((items) => {
+    void track(getLinkedItems()).then((items) => {
       setLinkedItems(items);
       setItemCursor((c) => Math.min(c, Math.max(0, items.length - 1)));
     });
@@ -291,18 +321,18 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     // Dupes view reports it as still running instead of claiming a clean result.
     const token = dupesGuard.begin();
     setDupesLoading(true);
-    void getCsvPlaidDupeCandidates()
+    void track(getCsvPlaidDupeCandidates())
       .then((rows) => { if (dupesGuard.isLatest(token)) setDupes(rows); })
       .finally(() => { if (dupesGuard.isLatest(token)) setDupesLoading(false); });
     return accts;
   }
   useEffect(() => { void loadAccounts(); }, [refreshKey]);
-  useEffect(() => { void getImports().then(setImports); }, [refreshKey]);
+  useEffect(() => { void track(getImports()).then(setImports); }, [refreshKey]);
   // Targets are loaded on mount, not just partway through the import wizard:
   // the move-import picker on the Add Data landing needs them too.
-  useEffect(() => { void getImportTargets().then(setCsvAccounts); }, [refreshKey]);
+  useEffect(() => { void track(getImportTargets()).then(setCsvAccounts); }, [refreshKey]);
   useEffect(() => {
-    void loadProfile().then((p) => setOwnerMembers(householdMembers(p)));
+    void track(loadProfile()).then((p) => setOwnerMembers(householdMembers(p)));
   }, [isActive]);
 
   function openEdit(acct: LinkedAccount) {
@@ -539,7 +569,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function saveNewAcct() {
     void createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null).then(() => {
-      void getImportTargets().then((accts) => {
+      void track(getImportTargets()).then((accts) => {
         setCsvAccounts(accts);
         setCsvAccountCursor(accts.length - 1);
         setAddStep('account');
@@ -646,7 +676,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           // that alone answers "did it work?" even if the sync is slow. The
           // placeholders *are* the items needing a first sync, so the ids come
           // from the loaded list rather than out of the link subprocess's stdout.
-          void loadAccounts().then((accts) => {
+          void track(loadAccounts()).then((accts) => {
             const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
             syncItemsWhenFree(itemIds);
           });
@@ -661,14 +691,53 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     });
   }
 
+  async function bhLoad(path: string) {
+    if (bhBusy) return;
+    setBhBusy(true);
+    try {
+      const full = resolvePath(path.trim().replace(/^~(?=$|\/)/, process.env.HOME ?? '~'));
+      // Size is checked before reading so a huge file never lands in memory.
+      if (statSync(full).size > BALANCE_IMPORT_MAX_BYTES) {
+        throw new Error(`That file is larger than ${BALANCE_IMPORT_MAX_BYTES / 1024 / 1024} MB, the limit for a balance history import.`);
+      }
+      const text = readFileSync(full, 'utf8');
+      const preview = await previewBalanceImport(text);
+      setBhCsv(text); setBhMap({}); setBhPreview(preview); setBhError('');
+      setAddStep('bh-preview');
+    } catch (e: any) {
+      setBhError(e?.code === 'ENOENT' ? `File not found: ${path.trim()}` : (e?.message ?? String(e)));
+    } finally { setBhBusy(false); }
+  }
+
+  async function bhRecompute(map: Record<string, string | null>) {
+    try {
+      setBhPreview(await previewBalanceImport(bhCsv, { accountMap: map }));
+      setBhMap(map);
+    } catch (e: any) { setBhError(e?.message ?? String(e)); }
+    setAddStep('bh-preview');
+  }
+
+  async function bhCommit() {
+    if (bhBusy || !bhPreview || bhPreview.valid === 0) return;
+    setBhBusy(true);
+    try {
+      setBhResult(await commitBalanceImport(bhCsv, { accountMap: bhMap }));
+      setBhCsv(''); setBhPreview(null);
+      setAddStep('bh-done');
+    } catch (e: any) {
+      setBhError(e?.message ?? String(e));
+    } finally { setBhBusy(false); }
+  }
+
   function tryLoadFile(path: string) {
     try {
       const parsed = parseCSV(path.trim());
       if (!parsed.headers.length) { setFileError('No columns found'); return; }
       setHeaders(parsed.headers);
       setCsvRows(parsed.rows);
+      setCsvLines(parsed.lines);
       setCsvFile({ name: parsed.fileName, hash: parsed.fileHash });
-      void getImportsOfFile(parsed.fileHash).then(setPriorImports);
+      void track(getImportsOfFile(parsed.fileHash)).then(setPriorImports);
       setFileError('');
       const h = parsed.headers.map((x) => x.toLowerCase());
       const dateGuess = h.findIndex((x) => x.includes('date') || x.includes('posted'));
@@ -687,23 +756,43 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     void importCsvTransactions(csvRows, acct.id, {
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
-    }, csvFile).then((result) => {
-      void getImports().then(setImports);
+    }, csvFile, csvLines).then((result) => {
+      void track(getImports()).then(setImports);
       setImportResult(result);
       setAddStep('done');
     });
   }
 
+  // Preview cells for one row. `bad` marks a value the import will refuse, so the
+  // preview never shows a raw date or a $0.00 the import would not write.
   function previewRow(row: string[]) {
-    const date = dateCol !== null ? parseDate(row[dateCol] ?? '') : '—';
+    let date = '—', dateBad = false;
+    if (dateCol !== null) {
+      const d = parseDate(row[dateCol] ?? '');
+      if (d === null) { date = 'invalid date'; dateBad = true; } else date = d;
+    }
     const name = nameCol !== null ? truncate(row[nameCol] ?? '', 28) : '—';
     let amount = '—';
     const columnsChosen = amountMode === 'single' ? amountCol !== null : (debitCol !== null && creditCol !== null);
     if (columnsChosen) {
       const v = resolveCsvAmount(row, { amountMode, amountCol, debitCol, creditCol, positiveIsInflow });
-      amount = `$${Math.abs(v).toFixed(2)}`;
+      if (v.ok) amount = `$${Math.abs(v.amount).toFixed(2)}`;
+      else { amount = v.reason === 'empty_amount' ? 'blank' : 'invalid'; }
     }
-    return { date, name, amount };
+    return { date, name, amount, dateBad };
+  }
+
+  // Rows the import will skip for being unreadable, judged by the same core
+  // functions the import uses (duplicates are only known at import time).
+  function countSkippedRows(): number {
+    if (dateCol === null || nameCol === null) return 0;
+    const columnsChosen = amountMode === 'single' ? amountCol !== null : (debitCol !== null && creditCol !== null);
+    if (!columnsChosen) return 0;
+    return csvRows.filter((row) =>
+      !(row[nameCol] ?? '').trim()
+      || parseDate(row[dateCol] ?? '') === null
+      || !resolveCsvAmount(row, { amountMode, amountCol, debitCol, creditCol, positiveIsInflow }).ok,
+    ).length;
   }
 
   // ─── Input handling ──────────────────────────────────────────────────────────
@@ -889,23 +978,35 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     // ── Dupes view ────────────────────────────────────────────────────────────
     if (mainView === 'dupes') {
+      if (dupeConfirmAll) {
+        if (input === 'y') {
+          const ids = dupes.map((p) => p.csvId);
+          setDupeConfirmAll(false);
+          void deleteAllDuplicates(ids).then(async () => {
+            const next = await getCsvPlaidDupeCandidates();
+            setDupes(next);
+            setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+          });
+        } else if (input === 'n' || key.escape) {
+          setDupeConfirmAll(false);
+        }
+        return;
+      }
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('accounts'); return; }
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
       if (input === 'x' && dupes[dupeCursor]) {
         void deleteDuplicate(dupes[dupeCursor].csvId).then(() => {
-          void getCsvPlaidDupeCandidates().then((next) => {
+          void track(getCsvPlaidDupeCandidates()).then((next) => {
             setDupes(next);
             setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
           });
         });
         return;
       }
-      if (input === 'X') {
-        deleteAllDuplicates(dupes.map((p) => p.csvId));
-        setDupes([]);
-        setDupeCursor(0);
+      if (input === 'X' && dupes.length > 0) {
+        setDupeConfirmAll(true);
         return;
       }
       return;
@@ -933,6 +1034,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('dupes'); return; }
       if (input === 'l') { setDaysInput(String(defaultDays)); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
+      if (input === 'b') { setBhError(''); setAddStep('bh-file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
 
@@ -941,7 +1043,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (key.downArrow) { setImportCursor((c) => Math.min(imports.length - 1, c + 1)); return; }
         if (input === 'u' && imports[importCursor]) {
           setImportMsg('');
-          void getImportImpact(imports[importCursor].id).then((impact) => {
+          void track(getImportImpact(imports[importCursor].id)).then((impact) => {
             setImportImpact(impact);
             setImportAction('undo');
           });
@@ -990,6 +1092,39 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       return;
     }
 
+    if (addStep === 'bh-file') {
+      if (key.escape) { setAddStep('landing'); return; }
+      if (key.return) { void bhLoad(bhPath); return; }
+      if (key.backspace || key.delete) { setBhPath((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setBhPath((p) => p + input);
+      return;
+    }
+
+    if (addStep === 'bh-preview') {
+      if (key.escape) { setBhCsv(''); setBhPreview(null); setBhMap({}); setAddStep('landing'); return; }
+      if (key.return) { void bhCommit(); return; }
+      if (input === 'm' && bhNames.length > 0) { setBhMapIdx(0); setBhPick(0); setAddStep('bh-map'); return; }
+      return;
+    }
+
+    if (addStep === 'bh-map') {
+      if (key.escape) { setAddStep('bh-preview'); return; }
+      const nOpts = (bhPreview?.accounts.length ?? 0) + 1;
+      if (key.upArrow)   { setBhPick((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setBhPick((c) => Math.min(nOpts - 1, c + 1)); return; }
+      if (key.return && bhPreview) {
+        const next = { ...bhMap, [bhNames[bhMapIdx]]: bhPick === 0 ? null : bhPreview.accounts[bhPick - 1].id };
+        if (bhMapIdx + 1 < bhNames.length) { setBhMap(next); setBhMapIdx(bhMapIdx + 1); setBhPick(0); }
+        else void bhRecompute(next);
+      }
+      return;
+    }
+
+    if (addStep === 'bh-done') {
+      setBhResult(null); setBhPath(''); setAddStep('landing');
+      return;
+    }
+
     if (addStep === 'map-date' || addStep === 'map-name' || addStep === 'map-amount' || addStep === 'map-debit' || addStep === 'map-credit') {
       if (key.escape) { setAddStep('landing'); return; }
       if (key.upArrow) setColCursor((c) => Math.max(0, c - 1));
@@ -1001,7 +1136,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         else if (addStep === 'map-debit')  { setDebitCol(colCursor); setColCursor(0); setAddStep('map-credit'); }
         else if (addStep === 'map-credit') {
           setCreditCol(colCursor);
-          void getImportTargets().then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
+          void track(getImportTargets()).then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
         }
       }
       return;
@@ -1016,8 +1151,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'direction') {
       if (key.escape) { setAddStep('landing'); return; }
-      if (input === 'i') { setPositiveIsInflow(true);  void getImportTargets().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
-      if (input === 'o') { setPositiveIsInflow(false); void getImportTargets().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'i') { setPositiveIsInflow(true);  void track(getImportTargets()).then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'o') { setPositiveIsInflow(false); void track(getImportTargets()).then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
       return;
     }
 
@@ -1106,6 +1241,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const awaitingCount = linkedAccounts.filter((a) => a.awaitingFirstSync).length;
   const realAcctCount = linkedAccounts.length - awaitingCount;
 
+  if (loadError) return <LoadError message={loadError} />;
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="accounts" showHints={showHints} />
@@ -1134,7 +1271,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             : mainView === 'links'
             ? '↑↓ select  ·  [u] update link  ·  [r] refresh  ·  [s] sync'
             : mainView === 'dupes'
-            ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
+            ? dupeConfirmAll
+              ? '[y] delete all  ·  [n] / Esc cancel'
+              : `↑↓ select  ·  [x] delete ${dupeSourceLabel(dupes[dupeCursor])} copy  ·  [X] delete all`
             : ''}
         </Text>
       </Box>}
@@ -1178,6 +1317,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         ? <Text color={C_WARNING}>◷ awaiting first sync</Text>
                         : acct.item_last_synced_at !== null
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(acct.item_last_synced_at)}</Text></Text>
+                        : acct.balance_age
+                        ? <Text color={acct.balance_age.isStale ? C_WARNING : undefined}>{fmtBalanceAge(acct.balance_age)}</Text>
                         : acct.last_synced
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
                         : <Text color={C_WARNING}>not synced</Text>
@@ -1405,14 +1546,30 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           ) : dupes.length === 0 ? (
             <Text color={C_POSITIVE}>No duplicate candidates found.</Text>
           ) : (
-            dupes.map((pair, i) => {
+            <>
+            {dupeConfirmAll && (
+              <ModalPanel borderColor={C_NEGATIVE}>
+                <Text bold color={C_NEGATIVE}>Delete all {dupes.length} listed {dupes.length === 1 ? 'copy' : 'copies'} — this cannot be undone</Text>
+                <Box marginTop={1} flexDirection="column">
+                  <Text dimColor>Keeps the Plaid transactions; edits and tags move across.</Text>
+                  {dupes.some((p) => p.csvSource === 'manual') && (
+                    <Text color={C_WARNING}>Includes {dupes.filter((p) => p.csvSource === 'manual').length} manually entered transaction{dupes.filter((p) => p.csvSource === 'manual').length === 1 ? '' : 's'}.</Text>
+                  )}
+                </Box>
+                <Box marginTop={1} gap={4}>
+                  <Text color={C_NEGATIVE}>[y] Yes, delete all</Text>
+                  <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
+                </Box>
+              </ModalPanel>
+            )}
+            {dupes.map((pair, i) => {
               const isSelected = i === dupeCursor;
               return (
                 <Box key={pair.csvId} flexDirection="column" marginBottom={1}>
                   <Box gap={2}>
                     <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶' : ' '}</Text>
                     <Text dimColor>{truncate(pair.accountName, 20).padEnd(20)}</Text>
-                    <Text color={C_WARNING}>CSV</Text>
+                    <Text color={C_WARNING}>{pair.csvSource === 'manual' ? 'MAN' : 'CSV'}</Text>
                     <Text dimColor>{pair.csvDate}</Text>
                     <Text color={isSelected ? C_ACCENT : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
                     <Text color={C_NEGATIVE}>${Math.abs(pair.csvAmount).toFixed(2)}</Text>
@@ -1426,7 +1583,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   </Box>
                 </Box>
               );
-            })
+            })}
+            </>
           )}
         </Box>
       )}
@@ -1439,6 +1597,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box flexDirection="column" gap={1} marginTop={1}>
                 <Text color={C_ACCENT}>[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
                 <Text color={C_ACCENT}>[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+                <Text color={C_ACCENT}>[b] Import balance history <Text dimColor>Past balances from a date,account,balance file</Text></Text>
                 <Text color={C_ACCENT}>[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
                 <Text color={syncStatus === 'syncing' ? C_WARNING : C_ACCENT}>
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
@@ -1558,6 +1717,81 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               {(linkStatus === 'done' || linkStatus === 'error') && (
                 <Text dimColor>Press Enter to return.</Text>
               )}
+            </Box>
+          )}
+
+          {addStep === 'bh-file' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Import balance history</Text>
+              <Text dimColor>Enter the path to a CSV with columns: date (YYYY-MM-DD), account name, balance. For credit cards and loans, enter the amount owed as a positive number.</Text>
+              <Box gap={1}><Text>Path: </Text><TextInput value={bhPath} color={C_WARNING} /></Box>
+              {bhError && <Text color={C_NEGATIVE}>{bhError}</Text>}
+              <Text dimColor>Press Enter to preview · Esc back</Text>
+            </Box>
+          )}
+
+          {addStep === 'bh-preview' && bhPreview && (() => {
+            const p = bhPreview;
+            const CAP = SKIPPED_ROWS_SHOWN;
+            const skipPreview = previewBalanceSkips(p.skipped);
+            const more = (n: number) => n > CAP ? <Text dimColor>…and {n - CAP} more</Text> : null;
+            return (
+              <Box flexDirection="column" marginTop={1} gap={1}>
+                <Text bold>Import balance history — preview <Text dimColor>(nothing written yet)</Text></Text>
+                <Text>
+                  <Text color={C_POSITIVE}>{p.willInsert}</Text> balances will be added, <Text color={C_WARNING}>{p.willOverwrite.count}</Text> will replace existing values, <Text dimColor>{p.skipped.length}</Text> skipped{p.skipped.length > 0 ? ` (${skipPreview.summary})` : ''}
+                </Text>
+                {p.skipped.length > 0 && (
+                  <Box flexDirection="column">
+                    <Text bold dimColor>Skipped</Text>
+                    {skipPreview.shown.map((s) => <Text key={s.line} dimColor>line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</Text>)}
+                    {skipPreview.hiddenCount > 0 && <Text dimColor>…and {skipPreview.hiddenCount} more</Text>}
+                  </Box>
+                )}
+                {(p.unmatched.length > 0 || p.ambiguous.length > 0) && (
+                  <Box flexDirection="column">
+                    <Text bold dimColor>Unmatched account names</Text>
+                    {p.unmatched.slice(0, CAP).map((u) => <Text key={u.name} color={C_WARNING}>{u.name} <Text dimColor>({u.rows} {u.rows === 1 ? 'row' : 'rows'})</Text></Text>)}
+                    {more(p.unmatched.length)}
+                    {p.ambiguous.slice(0, CAP).map((a) => <Text key={a.name} color={C_WARNING}>{a.name} <Text dimColor>(ambiguous: {a.candidates.map((c) => c.name).join(', ')})</Text></Text>)}
+                    {more(p.ambiguous.length)}
+                  </Box>
+                )}
+                {p.overwriteSample.length > 0 && (
+                  <Box flexDirection="column">
+                    <Text bold dimColor>Will replace</Text>
+                    {p.overwriteSample.slice(0, CAP).map((o, i) => (
+                      <Text key={i} dimColor>{o.accountName} {o.date}: {o.oldBalance.toFixed(2)} → {o.newBalance.toFixed(2)}</Text>
+                    ))}
+                    {more(p.willOverwrite.count)}
+                  </Box>
+                )}
+                {p.warnings.map((w, i) => <Text key={i} color={C_WARNING}>{w}</Text>)}
+                {bhError && <Text color={C_NEGATIVE}>{bhError}</Text>}
+                {p.valid === 0 && <Text color={C_NEGATIVE}>No valid rows to import.</Text>}
+                <Text dimColor>
+                  {p.valid > 0 ? 'Enter import · ' : ''}{bhNames.length > 0 ? '[m] map accounts · ' : ''}Esc cancel
+                </Text>
+              </Box>
+            );
+          })()}
+
+          {addStep === 'bh-map' && bhPreview && bhNames[bhMapIdx] !== undefined && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>Map "{bhNames[bhMapIdx]}" <Text dimColor>({bhMapIdx + 1} of {bhNames.length})</Text></Text>
+              <Text dimColor>↑↓ select · Enter confirm · Esc back (this import only)</Text>
+              <Box flexDirection="column" marginTop={1}>
+                {['Skip these rows', ...bhPreview.accounts.map((a) => a.name)].map((label, i) => (
+                  <Text key={i} color={i === bhPick ? C_ACCENT : undefined} dimColor={i !== bhPick}>{i === bhPick ? '› ' : '  '}{label}</Text>
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {addStep === 'bh-done' && bhResult && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold color={C_POSITIVE}>Net worth history updated. Added {bhResult.inserted}, replaced {bhResult.overwritten}, skipped {bhResult.skipped}.</Text>
+              <Text dimColor>Press any key to return</Text>
             </Box>
           )}
 
@@ -1700,7 +1934,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             </Box>
           )}
 
-          {addStep === 'confirm' && (
+          {addStep === 'confirm' && (() => { const skipCount = countSkippedRows(); return (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Ready to import</Text>
               <Text>File: <Text color={C_WARNING}>{filePath}</Text></Text>
@@ -1713,28 +1947,45 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text dimColor>AMOUNT</Text>
                 </Box>
                 {csvRows.slice(0, 5).map((row, i) => {
-                  const { date, name, amount } = previewRow(row);
+                  const { date, name, amount, dateBad } = previewRow(row);
                   return (
                     <Box key={i} gap={2}>
-                      <Text>{date.padEnd(12)}</Text>
+                      <Text color={dateBad ? C_WARNING : undefined}>{date.padEnd(12)}</Text>
                       <Text>{name.padEnd(30)}</Text>
                       <Text color={C_WARNING}>{amount}</Text>
                     </Box>
                   );
                 })}
               </Box>
+              {skipCount > 0 && (
+                <Text color={C_WARNING}>{skipCount} row{skipCount === 1 ? '' : 's'} will be skipped (invalid date, unreadable or blank amount, or missing description)</Text>
+              )}
               <Box marginTop={1} gap={4}>
                 <Text color={C_ACCENT}>[y] Import</Text>
                 <Text color={C_NEGATIVE}>[n] Cancel</Text>
               </Box>
             </Box>
-          )}
+          ); })()}
 
           {addStep === 'done' && importResult && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold color={C_POSITIVE}>Import complete</Text>
               <Text>Imported: <Text color={C_POSITIVE}>{importResult.imported}</Text></Text>
-              <Text dimColor>Skipped (duplicates/invalid): {importResult.skipped}</Text>
+              <Text dimColor>Skipped: {importResult.skipped}</Text>
+              {importResult.skippedRows.length > 0 && (() => {
+                const skipPreview = previewCsvSkips(importResult.skippedRows);
+                return (
+                  <Box flexDirection="column">
+                    <Text color={C_WARNING}>{skipPreview.summary}</Text>
+                    {skipPreview.shown.map((s) => (
+                      <Text key={s.rowIndex} dimColor>  line {s.line ?? s.rowIndex + 2}: {CSV_SKIP_COPY[s.reason]}</Text>
+                    ))}
+                    {skipPreview.hiddenCount > 0 && (
+                      <Text dimColor>  …and {skipPreview.hiddenCount} more</Text>
+                    )}
+                  </Box>
+                );
+              })()}
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
           )}

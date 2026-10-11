@@ -227,6 +227,63 @@ describe('countTagRuleMatches', () => {
   });
 });
 
+describe('countTagRuleMatches LIKE metacharacters (name type)', () => {
+  const seed = async () => {
+    await insertTx('100% Cash', 'work', 10);
+    await insertTx('100X Cash', 'work', 10);
+    await insertTx('a_b', 'work', 10);
+    await insertTx('axb', 'work', 10);
+    await insertTx('back\\slash', 'work', 10);
+    await insertTx('a_b', 'home', 500);
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, pending, ignored)
+            VALUES ('m1', 'work', '2025-01-01', 'Other', 'Cash Merchant', 10, 'Uncategorized', 0, 0)`,
+      args: [],
+    });
+  };
+
+  it.each([
+    ['100%', 1],
+    ['a_b', 2],
+    ['back\\slash', 1],
+    ['cash', 3],
+  ])('pattern %j counts %i across accounts', async (pattern, expected) => {
+    await seed();
+    expect(await countTagRuleMatches('name', pattern, null)).toBe(expected);
+  });
+
+  it.each([['50%', 1], ['off_co', 1]])('merchant-only pattern %j counts %i', async (pattern, expected) => {
+    for (const [id, m] of [['mm1', '50% Off_Co'], ['mm2', '50X OffXCo']]) {
+      await db.execute({
+        sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, pending, ignored)
+              VALUES (?, 'work', '2025-01-01', 'Unrelated', ?, 10, 'Uncategorized', 0, 0)`,
+        args: [id, m],
+      });
+    }
+    expect(await countTagRuleMatches('name', pattern, null)).toBe(expected);
+  });
+
+  it('still applies account and amount filters with escaped patterns', async () => {
+    await seed();
+    expect(await countTagRuleMatches('name', 'a_b', 'work')).toBe(1);
+    expect(await countTagRuleMatches('name', 'a_b', null, 100, null)).toBe(1);
+    expect(await countTagRuleMatches('name', 'a_b', null, null, 100)).toBe(1);
+    expect(await countTagRuleMatches('name', 'a_b', 'home', null, 100)).toBe(0);
+  });
+
+  it.each(['100%', 'a_b', 'back\\slash', 'cash', 'CASH', '%', '_'])(
+    'count equals rows tagRuleMatches accepts for %j',
+    async (pattern) => {
+      await seed();
+      const res = await db.execute('SELECT account_id, name, merchant_name, amount FROM transactions');
+      const rows = res.rows as unknown as { account_id: string; name: string; merchant_name: string | null; amount: number }[];
+      const rule: TagRule = { match_type: 'name', pattern, tag_id: 1, account_id: null, min_amount: null, max_amount: null };
+      const real = rows.filter((r) => tagRuleMatches(rule, r.account_id, r.name, r.merchant_name, r.amount)).length;
+      expect(await countTagRuleMatches('name', pattern, null)).toBe(real);
+    },
+  );
+});
+
 // Regression: an invalid regex must be rejected at save time. saveTagRule used
 // to insert the row and only then hit the RegExp constructor inside
 // applyTagRules — persisting a rule that made every later rule application

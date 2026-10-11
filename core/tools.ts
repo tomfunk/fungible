@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
+import { exportTransactionsCsv } from './export.js';
+import { previewBalanceImport, commitBalanceImport, type BalanceImportOptions, type BalanceImportPreview } from './balance-import.js';
+import type { Filter } from './filters.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows, getPeriodStart, formatPeriodLabel, BASIS_LABEL } from './dateUtils.js';
 import { bucketDrift, ratioLabel, isHighSeverityDrift } from './scorecard.js';
@@ -20,7 +23,7 @@ import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTop
 import { applyCategoriesToAll } from './categorize.js';
 import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
-import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction } from './transactions.js';
+import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction, normalizeAmount } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
 import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
@@ -39,7 +42,7 @@ export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction', 'add_transaction',
   'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
-  'tag_transaction', 'toggle_hidden_category', 'sync',
+  'tag_transaction', 'toggle_hidden_category', 'sync', 'import_balance_history',
   'show_canvas', 'load_canvas', 'delete_canvas',
 ]);
 
@@ -91,6 +94,50 @@ export const TOOL_DEFS: ToolDef[] = [
         include_ignored: { type: 'boolean', description: 'Include ignored transactions (default false)' },
         limit:           { type: 'integer', description: 'Max results (default 50)', minimum: 1, maximum: 500 },
       },
+    },
+  },
+  {
+    name: 'export_transactions',
+    description: 'Export transactions as CSV text for a date range, with optional filters. Hidden categories are excluded unless include_hidden is set. Only "csv" is implemented.',
+    parameters: {
+      type: 'object',
+      properties: {
+        from:            { type: 'string',  description: 'Start date YYYY-MM-DD' },
+        to:              { type: 'string',  description: 'End date YYYY-MM-DD' },
+        format:          { type: 'string',  enum: ['csv'], description: "Export format (default 'csv'; only csv is implemented)" },
+        category:        { type: 'string',  description: 'Filter by category name' },
+        account_id:      { type: 'string',  description: 'Filter to a specific account ID' },
+        tag:             { type: 'string',  description: 'Filter to transactions carrying this tag' },
+        search:          { type: 'string',  description: 'Search within transaction name/display name/amount/date' },
+        include_hidden:  { type: 'boolean', description: 'Include hidden categories (default false)' },
+      },
+      required: ['from', 'to'],
+    },
+  },
+  {
+    name: 'preview_balance_import',
+    description: 'Dry-run a balance-history CSV import (no writes). CSV needs a header row date,account,balance with ISO YYYY-MM-DD dates; accounts are matched by name or nickname and are never created. Only history older than an account\'s current balance is importable. Credit and loan balances are the amount owed, entered as positive numbers. Always preview first, and ask the user how to handle any unmatched or ambiguous account names (re-run with account_map) before calling import_balance_history.',
+    parameters: {
+      type: 'object',
+      properties: {
+        csv:         { type: 'string', description: 'Inline CSV text with header: date,account,balance' },
+        account_map: { type: 'object', description: 'Optional overrides: CSV account name -> account id (from list_accounts), or null to skip those rows', additionalProperties: { type: ['string', 'null'] } },
+        today:       { type: 'string', description: 'Optional YYYY-MM-DD treated as today (rows after it are skipped)' },
+      },
+      required: ['csv'],
+    },
+  },
+  {
+    name: 'import_balance_history',
+    description: 'Import balance history from inline CSV (header: date,account,balance) into existing accounts, in one atomic write. Existing balances on the same account and date are overwritten; rows not older than an account\'s current balance are skipped. Credit and loan balances are the amount owed, positive. Run preview_balance_import first and confirm unmatched names with the user.',
+    parameters: {
+      type: 'object',
+      properties: {
+        csv:         { type: 'string', description: 'Inline CSV text with header: date,account,balance' },
+        account_map: { type: 'object', description: 'Optional overrides: CSV account name -> account id, or null to skip those rows', additionalProperties: { type: ['string', 'null'] } },
+        today:       { type: 'string', description: 'Optional YYYY-MM-DD treated as today' },
+      },
+      required: ['csv'],
     },
   },
   {
@@ -453,8 +500,40 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
     case 'tag_transaction':        return `${input['add'] ? 'Add' : 'Remove'} tag #${s('tag')} on transaction [id: ${s('id')}]`;
     case 'toggle_hidden_category': return `${input['hide'] ? 'Hide' : 'Unhide'} category "${s('category')}"`;
     case 'sync':                   return 'Sync transactions from Plaid';
+    case 'import_balance_history': return 'Import balance history from CSV';
     default:                       return name;
   }
+}
+
+function balanceImportSummary(p: BalanceImportPreview): string {
+  const parts = [`${p.willInsert} new`, `${p.willOverwrite.count} replacing existing (${p.willOverwrite.changed} with a different value)`, `${p.skipped.length} skipped`];
+  return parts.join(', ');
+}
+
+function balanceImportOpts(input: Record<string, unknown>): BalanceImportOptions {
+  const map = input['account_map'];
+  const opts: BalanceImportOptions = {};
+  if (map && typeof map === 'object' && !Array.isArray(map)) {
+    opts.accountMap = {};
+    for (const [k, v] of Object.entries(map as Record<string, unknown>)) {
+      opts.accountMap[k] = v === null ? null : String(v);
+    }
+  }
+  if (typeof input['today'] === 'string' && input['today']) opts.today = input['today'];
+  return opts;
+}
+
+/** Like describeToolCall, but may query the database (e.g. to state import preview counts). Used for confirmation prompts. */
+export async function describeToolCallDetailed(name: string, input: Record<string, unknown>): Promise<string> {
+  if (name === 'import_balance_history') {
+    try {
+      const p = await previewBalanceImport(String(input['csv'] ?? ''), balanceImportOpts(input));
+      return `Import balance history: ${balanceImportSummary(p)}`;
+    } catch (e) {
+      return `Import balance history (${e instanceof Error ? e.message : String(e)})`;
+    }
+  }
+  return describeToolCall(name, input);
 }
 
 // ─── Pure tool executor ───────────────────────────────────────────────────────
@@ -467,13 +546,25 @@ async function requireTransactionName(id: string): Promise<string | null> {
 }
 
 /**
+ * Side-channel from executeToolImpl: set when a write tool failed or its target
+ * was not found. Not a promise that nothing changed in the other direction --
+ * a successful-looking no-op (e.g. removing a tag the transaction does not
+ * have) still counts as a write and fires afterWrite.
+ */
+type ToolEffect = { noWrite?: boolean };
+
+/**
  * Execute a tool by name and return a plain-text result string.
  * Does not handle `show` (agent-only), confirmation, or MCP wrapping.
  */
 async function executeToolImpl(
   name: string,
   input: Record<string, unknown>,
+  fx: ToolEffect = {},
 ): Promise<string> {
+  // Failure/no-op paths return plain text rather than throwing, so they mark
+  // themselves here; executeToolWithEffect then reports wrote=false for them.
+  const noWrite = (text: string): string => { fx.noWrite = true; return text; };
   const str  = (k: string, def = '') => String(input[k] ?? def);
   const num  = (k: string, def = 0)  => Number(input[k] ?? def);
   const bool = (k: string)            => Boolean(input[k]);
@@ -549,8 +640,9 @@ async function executeToolImpl(
         args.push(from, to);
       }
       if (input['search']) {
-        conditions.push('(t.name LIKE ? OR t.display_name LIKE ?)');
-        args.push(`%${str('search')}%`, `%${str('search')}%`);
+        conditions.push("(t.name LIKE ? ESCAPE '\\' OR t.display_name LIKE ? ESCAPE '\\')");
+        const pat = `%${str('search').replace(/[\\%_]/g, '\\$&')}%`;
+        args.push(pat, pat);
       }
       const where = 'WHERE ' + conditions.join(' AND ');
       const limit = input['limit'] ? num('limit') : 50;
@@ -574,6 +666,49 @@ async function executeToolImpl(
         return `${r.date}  ${flags}  ${r.name.slice(0, 36).padEnd(36)}  ${sign}$${Math.abs(Number(r.amount)).toFixed(2).padStart(9)}  ${r.category}  [${r.id}]`;
       }).join('\n');
     }
+
+    case 'export_transactions': {
+      const from = str('from'); const to = str('to');
+      if (!from || !to) return "Provide 'from' and 'to' (YYYY-MM-DD).";
+      const format = str('format', 'csv');
+      if (format !== 'csv') return `Unsupported format '${format}' — only 'csv' is implemented.`;
+
+      const filter: Filter = {};
+      if (input['category']) filter.categories = [str('category')];
+      if (input['account_id']) filter.accounts = [str('account_id')];
+      if (input['tag']) filter.tags = [{ name: str('tag'), mode: 'has' }];
+
+      return await exportTransactionsCsv({
+        from, to,
+        filter: Object.keys(filter).length ? filter : undefined,
+        search: optStr('search') ?? undefined,
+        includeHidden: bool('include_hidden'),
+      });
+    }
+
+    case 'preview_balance_import': {
+      let p: BalanceImportPreview;
+      try { p = await previewBalanceImport(str('csv'), balanceImportOpts(input)); }
+      catch (e) { return `Cannot preview import: ${e instanceof Error ? e.message : String(e)}`; }
+      const lines = [
+        `Balance import preview (no changes made): ${p.totalRows} rows, ${balanceImportSummary(p)}.`,
+      ];
+      if (p.duplicatesInFile) lines.push(`${p.duplicatesInFile} duplicate account/date rows in file (last wins).`);
+      for (const r of p.resolved) lines.push(`  ${r.csvName} -> ${r.accountName} [${r.accountId}]: ${r.rows} rows, ${r.minDate} to ${r.maxDate}`);
+      for (const u of p.unmatched) {
+        const sug = u.suggestions.length ? ` Did you mean: ${u.suggestions.map((x) => `${x.name} [${x.id}]`).join('; ')}?` : '';
+        lines.push(`Unmatched account "${u.name}" (${u.rows} rows).${sug}`);
+      }
+      for (const a of p.ambiguous) lines.push(`Ambiguous account "${a.name}": ${a.candidates.map((x) => `${x.name} [${x.id}]`).join('; ')}`);
+      for (const o of p.overwriteSample) lines.push(`  Overwrite ${o.accountName} ${o.date}: ${fmt(o.oldBalance)} -> ${fmt(o.newBalance)}`);
+      for (const w of p.warnings) lines.push(`Warning: ${w}`);
+      for (const sk of p.skipped.slice(0, 20)) lines.push(`Skipped [${sk.reason}] ${sk.message}`);
+      if (p.skipped.length > 20) lines.push(`... and ${p.skipped.length - 20} more skipped rows.`);
+      return lines.join('\n');
+    }
+
+    case 'import_balance_history':
+      return (await runBalanceImport(input)).text;
 
     case 'list_accounts': {
       const rows = await getLinkedAccounts();
@@ -835,7 +970,7 @@ async function executeToolImpl(
 
     case 'edit_transaction': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       await setTransactionCategory(str('id'), str('category'));
       return `Set "${txName}" → ${str('category')} (pinned)`;
     }
@@ -843,14 +978,14 @@ async function executeToolImpl(
     case 'set_transaction_date': {
       const txResult = await db.execute({ sql: 'SELECT name, date FROM transactions WHERE id = ?', args: [str('id')] });
       const tx = txResult.rows[0] as unknown as { name: string; date: string } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
+      if (!tx) return noWrite(`No transaction with id ${str('id')}.`);
       const date = str('date');
       // Reject anything SQLite's date functions would silently treat as NULL —
       // a bad date here would quietly drop the row out of every range query.
       // setTransactionDate enforces this too; the early return gives the agent
       // a friendly message instead of a thrown error.
       if (!isValidIsoDate(date)) {
-        return `"${date}" is not a valid date. Use YYYY-MM-DD.`;
+        return noWrite(`"${date}" is not a valid date. Use YYYY-MM-DD.`);
       }
       await setTransactionDate(str('id'), date);
       return `Reattributed "${tx.name}" from ${tx.date} → ${date} (posting date preserved)`;
@@ -859,15 +994,15 @@ async function executeToolImpl(
     case 'clear_transaction_date': {
       const txResult = await db.execute({ sql: 'SELECT name, original_date FROM transactions WHERE id = ?', args: [str('id')] });
       const tx = txResult.rows[0] as unknown as { name: string; original_date: string | null } | undefined;
-      if (!tx) return `No transaction with id ${str('id')}.`;
-      if (!tx.original_date) return `"${tx.name}" has no date override.`;
+      if (!tx) return noWrite(`No transaction with id ${str('id')}.`);
+      if (!tx.original_date) return noWrite(`"${tx.name}" has no date override.`);
       await clearTransactionDate(str('id'));
       return `Restored "${tx.name}" to its posting date ${tx.original_date}`;
     }
 
     case 'clear_edit': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       await clearTransactionOverride(str('id'));
       const revertedResult = await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [str('id')] });
       const reverted = (revertedResult.rows[0] as unknown as { category: string }).category;
@@ -876,24 +1011,34 @@ async function executeToolImpl(
 
     case 'ignore_transaction': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       await setTransactionIgnored(str('id'), bool('ignore'));
       return `"${txName}" ${bool('ignore') ? 'ignored' : 'un-ignored'}`;
     }
 
     case 'add_transaction': {
+      // Strict parse: num() would turn "", null, true, [] into 0 and "abc" into NaN.
+      const rawAmount = input['amount'];
+      let amount: number;
+      if (typeof rawAmount === 'number') {
+        amount = rawAmount;
+      } else if (typeof rawAmount === 'string' && /^-?\d+(\.\d+)?$/.test(rawAmount.trim())) {
+        amount = Number(rawAmount.trim());
+      } else {
+        return noWrite('Error: amount must be a number (e.g. 12.34) or a plain decimal string.');
+      }
       try {
         const id = await addTransaction({
           accountId: str('account_id'),
           date: str('date'),
           name: str('name'),
-          amount: num('amount'),
+          amount,
           category: str('category'),
           merchantName: optStr('merchant_name') ?? undefined,
         });
-        return `Added "${str('name')}" ${num('amount')} on ${str('date')} → ${str('category')} [id: ${id}]`;
+        return `Added "${str('name')}" ${normalizeAmount(amount)} on ${str('date')} → ${str('category')} [id: ${id}]`;
       } catch (e) {
-        return `Error: ${(e as Error).message}`;
+        return noWrite(`Error: ${(e as Error).message}`);
       }
     }
 
@@ -910,7 +1055,7 @@ async function executeToolImpl(
     case 'delete_rule': {
       const ruleResult = await db.execute({ sql: 'SELECT pattern, category FROM category_rules WHERE id = ?', args: [num('id')] });
       const rule = ruleResult.rows[0] as unknown as { pattern: string; category: string } | undefined;
-      if (!rule) return `No rule with id ${num('id')}.`;
+      if (!rule) return noWrite(`No rule with id ${num('id')}.`);
       // deleteCategoryRule deletes the row AND re-evaluates affected transactions
       // (reverting orphans to Uncategorized / a lower-priority rule), matching the
       // TUI/GUI. Raw DELETE here would leave stale categorizations behind.
@@ -931,14 +1076,14 @@ async function executeToolImpl(
     case 'delete_name_rule': {
       const ruleResult = await db.execute({ sql: 'SELECT pattern, replacement FROM name_rules WHERE id = ?', args: [num('id')] });
       const rule = ruleResult.rows[0] as unknown as { pattern: string; replacement: string } | undefined;
-      if (!rule) return `No name rule with id ${num('id')}.`;
+      if (!rule) return noWrite(`No name rule with id ${num('id')}.`);
       await db.execute({ sql: 'DELETE FROM name_rules WHERE id = ?', args: [num('id')] });
       return `Deleted name rule: "${rule.pattern}" → "${rule.replacement}"`;
     }
 
     case 'tag_transaction': {
       const txName = await requireTransactionName(str('id'));
-      if (txName === null) return `No transaction with id ${str('id')}.`;
+      if (txName === null) return noWrite(`No transaction with id ${str('id')}.`);
       if (bool('add')) {
         const tagId = await getOrCreateTag(str('tag'));
         await addTagToTransaction(str('id'), tagId);
@@ -964,7 +1109,11 @@ async function executeToolImpl(
     case 'sync': {
       const results = await syncAll();
       const total = results.reduce((s, r) => s + r.added, 0);
-      return results.map((r) => `${r.itemId}: +${r.added} added, ${r.modified} modified, ${r.removed} removed`).join('\n')
+      // Debounced, failed, or empty syncs change nothing a refresh would show.
+      if (!results.some((r) => !r.skipped && !r.error && r.added + r.modified + r.removed + r.dupes > 0)) fx.noWrite = true;
+      return results.map((r) => r.error
+        ? `${r.itemId}: FAILED — ${r.error}`
+        : `${r.itemId}: +${r.added} added, ${r.modified} modified, ${r.removed} removed`).join('\n')
         + `\n\nTotal new transactions: ${total}`;
     }
 
@@ -997,7 +1146,7 @@ async function executeToolImpl(
 
     case 'load_canvas': {
       const entry = getHistoryEntry(str('id'));
-      if (!entry) return `No canvas found with id "${str('id')}".`;
+      if (!entry) return noWrite(`No canvas found with id "${str('id')}".`);
       // entry.spec is the unresolved spec from history — resolve fresh on every
       // reopen rather than trusting a previously-resolved snapshot.
       await resolveAndWriteCanvasSpec(entry.spec, entry.id);
@@ -1006,7 +1155,7 @@ async function executeToolImpl(
 
     case 'delete_canvas': {
       const deleted = deleteHistoryEntry(str('id'));
-      return deleted ? `Canvas deleted.` : `No canvas found with id "${str('id')}".`;
+      return deleted ? `Canvas deleted.` : noWrite(`No canvas found with id "${str('id')}".`);
     }
 
     default:
@@ -1014,8 +1163,35 @@ async function executeToolImpl(
   }
 }
 
+async function runBalanceImport(input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
+  try {
+    const r = await commitBalanceImport(typeof input.csv === 'string' ? input.csv : '', balanceImportOpts(input));
+    return {
+      text: `Imported balance history: ${r.inserted} new, ${r.overwritten} overwritten, ${r.skipped} skipped, across ${r.accountsTouched} account${r.accountsTouched === 1 ? '' : 's'}.`,
+      wrote: r.inserted + r.overwritten > 0,
+    };
+  } catch (e) {
+    return { text: `Import failed, nothing was written: ${e instanceof Error ? e.message : String(e)}`, wrote: false };
+  }
+}
+
+/**
+ * Like executeTool, but also reports whether the write tool succeeded, so
+ * callers (MCP afterWrite) can skip refresh hooks after a failed write or one
+ * whose target was not found (see ToolEffect; some harmless no-ops still fire). Fires notifyChange itself only when data changed.
+ */
+export async function executeToolWithEffect(name: string, input: Record<string, unknown>): Promise<{ text: string; wrote: boolean }> {
+  if (name === 'import_balance_history') {
+    // commitBalanceImport already notifies when it writes; no generic notify.
+    return runBalanceImport(input);
+  }
+  const fx: ToolEffect = {};
+  const text = await executeToolImpl(name, input, fx);
+  const wrote = WRITE_TOOLS.has(name) && !fx.noWrite;
+  if (wrote) notifyChange();
+  return { text, wrote };
+}
+
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-  const result = await executeToolImpl(name, input);
-  if (WRITE_TOOLS.has(name)) notifyChange();
-  return result;
+  return (await executeToolWithEffect(name, input)).text;
 }

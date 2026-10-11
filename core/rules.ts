@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { applyCategoriesToAll } from './categorize.js';
+import { releaseSourcePin } from './transactions.js';
 import { rebuildDisplayNames } from './rename.js';
 import { applyTagRules, type TagMatchType } from './tag-rules.js';
 import { validateRegex, inAmountRange, matchesPattern, countPatternMatches } from './rule-utils.js';
@@ -28,10 +29,12 @@ export type SaveCategoryRuleOpts = {
   maxAmount: number | null;
   accountId?: string | null;
   editingId?: number | null;
+  /** Transaction a suggestion came from; its manual pin is released after the rule is written. */
+  sourceTransactionId?: string | null;
 };
 
 export async function saveCategoryRule(opts: SaveCategoryRuleOpts): Promise<number> {
-  const { pattern, matchType, category, minAmount, maxAmount, accountId = null, editingId } = opts;
+  const { pattern, matchType, category, minAmount, maxAmount, accountId = null, editingId, sourceTransactionId } = opts;
   // Validate before any write: a persisted bad regex would throw inside every
   // later rule application (sync, import, re-categorize), not just this save.
   if (matchType === 'regex') validateRegex(pattern);
@@ -58,6 +61,7 @@ export async function saveCategoryRule(opts: SaveCategoryRuleOpts): Promise<numb
       });
     }
   }
+  if (sourceTransactionId) await releaseSourcePin(sourceTransactionId);
   // Editing a rule (narrowing a pattern, rescoping to an account, etc.) can
   // remove the only match a transaction had, same as a delete — let it fall
   // back to Uncategorized rather than keep a category nothing justifies anymore.

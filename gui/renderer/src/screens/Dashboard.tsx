@@ -268,7 +268,7 @@ export function Dashboard() {
         </div>
         <div className={`pillGroup ${styles.rangePills}`}>
           {RANGES.map((r) => (
-            <button key={r} className={r === range ? 'pillActive' : 'pill'} onClick={() => pickRange(r)}>
+            <button key={r} aria-pressed={r === range} className={r === range ? 'pillActive' : 'pill'} onClick={() => pickRange(r)}>
               {RANGE_LABELS[r]}
             </button>
           ))}
@@ -278,7 +278,7 @@ export function Dashboard() {
       <div className={styles.controls}>
         <div className="tabGroup">
           {views.map((v) => (
-            <button key={v} className={v === view ? 'tabActive' : 'tab'} onClick={() => { setView(v); setMerchantDrill(null); }}>
+            <button key={v} aria-pressed={v === view} className={v === view ? 'tabActive' : 'tab'} onClick={() => { setView(v); setMerchantDrill(null); }}>
               {VIEW_LABELS[v]}
             </button>
           ))}
@@ -291,7 +291,7 @@ export function Dashboard() {
         )}
         <div className={styles.controlsRight}>
           <button
-            className={scorecardMode ? 'chip chipActive' : 'chip'}
+            aria-pressed={scorecardMode} className={scorecardMode ? 'chip chipActive' : 'chip'}
             onClick={() => setScorecardMode((m) => !m)}
             title="Which categories drifted from your typical month, and does it matter"
           >
@@ -299,7 +299,7 @@ export function Dashboard() {
           </button>
           {scorecardMode && (
             <button
-              className={detailMode ? 'chip chipActive' : 'chip'}
+              aria-pressed={detailMode} className={detailMode ? 'chip chipActive' : 'chip'}
               onClick={() => setDetailMode((t) => !t)}
               title="Sortable per-baseline delta columns (vs prev / yr ago / 12m avg)"
             >
@@ -678,7 +678,7 @@ export function Dashboard() {
                       </td>
                       <td className={styles.tdAction}>
                         <button
-                          className={isFiltered ? styles.filterBtnActive : styles.filterBtn}
+                          aria-pressed={isFiltered} className={isFiltered ? styles.filterBtnActive : styles.filterBtn}
                           title={isFiltered ? 'Clear dashboard account filter' : 'Scope dashboard to this account'}
                           onClick={(e) => {
                             e.stopPropagation();

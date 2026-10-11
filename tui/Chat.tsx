@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { runAgentTurn } from '../core/agent.js';
 import type { Message } from '../core/llm-provider.js';

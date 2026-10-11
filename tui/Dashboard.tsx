@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
@@ -26,8 +26,8 @@ import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { mergeFilters, type Filter } from '../core/filters.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
-const BAR_WIDTH = 20;
 
 type DashView = 'categories' | 'flex' | 'account' | 'owner';
 
@@ -63,6 +63,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
 ];
 
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const { filter: sharedFilter, setFilter } = useFilter();
   const now = new Date();
@@ -84,11 +85,11 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [catCursor, setCatCursor] = useState(0);
   const [view, setView] = useState<DashView>('categories');
   const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
-  useEffect(() => { void getDataBounds().then(setBounds); }, []);
+  useEffect(() => { void track(getDataBounds()).then(setBounds); }, []);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<number | null>(null);
   const { statusMsg, showStatus } = useStatusMessage();
-  useEffect(() => { void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
+  useEffect(() => { void track(getLastSyncedAt()).then(setLastSynced); }, [refreshKey]);
   const [scorecardMode, setScorecardMode] = useState(false);
   const [detailMode, setDetailMode] = useState(false); // 'x': per-baseline delta columns
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
@@ -135,19 +136,19 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const { from, to } = getPeriodDates(r, a);
     const token = summaryGuard.begin();
     const ok = <T,>(setter: (v: T) => void) => (v: T) => { if (summaryGuard.isLatest(token)) setter(v); };
-    void getAccountRows(from, to, qf).then(ok(setAccountRows));
-    void getOwnerRows(from, to, qf).then(ok(setOwnerRows));
+    void track(getAccountRows(from, to, qf)).then(ok(setAccountRows));
+    void track(getOwnerRows(from, to, qf)).then(ok(setOwnerRows));
     setAcctCursor(0);
-    void getRangeSummary(from, to, qf).then(ok(setSummary));
-    void getFlexSummary(from, to, qf).then(ok(setFlexData));
-    void getUncategorizedCount(from, to, qf).then(ok(setUncategorized));
+    void track(getRangeSummary(from, to, qf)).then(ok(setSummary));
+    void track(getFlexSummary(from, to, qf)).then(ok(setFlexData));
+    void track(getUncategorizedCount(from, to, qf)).then(ok(setUncategorized));
   }
 
   function openMerchantDrill(category: string, from: string, to: string) {
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
     const token = merchantGuard.begin();
-    void getMerchantSummary(category, from, to, queryFilter).then((v) => {
+    void track(getMerchantSummary(category, from, to, queryFilter)).then((v) => {
       if (merchantGuard.isLatest(token)) setMerchantRows(v);
     });
   }
@@ -164,9 +165,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const { current, lastPeriod, lastYear, rolling12 } = windows;
     const token = driftGuard.begin();
     const ok = <T,>(setter: (v: T) => void) => (v: T) => { if (driftGuard.isLatest(token)) setter(v); };
-    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setCatDrift));
-    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setFlexDrift));
-    void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(ok(setAcctDrift));
+    void track(getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter)).then(ok(setCatDrift));
+    void track(getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter)).then(ok(setFlexDrift));
+    void track(getAccountDriftData(current, lastPeriod, lastYear, rolling12)).then(ok(setAcctDrift));
   }, [scorecardMode, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   const setTyping = useSetTyping();
@@ -177,7 +178,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (!term) { setSearchStats(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
     const token = searchStatsGuard.begin();
-    void countSearchMatches(from, to, term, queryFilter).then((v) => {
+    void track(countSearchMatches(from, to, term, queryFilter)).then((v) => {
       if (searchStatsGuard.isLatest(token)) setSearchStats(v);
     });
   }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), queryFilter]);
@@ -187,7 +188,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (!search) { setFilteredSummary(null); setFilteredFlex(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
     const token = searchDataGuard.begin();
-    void getSearchFilteredData(from, to, search, queryFilter).then(({ summary: fs, flexData: ff }) => {
+    void track(getSearchFilteredData(from, to, search, queryFilter)).then(({ summary: fs, flexData: ff }) => {
       if (!searchDataGuard.isLatest(token)) return;
       setFilteredSummary(fs);
       setFilteredFlex(ff);
@@ -210,7 +211,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
     const token = merchantGuard.begin();
-    void getMerchantSummary(category, from, to, queryFilter).then((v) => {
+    void track(getMerchantSummary(category, from, to, queryFilter)).then((v) => {
       if (merchantGuard.isLatest(token)) setMerchantRows(v);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -471,6 +472,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const displayFlexData = filteredFlex    ?? flexData;
   const maxCategorySpend = (displaySummary?.byCategory[0]?.total ?? categories[0]?.total) ?? 1;
   const totalExpenses = displaySummary?.expenses ?? 0;
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

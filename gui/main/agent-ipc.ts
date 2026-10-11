@@ -9,6 +9,16 @@ const history: Message[] = [];
 const pendingConfirms = new Map<number, (yes: boolean) => void>();
 let nextConfirmId = 1;
 let inflight = false;
+// Set by agent:reset mid-turn: the turn's callbacks start throwing so core's
+// stream loop unwinds, and the run's catch rolls the partial turn back.
+let aborted = false;
+let currentTurn: Promise<void> | null = null;
+
+class TurnAborted extends Error {
+  constructor() {
+    super('Agent turn cancelled');
+  }
+}
 
 export function registerAgentIpc() {
   ipcMain.handle('agent:provider', () => {
@@ -20,35 +30,49 @@ export function registerAgentIpc() {
     }
   });
 
-  ipcMain.handle('agent:reset', () => {
-    if (inflight) return; // clearing mid-turn would corrupt the streaming turn's history
+  ipcMain.handle('agent:reset', async () => {
+    if (inflight) {
+      // Abort the turn and let it unwind before clearing: clearing under a
+      // streaming turn would corrupt its history.
+      aborted = true;
+      rejectPendingConfirms();
+      await currentTurn?.catch(() => {});
+    }
     history.length = 0;
   });
 
   ipcMain.handle('agent:run', async (e, userMessage: string) => {
     if (inflight) throw new Error('The agent is already responding — wait for the current turn to finish');
     inflight = true;
+    aborted = false;
     const send = (channel: string, ...args: unknown[]) => {
+      if (aborted) throw new TurnAborted();
       if (!e.sender.isDestroyed()) e.sender.send(channel, ...args);
     };
     const historyLenBefore = history.length;
     try {
-      await runAgentTurn(userMessage, history, {
+      const turn = runAgentTurn(userMessage, history, {
         onText: (delta) => send('agent:text', delta),
         onToolCall: (name, desc) => send('agent:tool', name, desc),
         onNavigate: (screen, filter) => send('agent:navigate', screen, filter),
         onConfirm: (desc) =>
           new Promise<boolean>((resolve) => {
+            if (aborted) return resolve(false);
             const id = nextConfirmId++;
             pendingConfirms.set(id, resolve);
             send('agent:confirm', id, desc);
           }),
       });
+      currentTurn = turn;
+      await turn;
+      if (aborted) throw new TurnAborted();
     } catch (err) {
       history.splice(historyLenBefore); // roll back the partial turn
+      if (err instanceof TurnAborted || aborted) return; // cancelled by reset: not an error
       throw err;
     } finally {
       inflight = false;
+      currentTurn = null;
       rejectPendingConfirms(); // any confirm still pending belongs to a failed turn
     }
   });

@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { writeFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
   setTransactionDisplayName, deleteTransaction, addTransaction,
@@ -8,6 +11,7 @@ import {
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
 import { suggestRuleForTransaction, saveCategoryRule, type RuleSuggestion } from '../core/rules.js';
+import { exportTransactionsCsv } from '../core/export.js';
 import { syncAll } from '../core/sync.js';
 import {
   getTagOptions, getTransactionTagIds, getOrCreateTag,
@@ -27,6 +31,7 @@ import { useTerminalWidth, MONTHS, C_POSITIVE, C_WARNING, C_MANUAL, C_ACCENT } f
 import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 // TxRow.original_date (from core/queries.ts) is non-null only when a
 // transaction has been reattributed to another period; it holds the bank's
@@ -34,7 +39,7 @@ import { useSetTyping } from './TypingContext.js';
 type Tx = TxRow;
 
 
-type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all' | 'rule-prompt' | 'add';
+type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all' | 'rule-prompt' | 'add' | 'export' | 'export-confirm';
 type EditField = 'name' | 'category' | 'date' | 'pattern' | 'type';
 type AddField = 'date' | 'name' | 'amount' | 'type' | 'account' | 'category';
 
@@ -43,14 +48,9 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
 
-const SORT_LABEL: Record<SortMode, string> = {
-  'date-desc':     'date ↓', 'date-asc':      'date ↑',
-  'amount-desc':   'amount ↓', 'amount-asc':  'amount ↑',
-  'name-asc':      'name ↑', 'name-desc':     'name ↓',
-  'category-asc':  'category ↑', 'category-desc': 'category ↓',
-};
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
@@ -80,7 +80,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   // Inline "always categorize as…?" prompt shown after a plain manual
   // recategorize (no Pattern typed — that path goes through saveAsRule
   // instead, which is already an explicit rule save).
-  const [ruleSuggestion, setRuleSuggestion] = useState<RuleSuggestion | null>(null);
+  const [ruleSuggestion, setRuleSuggestion] = useState<(RuleSuggestion & { sourceTransactionId: string }) | null>(null);
 
   // Add-transaction panel state. Amount is entered as a bare magnitude plus a
   // separate Expense/Income toggle rather than a signed number — typing "-42.50"
@@ -95,6 +95,22 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [addAccounts, setAddAccounts] = useState<LinkedAccount[]>([]);
   const [addAccountCursor, setAddAccountCursor] = useState(0);
   const [addCategoryCursor, setAddCategoryCursor] = useState(0);
+
+  // Export panel state (Issue #18). The destination path is free-typed, same
+  // as the CSV-import file-path field on Accounts.tsx — Node doesn't expand
+  // "~", and nothing elsewhere in this codebase does either, so the default
+  // is built with os.homedir() rather than a literal "~" the write would
+  // otherwise choke on.
+  const [exportPath, setExportPath] = useState('');
+  // Mirrors exportPath, written synchronously inside the same setState updater
+  // that appends/trims a character. Enter reads this instead of the `exportPath`
+  // closure: several keystrokes dispatched in one tick (a terminal paste, or a
+  // scripted burst) land in the same React batch, so the Enter handler's own
+  // closure can still be the pre-batch value even though the functional
+  // updaters above it in the same batch already compose correctly — same
+  // failure mode the search-mode comment below already calls out for `search`.
+  const exportPathRef = useRef('');
+  const [exportError, setExportError] = useState('');
 
   // Tag panel state. The applied-tag set is kept together with the transaction
   // it was read for: the panel acts on whatever row the cursor is on, and that
@@ -111,7 +127,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const loadGuard = useLoadGuard();
   function load(s = search, keepCursor = false) {
     const token = loadGuard.begin();
-    void getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
+    void track(getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex })).then((rows) => {
       if (!loadGuard.isLatest(token)) return; // superseded by a newer load
       setTxs(rows);
       if (!keepCursor) setCursor(0);
@@ -125,12 +141,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     });
   }
 
-  useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
+  useEffect(() => { void track(getDataBounds()).then(setBounds); void track(getAllCategories()).then(setCategories); void track(getLastSyncedAt()).then(setLastSynced); }, [refreshKey]);
   useEffect(() => { load(); }, [from, to, search, sort, txType, flex, sharedFilter, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {
-    const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all'
+    const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all' || mode === 'export'
       || (mode === 'edit' && (editField === 'name' || editField === 'pattern' || editField === 'date'))
       || (mode === 'add' && (addField === 'name' || addField === 'date' || addField === 'amount'));
     setTyping(isTextInput);
@@ -144,7 +160,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openEdit() {
     if (!selected) return;
-    void getAllCategories().then((cats) => {
+    void track(getAllCategories()).then((cats) => {
       setCategories(cats);
       setEditName('');
       setEditDate(selected.date);
@@ -165,7 +181,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   function openAdd() {
-    void Promise.all([getAllCategories(), getLinkedAccounts()]).then(([cats, accts]) => {
+    void track(Promise.all([getAllCategories(), getLinkedAccounts()])).then(([cats, accts]) => {
       const eligible = eligibleAddAccounts(accts);
       if (eligible.length === 0) {
         showStatus('No accounts to add a transaction to — link or import one first', 4000);
@@ -211,10 +227,48 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     }
   }
 
+  function openExport() {
+    const today = new Date().toISOString().slice(0, 10);
+    const def = join(homedir(), `transactions-export-${today}.csv`);
+    exportPathRef.current = def;
+    setExportPath(def);
+    setExportError('');
+    setMode('export');
+  }
+
+  /** Writes the current filter's full, uncapped result set to `destPath` as
+   *  CSV via core/export.ts — never getTransactions, whose 200-row screen
+   *  cap would silently truncate the file. from/to fall back to the data's
+   *  full bounds when no range is set, since ExportFilters requires both
+   *  (unlike this screen's own nullable from/to). */
+  async function doExport(destPath: string) {
+    try {
+      const csv = await exportTransactionsCsv({
+        filter: sharedFilter,
+        from: from ?? bounds.minDate,
+        to: to ?? bounds.maxDate,
+        search: search || undefined,
+      });
+      writeFileSync(destPath, csv, 'utf-8');
+      // transactionsToCsv always ends in a trailing "\n"; trim it before
+      // counting lines so an empty export (header only) reports 0, not -1.
+      const count = Math.max(0, csv.trimEnd().split('\n').length - 1);
+      setMode('list');
+      setExportError('');
+      showStatus(`Exported ${count} transaction${count !== 1 ? 's' : ''} to ${destPath}`, 4000);
+    } catch (e) {
+      // Stay on the path step (rather than wherever the write was triggered
+      // from, e.g. the overwrite-confirm panel) so the error has somewhere to
+      // render and the user can correct the path without retyping it.
+      setExportError(e instanceof Error ? e.message : 'Failed to write file');
+      setMode('export');
+    }
+  }
+
   function openTagPanel() {
     if (!selected) return;
     const txId = selected.id;
-    void Promise.all([getTagOptions(), getTransactionTagIds(txId)]).then(([tags, ids]) => {
+    void track(Promise.all([getTagOptions(), getTransactionTagIds(txId)])).then(([tags, ids]) => {
       setAllTags(tags);
       setTagState({ txId, ids });
       setTagInput('');
@@ -303,7 +357,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (catChanged) {
       const suggestion = await suggestRuleForTransaction(txId, oldCategory, newCat);
       if (suggestion) {
-        setRuleSuggestion(suggestion);
+        setRuleSuggestion({ ...suggestion, sourceTransactionId: txId });
         setMode('rule-prompt');
         load(search, true);
         return;
@@ -332,9 +386,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           maxAmount: existing?.max_amount ?? null,
           accountId: existing?.account_id ?? null,
           editingId: conflicting.id,
+          sourceTransactionId: ruleSuggestion.sourceTransactionId,
         });
       } else {
-        count = await upsertCategoryRule(ruleSuggestion.pattern, ruleSuggestion.matchType, ruleSuggestion.newCategory);
+        count = await upsertCategoryRule(ruleSuggestion.pattern, ruleSuggestion.matchType, ruleSuggestion.newCategory, ruleSuggestion.sourceTransactionId);
       }
       showStatus(`Saved: category rule (${count} updated)`);
     } catch (e) {
@@ -415,7 +470,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (tagState?.txId === selected.id) return;
     const txId = selected.id;
     let cancelled = false;
-    void getTransactionTagIds(txId).then((ids) => { if (!cancelled) setTagState({ txId, ids }); });
+    void track(getTransactionTagIds(txId)).then((ids) => { if (!cancelled) setTagState({ txId, ids }); });
     return () => { cancelled = true; };
   }, [mode, selected?.id, tagState?.txId]);
 
@@ -574,6 +629,41 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       return;
     }
 
+    if (mode === 'export') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) {
+        const dest = exportPathRef.current.trim();
+        if (!dest) { setExportError('Enter a destination path'); return; }
+        if (existsSync(dest)) { setExportError(''); setMode('export-confirm'); return; }
+        void doExport(dest);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        // Mutate the ref directly, outside setState, rather than inside a
+        // setExportPath functional updater: React defers *running* a queued
+        // updater until flush time, same as the plain closure it was meant to
+        // replace, so a same-tick Enter would still read a stale value. A
+        // direct mutation is visible to the very next keystroke immediately.
+        exportPathRef.current = exportPathRef.current.slice(0, -1);
+        setExportPath(exportPathRef.current);
+        setExportError('');
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        exportPathRef.current = exportPathRef.current + input;
+        setExportPath(exportPathRef.current);
+        setExportError('');
+        return;
+      }
+      return;
+    }
+
+    if (mode === 'export-confirm') {
+      if (key.escape || input === 'n' || input === 'N') { setMode('export'); return; }
+      if (input === 'y' || input === 'Y') { void doExport(exportPathRef.current.trim()); return; }
+      return;
+    }
+
     if (mode === 'list') {
       if (input === 's') { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
       // Pass active search to adjacent screens (1=dashboard, 3=trends)
@@ -621,7 +711,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === 'a') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({}); }
       if (key.return && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
-        void getAllCategories().then((cats) => {
+        void track(getAllCategories()).then((cats) => {
           setCategories(cats);
           setEditCatCursor(0);
           setMode('edit-all');
@@ -630,7 +720,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       }
       if (input === 'g' && selected) openTagPanel();
       if (input === 'G' && txs.length > 0) {
-        void getTagOptions().then((tags) => {
+        void track(getTagOptions()).then((tags) => {
           setAllTags(tags);
           setTagInput('');
           setTagCursor(0);
@@ -664,6 +754,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search);
         return;
       }
+      if (input === 'e' && txs.length > 0) { openExport(); return; }
       if (input === 'S' && !syncing) {
         setSyncing(true);
         syncAll(true)
@@ -671,7 +762,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             const added = results.reduce((s, r) => s + r.added, 0);
             showStatus(`Synced — ${added} new`, 3000);
             load(search, true);
-            void getLastSyncedAt().then(setLastSynced);
+            void track(getLastSyncedAt()).then(setLastSynced);
           })
           .catch(() => showStatus('Sync failed', 3000))
           .finally(() => setSyncing(false));
@@ -688,7 +779,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const catW  = Math.max(8,  txFlex - descW);
 
   const PAGE = 20;
-  const { visible, pageStart } = usePagination(txs, cursor, PAGE);
+  const { visible } = usePagination(txs, cursor, PAGE);
 
   function dateLabel(): string | null {
     if (!from) return null;
@@ -708,6 +799,18 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     flex ? flex.charAt(0).toUpperCase() + flex.slice(1) : null,
   ].filter(Boolean).join(' · ');
 
+  // What the export modal shows as "what will be exported" -- deliberately
+  // narrower than filterLabel above. ExportFilters (core/export.ts) only
+  // supports the shared Filter (category/account/owner/tag) + search + date
+  // range; it has no txType/flex fields, so a drill-in that landed here with
+  // one of those active would otherwise show text promising a constraint the
+  // export can't actually honor. The caveat below (txType || flex) covers
+  // that gap explicitly instead of silently overclaiming.
+  const exportFilterLabel = [
+    filterSummary(sharedFilter) || null,
+    search ? `"${search}"` : null,
+  ].filter(Boolean).join(' · ');
+
   // Category list window for edit panel
   const CAT_WIN = 8;
   const catWinStart = Math.max(0, Math.min(editCatCursor - Math.floor(CAT_WIN / 2), categories.length - CAT_WIN));
@@ -717,11 +820,13 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [matchCount, setMatchCount] = useState(0);
   useEffect(() => {
     if (mode === 'edit' && editPattern.trim()) {
-      void countPatternMatches(editPattern, editMatchType).then(setMatchCount);
+      void track(countPatternMatches(editPattern, editMatchType)).then(setMatchCount);
     } else {
       setMatchCount(0);
     }
   }, [mode, editPattern, editMatchType]);
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -741,7 +846,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  ${selected?.source !== 'manual' ? '[i] ignore  ' : ''}${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [n] add  ·  Enter edit  [g] tag  ${selected?.source !== 'manual' ? '[i] ignore  ' : ''}${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync  ·  [e] export`
           : '[/] search'}
       </Text>
 
@@ -791,8 +896,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               <Text
                 color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : (isPinned || isManualRow) ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
+               
               >
-                {padTruncate('  ' + (isIgnored ? '~' : '') + tx.category, catW)}
+                {padTruncate('  ' + tx.category, catW)}
               </Text>
             </SelectableRow>
             {hasTags && isSelected && (
@@ -950,6 +1056,42 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} gap={4}>
             <Text color={C_MANUAL}>[y] Yes, always</Text>
             <Text dimColor>[n] / Esc  No, just this once</Text>
+          </Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'export' && (
+        <ModalPanel borderColor={C_WARNING}>
+          <Text bold>Export transactions to CSV</Text>
+          <Box marginTop={1}>
+            <Text dimColor>
+              {exportFilterLabel || dl
+                ? `Exporting: ${[exportFilterLabel, dl].filter(Boolean).join(' · ')}`
+                : `Exporting all transactions (${bounds.minDate} – ${bounds.maxDate})`}
+            </Text>
+          </Box>
+          {(txType || flex) && (
+            <Box marginTop={1}>
+              <Text color={C_WARNING}>Note: the {[txType, flex].filter(Boolean).join('/')} filter shown above isn't applied to the exported file — it isn't supported yet.</Text>
+            </Box>
+          )}
+          <Box marginTop={1} gap={2}>
+            <Text dimColor>Path: </Text>
+            <TextInput value={exportPath} color={C_WARNING} />
+          </Box>
+          {exportError ? <Box marginTop={1}><Text color={C_WARNING}>{exportError}</Text></Box> : null}
+          <Box marginTop={1}><Text dimColor>Enter export  ·  Esc cancel</Text></Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'export-confirm' && (
+        <ModalPanel borderColor={C_MANUAL}>
+          <Text bold color={C_MANUAL}>
+            <Text color={C_ACCENT}>{exportPath}</Text> already exists. Overwrite it?
+          </Text>
+          <Box marginTop={1} gap={4}>
+            <Text color={C_MANUAL}>[y] Yes, overwrite</Text>
+            <Text dimColor>[n] / Esc  No, change path</Text>
           </Box>
         </ModalPanel>
       )}

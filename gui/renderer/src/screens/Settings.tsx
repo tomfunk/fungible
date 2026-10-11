@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useStatus } from '../hooks/useStatus.js';
 import type { Profile, HouseholdMember } from '../../../../core/profile.js';
@@ -58,13 +58,28 @@ export function Settings() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
-    void api.profile.loadProfile().then((p) => {
-      setProfile(p ?? { self: { name: '', birthYear: 0 }, children: [] });
-      setLoaded(true);
-    });
-  }, []);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
+  useEffect(() => {
+    setLoadError(null);
+    api.profile
+      .loadProfile()
+      .then((p) => {
+        setProfile(p ?? { self: { name: '', birthYear: 0 }, children: [] });
+        setLoaded(true);
+      })
+      .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : String(e)));
+  }, [attempt]);
+
+  if (loadError !== null) {
+    return (
+      <div className={styles.screen}>
+        <p className="dim">Couldn't load your profile: {loadError}</p>
+        <button onClick={() => setAttempt((n) => n + 1)}>Retry</button>
+      </div>
+    );
+  }
   if (!loaded || !profile) return <p className="dim">Loading…</p>;
 
   const members: HouseholdMember[] = [profile.self, ...(profile.spouse ? [profile.spouse] : []), ...profile.children];
@@ -74,12 +89,16 @@ export function Settings() {
 
   async function save() {
     if (!profile || !valid) return;
-    await api.profile.saveProfile({
-      self: { name: profile.self.name.trim(), birthYear: profile.self.birthYear },
-      ...(profile.spouse ? { spouse: { name: profile.spouse.name.trim(), birthYear: profile.spouse.birthYear } } : {}),
-      children: profile.children.map((c) => ({ name: c.name.trim(), birthYear: c.birthYear })),
-    });
-    showStatus('Profile saved');
+    try {
+      await api.profile.saveProfile({
+        self: { name: profile.self.name.trim(), birthYear: profile.self.birthYear },
+        ...(profile.spouse ? { spouse: { name: profile.spouse.name.trim(), birthYear: profile.spouse.birthYear } } : {}),
+        children: profile.children.map((c) => ({ name: c.name.trim(), birthYear: c.birthYear })),
+      });
+      showStatus('Profile saved');
+    } catch (e) {
+      showStatus(`Save failed: ${e instanceof Error ? e.message : String(e)}`, 4000);
+    }
   }
 
   return (

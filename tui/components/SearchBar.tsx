@@ -1,4 +1,3 @@
-import React from 'react';
 import { Box, Text } from 'ink';
 import { TextInput } from './TextInput.js';
 import { C_ACCENT, C_WARNING } from '../ui.js';

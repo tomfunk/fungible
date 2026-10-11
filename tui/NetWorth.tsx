@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getAccountsWithBalances, getNetWorthHistory, groupAccountsByType, buildTypeToAccountIds,
@@ -15,6 +15,7 @@ import { useTerminalWidth, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_ACCENT } f
 import { usePagination, PageHeader } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 const BAR_WIDTH = 32;
 const PAGE = 20;
@@ -24,6 +25,7 @@ type ViewMode = 'accounts' | 'types';
 const typeLabel = (raw: string) => SUBTYPE_DISPLAY[raw] ?? raw;
 
 export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const [accounts, setAccounts] = useState<AccountBalance[]>([]);
   const [rows,     setRows]     = useState<NetWorthPeriod[]>([]);
@@ -35,7 +37,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [selectedIds,  setSelectedIds] = useState<Set<string> | null>(null);
 
   useEffect(() => {
-    void getAccountsWithBalances().then(({ accounts: a }) => setAccounts(a));
+    void track(getAccountsWithBalances()).then(({ accounts: a }) => setAccounts(a));
   }, [refreshKey]);
 
   const filterKey = selectedIds ? [...selectedIds].sort().join(',') : '';
@@ -46,7 +48,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const historyGuard = useLoadGuard();
   useEffect(() => {
     const token = historyGuard.begin();
-    void getNetWorthHistory(range, selectedIds ? [...selectedIds] : undefined).then((r) => {
+    void track(getNetWorthHistory(range, selectedIds ? [...selectedIds] : undefined)).then((r) => {
       if (!historyGuard.isLatest(token)) return;
       setRows(r);
       if (filterMode) {
@@ -237,6 +239,8 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     );
   }
 
+  if (loadError) return <LoadError message={loadError} />;
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <PageHeader current="networth" showHints={showHints} />
@@ -248,6 +252,7 @@ export function NetWorth({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && filterMode && (
         <Text dimColor>[↑↓] navigate  ·  [Space] toggle  ·  [a] all  ·  [f] done</Text>
       )}
+      <Text dimColor>Import history: Accounts → Add Data → [b]</Text>
       <Divider />
 
       {accounts.length === 0 ? (

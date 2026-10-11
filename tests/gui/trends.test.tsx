@@ -93,13 +93,13 @@ describe('GUI Trends', () => {
     await screen.findByRole('combobox');
     const barsBtn = await screen.findByRole('button', { name: 'Bars' });
     const lineBtn = screen.getByRole('button', { name: 'Line' });
-    expect(barsBtn.className).toContain('pillActive');
-    expect(lineBtn.className).not.toContain('pillActive');
+    expect(barsBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(lineBtn.getAttribute('aria-pressed')).toBe('false');
     await waitFor(() => expect(screen.getByText(/Click a bar/)).toBeTruthy());
 
     await userEvent.click(lineBtn);
-    expect(lineBtn.className).toContain('pillActive');
-    expect(barsBtn.className).not.toContain('pillActive');
+    expect(lineBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(barsBtn.getAttribute('aria-pressed')).toBe('false');
     await waitFor(() => expect(screen.getByText(/Click a point/)).toBeTruthy());
   });
 
@@ -115,6 +115,6 @@ describe('GUI Trends', () => {
     // Switching back to a non-stacked view brings the toggle back, defaulted to Bars.
     await userEvent.selectOptions(select, 'Expenses');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Line' })).toBeTruthy());
-    expect(screen.getByRole('button', { name: 'Bars' }).className).toContain('pillActive');
+    expect(screen.getByRole('button', { name: 'Bars' }).getAttribute('aria-pressed')).toBe('true');
   });
 });

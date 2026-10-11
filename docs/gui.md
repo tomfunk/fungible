@@ -4,6 +4,10 @@ The Electron desktop app shares the same `core/` logic and `~/.fungible/` data a
 
 The GUI does **not** start the MCP or HTTP API servers in the background — if you want them running alongside the desktop app, launch them separately with `fungible mcp` or `fungible api`.
 
+## Importing balance history
+
+Accounts → Add data → "Import balance history" opens a file picker for a CSV with `date,account,balance` columns, then shows a preview. Nothing is written until you confirm, and unmatched account names can be mapped to an existing account in the preview. Format and rules: [Importing balance history](keybindings.md#importing-balance-history).
+
 ## Install
 
 ### From a release

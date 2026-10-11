@@ -44,10 +44,6 @@ export type ImportRow = {
   present: number;
 };
 
-// dedupKey and assignOrdinals live in core/csv.ts: initDb's one-time backfill
-// needs them, and core/db.ts importing this module would close a cycle.
-export { dedupKey, assignOrdinals } from './csv.js';
-
 /** The transaction id for row `rowIndex` of import `importId`. Opaque and stable. */
 export const importTxId = (importId: number, rowIndex: number) => `csv-${importId}-${rowIndex}`;
 

@@ -22,6 +22,25 @@ export function isValidIsoDate(s: string): boolean {
 
 // ── Single-transaction mutations ───────────────────────────────────────────────
 
+/** Exclusive magnitude limit for a manually entered amount. */
+export const MAX_MANUAL_AMOUNT = 1e9;
+
+/**
+ * Validate and round a hand-entered amount to cents (half away from zero,
+ * never -0). The range check is on the rounded value, so 999999999.996 —
+ * which rounds up to the limit — is rejected.
+ */
+export function normalizeAmount(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    throw new Error('Transaction amount must be a finite number.');
+  }
+  const rounded = Math.sign(raw) * Math.round(Math.abs(raw) * 100) / 100 + 0;
+  if (Math.abs(rounded) >= MAX_MANUAL_AMOUNT) {
+    throw new Error('Transaction amount must be less than 1,000,000,000 in absolute value.');
+  }
+  return rounded;
+}
+
 /**
  * Insert a hand-entered transaction — for a real bank transaction Plaid's
  * `transactionsSync` never reports (a genuine feed gap, not something our
@@ -56,7 +75,8 @@ export async function addTransaction(input: {
   category: string;
   merchantName?: string;
 }): Promise<string> {
-  const { accountId, date, amount, category } = input;
+  const { accountId, date, category } = input;
+  const amount = normalizeAmount(input.amount);
   const name = input.name.trim();
   const merchantName = input.merchantName?.trim() || null;
 
@@ -147,7 +167,7 @@ export async function clearTransactionDate(id: string): Promise<void> {
 
 export async function setTransactionIgnored(id: string, ignored: boolean): Promise<void> {
   await db.execute({
-    sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
+    sql: "UPDATE transactions SET ignored = ? WHERE id = ? AND source IS NOT 'manual'",
     args: [ignored ? 1 : 0, id],
   });
 }
@@ -168,10 +188,40 @@ export async function deleteTransaction(id: string): Promise<void> {
 
 // ── Rule upserts ───────────────────────────────────────────────────────────────
 
+/**
+ * Release the manual pin on the transaction a rule suggestion came from, so it
+ * becomes rule-driven (category = what the rules yield, manual_category NULL).
+ * Call after the rule is written. Hand-entered rows (source='manual') have no
+ * raw category to fall back to, so they stay pinned; unpinned rows are left
+ * alone. Returns true when a pin was actually cleared.
+ */
+export async function releaseSourcePin(id: string): Promise<boolean> {
+  const res = await db.execute({
+    sql: "SELECT account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id = ? AND manual_category IS NOT NULL AND source IS NOT 'manual'",
+    args: [id],
+  });
+  if (res.rows.length === 0) return false;
+  const tx = res.rows[0] as unknown as {
+    account_id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number;
+  };
+  const rules = await loadCategoryRules();
+  await db.execute({
+    sql: 'UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?',
+    args: [categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id), id],
+  });
+  return true;
+}
+
+/**
+ * `sourceTransactionId`: when the rule comes from accepting a "save as rule"
+ * suggestion, the transaction the user just recategorized; its manual pin is
+ * released so the rule drives it (see releaseSourcePin).
+ */
 export async function upsertCategoryRule(
   pattern: string,
   matchType: 'name' | 'regex',
   category: string,
+  sourceTransactionId?: string | null,
 ): Promise<number> {
   // Validate before any write: a persisted bad regex would throw inside every
   // later rule application (sync, import, re-categorize), not just this save.
@@ -189,6 +239,7 @@ export async function upsertCategoryRule(
       args: [matchType, pattern, category],
     });
   }
+  if (sourceTransactionId) await releaseSourcePin(sourceTransactionId);
   return applyCategoriesToAll();
 }
 
@@ -227,11 +278,14 @@ export async function setTransactionCategoryBulk(ids: string[], category: string
   );
 }
 
+// Both bulk functions below skip source='manual' (hand-entered) rows, matching
+// the single-row UI guards: a manual row has no raw category to revert to and
+// is never ignorable, so a bulk selection must leave it untouched.
 export async function clearOverridesBulk(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
   const txRes = await db.execute({
-    sql: `SELECT id, account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL`,
+    sql: `SELECT id, account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL AND source IS NOT 'manual'`,
     args: ids,
   });
   const rows = txRes.rows as unknown as {
@@ -253,7 +307,7 @@ export async function setIgnoredBulk(ids: string[], ignored: boolean): Promise<v
   if (ids.length === 0) return;
   await db.batch(
     ids.map((id) => ({
-      sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
+      sql: "UPDATE transactions SET ignored = ? WHERE id = ? AND source IS NOT 'manual'",
       args: [ignored ? 1 : 0, id],
     })),
     'write',

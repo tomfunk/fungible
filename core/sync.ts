@@ -6,7 +6,7 @@ import { applyTagRules } from './tag-rules.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
 import { cascadeDeleteTransactionsSql } from './imports.js';
 import { decryptToken } from './crypto.js';
-import type { Transaction } from 'plaid';
+import type { AccountsGetResponse, Transaction, TransactionsSyncResponse } from 'plaid';
 import { describeSyncProgress, type SyncProgress, type SyncProgressFn } from './sync-progress.js';
 
 // Progress types/formatting live in the node-free core/sync-progress.ts so the
@@ -34,7 +34,10 @@ export async function syncTransactions(accessToken: string, itemId: string, onPr
     // backfill can spend a long time here on a new item.
     onProgress?.({ phase: 'transactions', page: ++page, fetched: added.length + modified.length });
     const response = await getPlaidClient().transactionsSync({ access_token: accessToken, cursor });
-    const data = response.data;
+    // Annotated explicitly: plaid@47's generated typings use a 4-parameter AxiosResponse,
+    // which the locked axios (3 params) cannot resolve, so `response.data` degrades to `any`
+    // under skipLibCheck. The annotation keeps the callbacks below typed regardless.
+    const data: TransactionsSyncResponse = response.data;
     added = added.concat(data.added);
     modified = modified.concat(data.modified);
     removedIds = removedIds.concat(data.removed.map((r) => r.transaction_id));
@@ -45,9 +48,10 @@ export async function syncTransactions(accessToken: string, itemId: string, onPr
   // Upsert accounts and snapshot balances
   onProgress?.({ phase: 'accounts' });
   const accountsResponse = await getPlaidClient().accountsGet({ access_token: accessToken });
+  const accountsData: AccountsGetResponse = accountsResponse.data;
   const today = new Date().toISOString().slice(0, 10);
   await db.batch(
-    accountsResponse.data.accounts.flatMap((acct) => {
+    accountsData.accounts.flatMap((acct) => {
       const rows: { sql: string; args: (string | number | null)[] }[] = [
         {
           sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id)

@@ -210,15 +210,33 @@ async function* streamOpenAI(
   // Accumulate tool call arguments across chunks
   const toolCallAccum: Record<number, { id: string; name: string; args: string }> = {};
 
+  // Emit accumulated tool calls once, then clear. When the response was cut off
+  // (finish_reason 'length' or the stream ended early) a call with unparseable
+  // arguments is dropped rather than run with empty input.
+  function* flushToolCalls(truncated: boolean): Generator<StreamChunk> {
+    for (const tc of Object.values(toolCallAccum)) {
+      let input: Record<string, unknown> = {};
+      try {
+        input = tc.args ? JSON.parse(tc.args) : {};
+      } catch {
+        if (truncated) continue;
+      }
+      if (truncated && !tc.name) continue;
+      yield { type: 'tool_use', id: tc.id, name: tc.name, input };
+    }
+    for (const k of Object.keys(toolCallAccum)) delete toolCallAccum[Number(k)];
+  }
+
   for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta;
+    const choice = chunk.choices?.[0];
+    const delta = choice?.delta;
     if (!delta) continue;
 
-    if (delta.content) {
+    if (delta?.content) {
       yield { type: 'text', delta: delta.content };
     }
 
-    if (delta.tool_calls) {
+    if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
         const idx = tc.index;
         if (!toolCallAccum[idx]) {
@@ -232,15 +250,12 @@ async function* streamOpenAI(
       }
     }
 
-    const finishReason = chunk.choices[0]?.finish_reason;
-    if (finishReason === 'tool_calls' || finishReason === 'stop') {
-      for (const [, tc] of Object.entries(toolCallAccum)) {
-        let input: Record<string, unknown> = {};
-        try { input = tc.args ? JSON.parse(tc.args) : {}; } catch { /* ignore */ }
-        yield { type: 'tool_use', id: tc.id, name: tc.name, input };
-      }
-    }
+    const finishReason = choice?.finish_reason;
+    if (finishReason) yield* flushToolCalls(finishReason === 'length');
   }
+
+  // Stream ended without a finish reason: whatever is left was cut off.
+  yield* flushToolCalls(true);
 
   yield { type: 'done' };
 }

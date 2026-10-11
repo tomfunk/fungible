@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import {
@@ -17,6 +17,7 @@ import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, severityColor }
 import { SectionHeader, PageHeader, DialRow, usePagination } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -146,6 +147,7 @@ function historyValueColor(id: HistoryMetricId, v: number | null): string | unde
 const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, retirement: 0, totalDebt: 0, loanDebt: 0, netWorth: 0, basis: 'trailing-365d', basisLabel: BASIS_LABEL['trailing-365d'] };
 
 export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const [data, setData] = useState<HealthData>(DEFAULT_HEALTH);
 
@@ -157,7 +159,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const [editBuffer, setEditBuffer]     = useState('');
 
   useEffect(() => {
-    void Promise.all([loadHealthData(), getSetting(PRETAX_MONTHLY_KEY)]).then(([d, pretax]) => {
+    void track(Promise.all([loadHealthData(), getSetting(PRETAX_MONTHLY_KEY)])).then(([d, pretax]) => {
       setData(d);
       setMonthlySpend(Math.max(SPEND_STEP, Math.round(d.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP));
       setMonthlySavings(Math.round(d.monthlySavings / SPEND_STEP) * SPEND_STEP);
@@ -180,7 +182,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const historyGuard = useLoadGuard();
   useEffect(() => {
     const token = historyGuard.begin();
-    void getHealthHistory(historyRange).then((rows) => {
+    void track(getHealthHistory(historyRange)).then((rows) => {
       if (!historyGuard.isLatest(token)) return;
       setHistoryRows(rows);
       setHistoryCursor(Math.max(0, rows.length - 1));
@@ -292,7 +294,6 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const {
-    annualSpend,
     fireNumber,
     fireProgress,
     cashRunwayMonths: cashMonths,
@@ -340,6 +341,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const historyMax = Math.max(...historyValues.filter((v): v is number => v !== null).map(Math.abs), 1);
   const { visible: visibleHistory, pageStart: historyPageStart } = usePagination(historyPoints, historyCursor, HISTORY_PAGE);
   const historyLabelW = periodLabelWidth(historyRange);
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

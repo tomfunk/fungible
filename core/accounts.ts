@@ -1,12 +1,15 @@
+import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
 import { parseDate, assignOrdinals, dedupKey } from './csv.js';
+import { deleteDuplicatesKeepingEdits } from './dedup.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
-import { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
+import { resolveCsvAmount } from './csv-amount.js';
+import type { CsvSkippedRow } from './csv-import-copy.js';
 
-export { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
+export { resolveCsvAmount } from './csv-amount.js';
 
 export async function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): Promise<void> {
   await db.execute({ sql: 'UPDATE accounts SET type = ?, subtype = ? WHERE id = ?', args: [type, subtype, id] });
@@ -37,13 +40,13 @@ export async function updateAccountValue(id: string, value: number): Promise<voi
 }
 
 export async function createCsvAccount(name: string, type: string, subtype: string | null): Promise<string> {
-  const id = `csv-acct-${Date.now()}`;
+  const id = `csv-acct-${randomUUID()}`;
   await db.execute({ sql: 'INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)', args: [id, name.trim(), type, subtype] });
   return id;
 }
 
 export async function createManualAccount(name: string, value: number): Promise<string> {
-  const id = `manual-${Date.now()}`;
+  const id = `manual-${randomUUID()}`;
   const today = new Date().toISOString().slice(0, 10);
   await db.batch([
     { sql: 'INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)', args: [id, name.trim(), 'other', 'manual'] },
@@ -112,7 +115,9 @@ export async function importCsvTransactions(
   accountId: string,
   cfg: ImportConfig,
   file: { name: string; hash: string },
-): Promise<{ imported: number; skipped: number; importId: number }> {
+  /** 1-based source line of each row (ParsedCsv.lines); defaults to rowIndex + 2. */
+  lines?: number[],
+): Promise<{ imported: number; skipped: number; skippedRows: CsvSkippedRow[]; importId: number }> {
   const { dateCol, nameCol } = cfg;
   const rules = await loadCategoryRules();
 
@@ -121,13 +126,19 @@ export async function importCsvTransactions(
   // the row's position in the file and becomes part of its transaction id, which
   // keeps an id traceable back to the line it came from.
   const parsed: { rowIndex: number; date: string; name: string; amount: number }[] = [];
-  let skipped = 0;
+  // Bad rows are skipped and reported, never written: ordinals are assigned on
+  // the good rows only, so a bad row cannot shift a good row's dedup key.
+  const skippedRows: CsvSkippedRow[] = [];
+  const skip = (rowIndex: number, reason: CsvSkippedRow['reason']): CsvSkippedRow =>
+    ({ rowIndex, line: lines?.[rowIndex] ?? rowIndex + 2, reason });
   csvRows.forEach((row, rowIndex) => {
-    const rawDate = row[dateCol] ?? '';
-    const name = row[nameCol] ?? '';
+    const name = (row[nameCol] ?? '').trim();
+    if (!name) { skippedRows.push(skip(rowIndex, 'missing_name')); return; }
+    const date = parseDate(row[dateCol] ?? '');
+    if (date === null) { skippedRows.push(skip(rowIndex, 'bad_date')); return; }
     const amount = resolveCsvAmount(row, cfg);
-    if (!rawDate || !name || isNaN(amount)) { skipped++; return; }
-    parsed.push({ rowIndex, date: parseDate(rawDate), name, amount });
+    if (!amount.ok) { skippedRows.push(skip(rowIndex, amount.reason)); return; }
+    parsed.push({ rowIndex, date, name, amount: amount.amount });
   });
 
   // Opened before the rows, because its id is part of every transaction id.
@@ -154,9 +165,13 @@ export async function importCsvTransactions(
       newIds.push(id);
       if (minDate === null || row.date < minDate) minDate = row.date;
       if (maxDate === null || row.date > maxDate) maxDate = row.date;
-    } else skipped++;
+    } else skippedRows.push(skip(row.rowIndex, 'duplicate'));
   }
+  skippedRows.sort((a, b) => a.rowIndex - b.rowIndex);
+  const skipped = skippedRows.length;
 
+  // An all-bad file still gets its log row (imported 0, skipped N): the attempt
+  // is recorded and re-picking the same file is recognised.
   await closeImport(importId, { imported, skipped, minDate, maxDate });
   // Tag only genuinely new rows so a tag a user removed never returns.
   await applyTagRules({ txIds: newIds });
@@ -164,7 +179,7 @@ export async function importCsvTransactions(
   // net worth/health queries inner-join on it, so the account doesn't show up
   // as zero or stale, it's just silently absent (#200).
   await recomputeAccountBalance(accountId);
-  return { imported, skipped, importId };
+  return { imported, skipped, skippedRows, importId };
 }
 
 export async function deleteDuplicate(csvId: string): Promise<void> {
@@ -172,7 +187,5 @@ export async function deleteDuplicate(csvId: string): Promise<void> {
 }
 
 export async function deleteAllDuplicates(csvIds: string[]): Promise<void> {
-  if (csvIds.length === 0) return;
-  const placeholders = csvIds.map(() => '?').join(',');
-  await db.execute({ sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: csvIds });
+  await deleteDuplicatesKeepingEdits(csvIds);
 }

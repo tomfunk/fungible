@@ -7,8 +7,8 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const Q_FROM = ['01', '04', '07', '10'];
 const Q_TO   = ['03', '06', '09', '12'];
 
-export type FlexTier = 'fixed' | 'flexible' | 'discretionary';
-export type ViewMode = 'expenses' | 'income' | 'net' | 'category' | 'flex' | 'flexbreakdown';
+type FlexTier = 'fixed' | 'flexible' | 'discretionary';
+type ViewMode = 'expenses' | 'income' | 'net' | 'category' | 'flex' | 'flexbreakdown';
 export type View = { mode: ViewMode; category: string | null; flex: FlexTier | null; label: string };
 export type PeriodRow = {
   label: string; from: string; to: string; total: number;

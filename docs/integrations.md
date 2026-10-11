@@ -23,12 +23,29 @@ curl -X POST http://localhost:3456/tools/spending_summary \
   -d '{"year": 2026, "month": 5}'
 ```
 
+Requests are checked in this order:
+
+| Status | Cause |
+|--------|-------|
+| 403 | `Host` or `Origin` is not local (`localhost`, `127.0.0.1`, `[::1]`). Blocks browsers on other origins and DNS rebinding. |
+| 401 | `FUNGIBLE_API_KEY` is set and the `Authorization: Bearer <key>` header is missing or wrong. Applies to `/notify` too. |
+| 404 | Unknown route or tool. |
+| 415 | `Content-Type` is not `application/json` (charset is fine). Required on every POST. |
+| 413 | Body over 1 MiB. |
+| 400 | Body is malformed JSON, or valid JSON that is not an object. An empty body means no arguments. |
+| 500 | The tool threw. The response is a generic `internal error`; details go to the server log. |
+
+Query strings on `/tools/<name>` are accepted and ignored.
+
 **Configuration** (in `~/.fungible/.env`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FUNGIBLE_API_KEY` | _(none)_ | Bearer token required on all requests. If unset, auth is skipped (dev only). |
+| `FUNGIBLE_API_KEY` | _(none)_ | Bearer token required on all requests, including `/notify`, and on the HTTP MCP server. Never generated for you; if unset, auth is skipped, which is fine on loopback only. |
+| `FUNGIBLE_BIND_HOST` | `127.0.0.1` | Address both HTTP servers bind to. A concrete address is accepted as a `Host`; `0.0.0.0` is not. |
 | `FUNGIBLE_API_PORT` | `3456` | Port to listen on. |
+
+Binding to a non-local address without a key logs a warning here. Prefer leaving it on loopback.
 
 Available tools: same set as the MCP server below.
 
@@ -40,7 +57,7 @@ Exposes your financial data to Claude via the [Model Context Protocol](https://m
 
 - **stdio** — Claude Desktop spawns `fungible mcp` as a child process. Always works, even when the TUI isn't open. When the TUI is running, writes notify it automatically so the UI refreshes. Use this if you're not sure which to pick.
 
-- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open. The GUI does not start this; use stdio with the GUI.
+- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open. It enforces the same Host/Origin, `Content-Type: application/json`, 1 MiB and `FUNGIBLE_API_KEY` rules as the HTTP API (clients must then send the `Authorization: Bearer` header). With `FUNGIBLE_BIND_HOST` set to a non-local address it refuses to start unless `FUNGIBLE_API_KEY` is set; a concrete bind address is accepted as a `Host`, while `0.0.0.0` needs its hostnames passed as `allowedHosts` in code. The GUI does not start this; use stdio with the GUI.
 
 Config file location:
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
@@ -109,9 +126,10 @@ Same set across MCP and HTTP.
 | `tag_transaction` | Add or remove a tag on a transaction |
 | `get_balances` | Current balances, net worth, total cash and liquid |
 | `get_financial_health` | Runway, FIRE number, years to retirement |
-| `get_drift` | Per-category spending deltas vs prior period, last year, and typical-month avg (12 complete calendar periods, elapsed-day-clipped) |
 | `get_trends` | Month-by-month spending trends for the last N months |
 | `get_net_worth_history` | Net worth over time grouped by day, week, month, quarter, or year |
+| `preview_balance_import` | Dry-run a balance-history CSV (inline `csv`, optional `account_map`, `today`); read-only |
+| `import_balance_history` | Import balance history from inline CSV into existing accounts; write tool (the in-app agent asks for confirmation first). Run the preview first |
 | `get_finance_guide` | Opinionated personal finance guidance by topic |
 | `get_screen` | Return the current TUI screen content exactly as the user sees it |
 | `generate_canvas` | Prepare context and schema to build a Canvas; call then render with `show_canvas` |

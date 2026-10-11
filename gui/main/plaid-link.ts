@@ -1,8 +1,10 @@
-import http from 'node:http';
 import { shell } from 'electron';
 import {
-  clampDaysRequested, completeLink, createFlowLinkToken, linkPage, successPage,
+  clampDaysRequested, completeLink, createFlowLinkToken, linkPage, oauthReturnPage, successPage,
 } from '../../core/plaid-link-flow.js';
+import {
+  createLinkServer, linkListenErrorMessage, linkRoute, linkServerOrigin, loadLinkTls, resolveOAuthRedirect,
+} from '../../core/plaid-oauth.js';
 import { notifyChange } from '../../core/refresh.js';
 import { isPlaidConfigured } from '../../core/plaid.js';
 
@@ -65,16 +67,28 @@ export function runPlaidLink(
   activeLink = new Promise((resolve, reject) => {
     void (async () => {
       const days = daysRequested !== undefined ? clampDaysRequested(daysRequested) : undefined;
-      const linkToken = await createFlowLinkToken({ updateItemId, daysRequested: days });
+      // Checked before Plaid is contacted; a bad PLAID_REDIRECT_URI or certificate
+      // rejects through the .catch below.
+      const redirect = resolveOAuthRedirect();
+      const tls = loadLinkTls(redirect);
+      const linkToken = await createFlowLinkToken({ updateItemId, daysRequested: days, redirectUri: redirect?.uri });
 
-      const server = http.createServer((req, res) => {
-        if (req.method === 'GET' && req.url === '/') {
+      const server = createLinkServer((req, res) => {
+        const route = linkRoute(req.method, req.url, redirect);
+        if (route === 'page') {
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(linkPage(linkToken, { updateMode: !!updateItemId }));
           return;
         }
 
-        if (req.method === 'POST' && req.url === '/callback') {
+        // An OAuth bank that could not use a popup sends the whole tab back here.
+        if (route === 'oauth-return') {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(oauthReturnPage(linkToken, { updateMode: !!updateItemId }));
+          return;
+        }
+
+        if (route === 'callback') {
           let body = '';
           let overflow = false;
           req.on('data', (chunk) => {
@@ -108,7 +122,7 @@ export function runPlaidLink(
 
         res.writeHead(404);
         res.end();
-      });
+      }, tls);
 
       const timeout = setTimeout(() => {
         finish();
@@ -128,17 +142,21 @@ export function runPlaidLink(
         reject(new Error('Plaid link cancelled'));
       };
 
-      server.listen(0, '127.0.0.1', () => {
+      // A redirect pins the port, because the bank has to find this server again.
+      server.listen(redirect?.port ?? 0, '127.0.0.1', () => {
         const addr = server.address();
         const port = typeof addr === 'object' && addr ? addr.port : 0;
         // 127.0.0.1, not localhost: the server listens IPv4-only, and on some
         // systems localhost resolves to ::1 first and the connection fails.
-        void shell.openExternal(`http://127.0.0.1:${port}`);
+        // A configured redirect is the exception: Plaid's allowlist and the
+        // certificate name localhost, so the browser has to use that name and
+        // rely on falling back from ::1 to 127.0.0.1, as scripts/link.ts does.
+        void shell.openExternal(linkServerOrigin(redirect, port, '127.0.0.1'));
       });
 
-      server.on('error', (err) => {
+      server.on('error', (err: NodeJS.ErrnoException) => {
         finish();
-        reject(err);
+        reject(new Error(linkListenErrorMessage(err, redirect?.port ?? 0, redirect)));
       });
     })().catch((err) => {
       activeLink = null;

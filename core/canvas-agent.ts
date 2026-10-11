@@ -1,4 +1,3 @@
-import { streamResponse } from './llm-provider.js';
 import { loadHealthData, computeSavingsRate } from './health.js';
 import { loadProfile } from './profile.js';
 import { fmt, fmtCompact } from './fmt.js';
@@ -31,7 +30,7 @@ export const BINDING_KEYS = [
   'spouse_age',
 ] as const;
 
-export type BindingKey = typeof BINDING_KEYS[number];
+type BindingKey = typeof BINDING_KEYS[number];
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
@@ -522,46 +521,3 @@ const CANVAS_TOOL = {
     },
   },
 };
-
-// The tool schema deliberately doesn't ask the LLM for a row `id` (see the `list`
-// schema's rows description above) — ids are mechanical and easy to get wrong or
-// collide, so they're synthesized here, once, right after generation. This is a
-// one-time assignment: it must never be re-run against an already-generated spec
-// (e.g. when persisting a later row edit), since `${list.key}_${index}` would then
-// reassign ids to their *current* array position — defeating the whole point of a
-// stable id that survives add/remove (see ListRowDef.id's doc comment).
-function synthesizeListRowIds(spec: CanvasSpec): CanvasSpec {
-  return {
-    ...spec,
-    elements: spec.elements.map((el) => {
-      if (el.type !== 'list') return el;
-      return {
-        ...el,
-        list: {
-          ...el.list,
-          rows: el.list.rows.map((row, i) => ({ ...row, id: `${el.list.key}_${i}` })),
-        },
-      };
-    }),
-  };
-}
-
-export async function generateCanvas(
-  prompt: string,
-  onStatus: (msg: string) => void,
-): Promise<CanvasSpec> {
-  const { system, tool } = await loadCanvasContext();
-
-  onStatus('generating…');
-
-  let spec: CanvasSpec | null = null;
-
-  for await (const chunk of streamResponse(system, [{ role: 'user', content: prompt }], [tool])) {
-    if (chunk.type === 'tool_use' && chunk.name === 'render_canvas') {
-      spec = chunk.input as unknown as CanvasSpec;
-    }
-  }
-
-  if (!spec) throw new Error('Canvas generation failed — no spec returned.');
-  return synthesizeListRowIds(spec);
-}

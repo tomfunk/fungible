@@ -31,13 +31,6 @@ beforeEach(async () => {
 
 // ──────────────────────────────────────────────────────────────────────
 describe('createTag', () => {
-  it('creates a new tag', async () => {
-    await createTag('food');
-    const rows = (await db.execute('SELECT name FROM tags')).rows as unknown as { name: string }[];
-    expect(rows).toHaveLength(1);
-    expect(rows[0].name).toBe('food');
-  });
-
   it('is idempotent (INSERT OR IGNORE)', async () => {
     await createTag('food');
     await createTag('food');

@@ -44,6 +44,7 @@ import {
   setIgnoredBulk,
   addTransaction,
 } from '../../core/transactions.js';
+import { exportTransactionsCsv } from '../../core/export.js';
 import {
   getTagOptions,
   getTransactionTagIds,
@@ -97,11 +98,12 @@ import {
 import {
   getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
 } from '../../core/imports.js';
+import { previewBalanceImport, commitBalanceImport } from '../../core/balance-import.js';
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
-import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import { syncAll, deleteSyncCursor } from '../../core/sync.js';
 import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
+import { withSyncProgress, isSyncInProgress } from './sync-progress.js';
 import {
   loadHistory,
   deleteHistoryEntry,
@@ -156,6 +158,9 @@ export const registry = {
     clearOverridesBulk,
     setIgnoredBulk,
     addTransaction,
+    // Named to match the TUI's core import 1:1 (gui-bridge-parity.test.ts
+    // matches on literal identifier name, not just presence in the registry).
+    exportTransactionsCsv,
   },
   tags: {
     getTagOptions,
@@ -224,8 +229,9 @@ export const registry = {
     deleteImport,
     moveImport,
   },
-  categorize: {
-    applyCategoriesToAll,
+  balanceImport: {
+    previewBalanceImport,
+    commitBalanceImport,
   },
   profile: {
     loadProfile,
@@ -257,7 +263,9 @@ export const registry = {
   sync: {
     // Wrap so every user-triggered sync records its outcome in the shared store,
     // which drives the renderer banner + row badges via the sync-status push.
-    syncAll: async (force?: boolean, itemIds?: string[]) => {
+    // Also wrapped in withSyncProgress so every call here — whichever screen or
+    // button triggered it — is reflected by the global sync-progress push too.
+    syncAll: async (force?: boolean, itemIds?: string[]) => withSyncProgress(async () => {
       const results = await syncAll(force, itemIds);
       // A scoped run only speaks for the items it attempted — merge, so an
       // institution this run never touched keeps its failure badge. Only a
@@ -265,20 +273,26 @@ export const registry = {
       if (itemIds && itemIds.length > 0) mergeSyncResult(results, itemIds);
       else setSyncResult(results);
       return results;
-    },
+    }),
     // Delete one item's cursor and resync it, so Plaid resends its full history.
     // Composed here rather than in the renderer so the two steps can't be
     // interleaved with another sync, and merged rather than set so the other
     // institutions keep their failure badges.
-    deleteCursorAndResync: async (itemId: string) => {
+    deleteCursorAndResync: async (itemId: string) => withSyncProgress(async () => {
       await deleteSyncCursor(itemId);
       const results = await syncAll(true, [itemId]);
+      // syncAll returns [] for an item that does not exist; surface that rather
+      // than resolving undefined and merging [] (which would clear its badge).
+      if (results.length === 0) throw new Error(`Unknown connection: ${itemId}`);
       mergeSyncResult(results, [itemId]);
       return results[0];
-    },
+    }),
     // Initial hydration for a renderer that mounts after a background sync failed.
     getStatus: async () => getSyncFailures(),
     getLastSyncedAt,
+    // Initial hydration for the sync-progress hook: covers a sync (e.g. the
+    // startup one) that was already running before a provider subscribed.
+    isSyncing: async () => isSyncInProgress(),
   },
   config: {
     writeEnv: async (updates: EnvUpdates): Promise<{ written: string[] }> => {

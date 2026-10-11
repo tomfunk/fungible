@@ -7,7 +7,7 @@ import 'dotenv/config';
 import { streamResponse, makeAssistantMessage, detectProvider, getProviderModel } from './llm-provider.js';
 import type { Message, ContentBlock, ToolDef } from './llm-provider.js';
 import { APP_CONTEXT } from './agent-context.js';
-import { TOOL_DEFS, WRITE_TOOLS, describeToolCall, executeTool } from './tools.js';
+import { TOOL_DEFS, WRITE_TOOLS, describeToolCall, describeToolCallDetailed, executeTool } from './tools.js';
 import { buildCanvasContextSections } from './canvas-history.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ async function dispatchTool(
 
   // Write tools — confirm before executing
   if (WRITE_TOOLS.has(name)) {
-    const confirmed = await callbacks.onConfirm(describeToolCall(name, input));
+    const confirmed = await callbacks.onConfirm(await describeToolCallDetailed(name, input));
     if (!confirmed) return 'Cancelled.';
   }
 
@@ -137,6 +137,9 @@ async function dispatchTool(
 }
 
 // ─── Agent loop ───────────────────────────────────────────────────────────────
+
+/** Upper bound on model/tool round-trips in one turn. */
+export const MAX_AGENT_ITERATIONS = 25;
 
 /**
  * Run one user turn through the agent loop.
@@ -152,7 +155,13 @@ export async function runAgentTurn(
 
   const system = buildSystemPrompt();
 
-  while (true) {
+  for (let iteration = 0; ; iteration++) {
+    if (iteration >= MAX_AGENT_ITERATIONS) {
+      const notice = `\n\n(Stopped after ${MAX_AGENT_ITERATIONS} tool-use rounds without finishing. Ask me to continue if you want me to keep going.)`;
+      callbacks.onText(notice);
+      history.push(makeAssistantMessage([{ type: 'text', text: notice.trim() }]));
+      break;
+    }
     const currentBlocks: ContentBlock[] = [];
     let   currentText = '';
 

@@ -16,7 +16,7 @@ import { Rules } from '../../gui/renderer/src/screens/Rules.js';
 
 beforeEach(async () => {
   for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
-                     'category_rules', 'name_rules', 'hidden_categories', 'balance_history',
+                     'category_rules', 'name_rules', 'tag_rules', 'hidden_categories', 'balance_history',
                      'household_members']) {
     await db.execute(`DELETE FROM ${tbl}`);
   }
@@ -229,6 +229,17 @@ describe('GUI Rules', () => {
       const row = screen.getByText('Grocery').closest('tr')!;
       expect(Array.from(row.querySelectorAll('button')).some((b) => b.textContent === 'hidden')).toBe(true);
     });
+    // Persisted: Grocery (and only Grocery) is now in hidden_categories.
+    const hidden = await db.execute('SELECT category FROM hidden_categories');
+    expect(hidden.rows.map((r) => r.category)).toEqual(['Grocery']);
+
+    // Toggling again un-hides it.
+    await userEvent.click(
+      Array.from(screen.getByText('Grocery').closest('tr')!.querySelectorAll('button')).find((b) => b.textContent === 'hidden')!,
+    );
+    await waitFor(async () => {
+      expect((await db.execute('SELECT category FROM hidden_categories')).rows).toHaveLength(0);
+    });
   });
 
   it('changes a category flexibility inline', async () => {
@@ -242,6 +253,92 @@ describe('GUI Rules', () => {
       const after = screen.getByText('Shopping').closest('tr')!.querySelector('select') as HTMLSelectElement;
       expect(after.value).toBe('fixed');
     });
+    const res = await db.execute('SELECT name, flexibility FROM categories ORDER BY name');
+    expect(Object.fromEntries(res.rows.map((r) => [r.name, r.flexibility]))).toEqual({
+      'Bills & Utilities': 'fixed',
+      Dining: 'discretionary',
+      Grocery: 'flexible',
+      Income: null,
+      Shopping: 'fixed', // changed
+    });
+  });
+
+  it('clearing a category flexibility to "—" stores NULL', async () => {
+    renderScreen(<Rules />);
+    await waitFor(() => expect(screen.getByText('Whole Foods')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Categories (5)' }));
+    await waitFor(() => expect(screen.getByText('Dining')).toBeTruthy());
+    const select = screen.getByText('Dining').closest('tr')!.querySelector('select') as HTMLSelectElement;
+    await userEvent.selectOptions(select, '');
+    await waitFor(async () => {
+      const res = await db.execute("SELECT flexibility FROM categories WHERE name = 'Dining'");
+      expect(res.rows[0].flexibility).toBeNull();
+    });
+  });
+
+  it('creates a category via the Add modal', async () => {
+    renderScreen(<Rules />);
+    await waitFor(() => expect(screen.getByText('Whole Foods')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Categories (5)' }));
+    await userEvent.click(screen.getByRole('button', { name: '+ Add' }));
+    await userEvent.type(screen.getByPlaceholderText('Category name'), '  Pets  ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByText('Created "Pets"')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Categories (6)' })).toBeTruthy();
+    const res = await db.execute("SELECT name, flexibility FROM categories WHERE name LIKE '%Pets%'");
+    expect(res.rows.map((r) => ({ ...r }))).toEqual([{ name: 'Pets', flexibility: null }]);
+  });
+
+  it('renames a category: transactions, the rule and flexibility follow it', async () => {
+    await db.execute("UPDATE transactions SET manual_category = 'Grocery' WHERE id = 'tx-groc-1'");
+    renderScreen(<Rules />);
+    await waitFor(() => expect(screen.getByText('Whole Foods')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Categories (5)' }));
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+    await userEvent.click(
+      Array.from(screen.getByText('Grocery').closest('tr')!.querySelectorAll('button')).find((b) => b.textContent === 'rename')!,
+    );
+    const input = screen.getByPlaceholderText('Category name');
+    await userEvent.clear(input);
+    await userEvent.type(input, 'Food');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByText('Category renamed')).toBeTruthy());
+
+    const tx = await db.execute("SELECT id, category FROM transactions WHERE id LIKE 'tx-groc%' ORDER BY id");
+    expect(tx.rows.map((r) => r.category)).toEqual(['Food', 'Food', 'Food']);
+    // The pinned (manual) category follows the rename too.
+    const pinned = await db.execute("SELECT manual_category FROM transactions WHERE id = 'tx-groc-1'");
+    expect(pinned.rows[0].manual_category).toBe('Food');
+    const cats = await db.execute('SELECT name, flexibility FROM categories WHERE name IN (\'Grocery\', \'Food\')');
+    expect(cats.rows.map((r) => ({ ...r }))).toEqual([{ name: 'Food', flexibility: 'flexible' }]);
+    const rule = await db.execute('SELECT category FROM category_rules');
+    expect(rule.rows.map((r) => r.category)).toEqual(['Food']);
+    // Other categories untouched.
+    const other = await db.execute("SELECT category FROM transactions WHERE id = 'tx-dining-1'");
+    expect(other.rows[0].category).toBe('Dining');
+  });
+
+  it('deleting a category resets its transactions to Uncategorized and drops it', async () => {
+    await db.execute("INSERT INTO hidden_categories (category) VALUES ('Dining')");
+    await db.execute("UPDATE transactions SET manual_category = 'Dining' WHERE id = 'tx-dining-1'");
+    renderScreen(<Rules />);
+    await waitFor(() => expect(screen.getByText('Whole Foods')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Categories (5)' }));
+    await waitFor(() => expect(screen.getByText('Dining')).toBeTruthy());
+    await userEvent.click(
+      Array.from(screen.getByText('Dining').closest('tr')!.querySelectorAll('button')).find((b) => b.textContent === 'delete')!,
+    );
+    await waitFor(() => expect(screen.getByText(/Deleted "Dining"/)).toBeTruthy());
+
+    const tx = await db.execute("SELECT id, category, manual_category FROM transactions WHERE id LIKE 'tx-dining%' ORDER BY id");
+    expect(tx.rows.map((r) => [r.id, r.category, r.manual_category])).toEqual([
+      ['tx-dining-1', 'Uncategorized', null],
+      ['tx-dining-apr', 'Uncategorized', null],
+    ]);
+    expect((await db.execute("SELECT 1 FROM categories WHERE name = 'Dining'")).rows).toHaveLength(0);
+    expect((await db.execute("SELECT 1 FROM hidden_categories WHERE category = 'Dining'")).rows).toHaveLength(0);
+    // Unrelated categories keep their rows.
+    expect((await db.execute("SELECT category FROM transactions WHERE id = 'tx-shopping'")).rows[0].category).toBe('Shopping');
   });
 
   it('shows uncategorized count when present', async () => {
