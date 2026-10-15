@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { encryptToken } from './crypto.js';
 import { DATA_DIR } from './paths.js';
-import { SCHEMA_USER_VERSION } from './schema-version.js';
+import { BASE_USER_VERSION } from './schema-version.js';
 import { registerInUse } from './in-use.js';
 
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
@@ -385,6 +385,6 @@ export async function initDb() {
   // Never lowers or rewrites a non-zero value.
   const uv = await db.execute('PRAGMA user_version');
   if (Number((uv.rows[0] as unknown as { user_version: number | bigint }).user_version) === 0) {
-    await db.execute(`PRAGMA user_version = ${SCHEMA_USER_VERSION}`);
+    await db.execute(`PRAGMA user_version = ${BASE_USER_VERSION}`);
   }
 }
