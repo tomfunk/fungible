@@ -92,6 +92,9 @@ describe('CSV rows and imports sync', () => {
     const link = await q<{ transaction_id: string }>(a.client, 'SELECT transaction_id FROM transaction_tags');
     expect(link).toEqual([{ transaction_id: after.find((t) => t.dedup_key === legacy[0].dedup_key)!.id }]);
     expect(server.liveRows(USER, 'transaction_tags')).toHaveLength(1);
+    // Re-keying is bookkeeping: no delete (or delete+insert pair) for the link.
+    expect(await q(a.client, `SELECT op_id FROM _oplog WHERE tbl = 'transaction_tags' AND kind = 'delete'`)).toEqual([]);
+    expect(server.opsOf(USER).filter((o) => o.tbl === 'transaction_tags')).toHaveLength(1);
     expect(listSnapshots(a.dir).map((s) => s.manifest.reason)).toContain('pre-adopt-sync');
     expect((await getSyncInfo(a.client)).localOnlyCount).toBe(0);
     expect(server.liveRows(USER, 'imports')).toHaveLength(1);

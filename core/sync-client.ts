@@ -365,7 +365,12 @@ async function resolveForWire(
       if (!acct) return { moot: 'account_gone' };
       if (!acct.client) return { moot: 'not_client_owned' };
       const wire = acct.wire_id ?? pk.wire;
-      return wire == null ? { held: 'no_derived_id' } : withFields({ account_id: wire, date: pk.date });
+      if (wire == null) return { held: 'no_derived_id' };
+      // The owner column is not inherited from the account: inserts must carry
+      // it (an update may too, it must equal the stored value).
+      const res = withFields({ account_id: wire, date: pk.date });
+      if ('wire' in res && res.wire.kind === 'upsert') res.wire.fields = { ...res.wire.fields, origin: 'client' };
+      return res;
     }
     case 'transaction_tags': {
       if (pk.tag_id == null) {
@@ -465,7 +470,7 @@ async function push(c: Client, userId: string, deviceId: string): Promise<PushSt
   const sendable: { wire: WireOp; row: Row }[] = [];
   for (const row of pending) {
     if (cascadeIds.has(String(row.op_id))
-        || (row.tbl === 'transaction_tags' && cascadedTx.has(String(JSON.parse(String(row.pk)).transaction_id)))) {
+        || (row.tbl === 'transaction_tags' && row.kind !== 'delete' && cascadedTx.has(String(JSON.parse(String(row.pk)).transaction_id)))) {
       await c.execute({ sql: `UPDATE _oplog SET pushed = ${OP_MOOT}, reason = 'cascade' WHERE op_id = ?`, args: [String(row.op_id)] });
       continue;
     }

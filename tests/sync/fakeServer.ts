@@ -302,7 +302,12 @@ export class FakeServer {
       const acct = String(op.pk.account_id);
       if (u.plaid.accounts.has(acct)) return 'forbidden_owner';
       if (op.kind === 'upsert') {
-        for (const f of Object.keys(fields)) if (f !== 'balance') return 'forbidden_field';
+        for (const f of Object.keys(fields)) if (f !== 'balance' && f !== 'origin') return 'forbidden_field';
+        const cur = u.rows.get(rowKey('balance_history', op.pk));
+        const stored = cur?.fields.origin?.v;
+        if (stored === undefined && fields.origin === undefined) return 'invalid_source';
+        if (fields.origin !== undefined && fields.origin !== 'client') return fields.origin === 'plaid' ? 'forbidden_owner' : 'invalid_source';
+        if (stored !== undefined && fields.origin !== undefined && fields.origin !== stored) return 'invalid_source';
         if ('balance' in fields && badAmount(fields.balance)) return 'invalid_amount';
       }
       if (!this.liveClientAccount(u, acct)) return op.kind === 'delete' ? null : 'row_missing';

@@ -286,8 +286,56 @@ describe('server behaviours the client must survive', () => {
     expect(tx('manual-1', { ...base, source: 'manual', category: 'Fees' })).toBe('forbidden_field');
     expect(tx('manual-1', { ...base, source: 'manual' })).toBe('accepted');
     expect(tx('manual-1', { source: 'csv' })).toBe('invalid_source'); // owner immutable
-    expect(inj({ op_id: 'bal', tbl: 'balance_history', pk: { account_id: 'acct-1', date: '2026-01-01' }, kind: 'upsert', fields: { balance: 1e13 }, hlc: hlc(7) })).toBe('invalid_amount');
-    expect(inj({ op_id: 'bal2', tbl: 'balance_history', pk: { account_id: 'acct-none', date: '2026-01-01' }, kind: 'upsert', fields: { balance: 1 }, hlc: hlc(8) })).toBe('row_missing');
+    expect(inj({ op_id: 'bal', tbl: 'balance_history', pk: { account_id: 'acct-1', date: '2026-01-01' }, kind: 'upsert', fields: { balance: 1e13, origin: 'client' }, hlc: hlc(7) })).toBe('invalid_amount');
+    expect(inj({ op_id: 'bal-noorigin', tbl: 'balance_history', pk: { account_id: 'acct-1', date: '2026-01-02' }, kind: 'upsert', fields: { balance: 1 }, hlc: hlc(9) })).toBe('invalid_source');
+    expect(inj({ op_id: 'bal-ok', tbl: 'balance_history', pk: { account_id: 'acct-1', date: '2026-01-02' }, kind: 'upsert', fields: { balance: 1, origin: 'client' }, hlc: hlc(10) })).toBe('accepted');
+    expect(inj({ op_id: 'bal2', tbl: 'balance_history', pk: { account_id: 'acct-none', date: '2026-01-01' }, kind: 'upsert', fields: { balance: 1, origin: 'client' }, hlc: hlc(8) })).toBe('row_missing');
+  });
+});
+
+describe('tag link deletes', () => {
+  it('deleting a tagged manual transaction removes the link on the other device', async () => {
+    const [a, b] = await twoDevices();
+    use(a);
+    const acct = await createManualAccount('Tagged', 1);
+    const tx = await addTransaction({ accountId: acct, date: '2026-06-01', name: 'Invoice', amount: 5, category: 'Fees' });
+    await createTag('t1');
+    const tag = (await q<{ id: number }>(a.client, `SELECT id FROM tags WHERE name = 't1'`))[0];
+    await addTagToTransaction(tx, tag.id);
+    await cycle(a);
+    await cycle(b);
+    expect(await q(b.client, 'SELECT * FROM transaction_tags')).toHaveLength(1);
+    use(a);
+    await deleteTransaction(tx);
+    const r = await cycle(a);
+    expect(r.errors).toEqual([]);
+    expect(server.liveRows(USER, 'transaction_tags')).toHaveLength(0);
+    await cycle(b);
+    expect(await q(b.client, 'SELECT * FROM transaction_tags')).toEqual([]);
+    expect(await q(b.client, 'SELECT id FROM transactions')).toEqual([]);
+  });
+
+  it('deleting an account sends explicit link deletes for its children (the server does not cascade links)', async () => {
+    const [a, b] = await twoDevices();
+    use(a);
+    const acct = await createManualAccount('Tagged acct', 1);
+    await createTag('t2');
+    const tag = (await q<{ id: number }>(a.client, `SELECT id FROM tags WHERE name = 't2'`))[0];
+    for (const n of ['x', 'y']) {
+      const tx = await addTransaction({ accountId: acct, date: '2026-06-02', name: n, amount: 5, category: 'Fees' });
+      await addTagToTransaction(tx, tag.id);
+    }
+    await cycle(a);
+    await cycle(b);
+    expect(server.liveRows(USER, 'transaction_tags')).toHaveLength(2);
+    use(a);
+    await deleteAccount(acct);
+    const r = await cycle(a);
+    expect(r.errors).toEqual([]);
+    expect(server.liveRows(USER, 'transaction_tags')).toHaveLength(0);
+    await cycle(b);
+    expect(await q(b.client, 'SELECT * FROM transaction_tags')).toEqual([]);
+    expect(await q(b.client, 'SELECT id FROM accounts')).toEqual([]);
   });
 });
 
