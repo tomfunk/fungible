@@ -5,13 +5,15 @@ import { adoptByokData, setBeforeAdoptHook, type AdoptStats } from './sync-adopt
 import {
   SyncError, getSyncMode, readSyncState, writeSyncState, cursorKey,
 } from './sync-mode.js';
-import { SYNC_TABLES, isSyncedSetting } from './sync-spec.js';
-import { deriveTagUuid, deriveRuleUuid } from './sync-ids.js';
+import {
+  SYNC_TABLES, CLIENT_TABLES, CLIENT_TX_FIELDS, isSyncedSetting, isClientTxId, clientAccountSql,
+} from './sync-spec.js';
+import { deriveTagUuid, deriveRuleUuid, deriveAccountWireId } from './sync-ids.js';
 import {
   OP_PENDING, OP_DONE, OP_HELD, OP_REJECTED, OP_MOOT, OP_SUPERSEDED,
 } from './sync-oplog.js';
 import {
-  applyRemoteOp, loadMemberCtx, newApplyStats, setApplying, snapshotOps,
+  applyRemoteOp, loadMemberCtx, newApplyStats, setApplying, snapshotOps, pruneVanishedClientRows,
   type ApplyStats, type RemoteOp, type SnapshotTables,
 } from './sync-apply.js';
 import { formatHlc, isFarFuture, observeHlc, parseHlc } from './hlc.js';
@@ -108,12 +110,52 @@ async function reconcile(c: Client, userId: string): Promise<void> {
       WHERE tbl = 'transaction_tags' AND json_extract(pk, '$.tag_id') IS NULL
         AND (SELECT uuid FROM tags WHERE tags.id = json_extract(_oplog.pk, '$.tag_lid')) IS NOT NULL`,
   );
-  // Ops held for a local-only transaction become sendable once the server row is known.
+  await deriveClientAccountIds(c, userId);
+  // Ops held for a local-only transaction become sendable once the server row
+  // is known (Plaid-owned), or always for a client-owned transaction (manual-).
   await c.execute(
     `UPDATE _oplog SET pushed = ${OP_PENDING} WHERE pushed = ${OP_HELD} AND (
-       (tbl = 'transactions' AND json_extract(pk, '$.id') IN (SELECT id FROM _sync_server_tx)) OR
-       (tbl = 'transaction_tags' AND json_extract(pk, '$.transaction_id') IN (SELECT id FROM _sync_server_tx)
-          AND json_extract(pk, '$.tag_id') IS NOT NULL))`,
+       (tbl = 'transactions' AND (json_extract(pk, '$.id') IN (SELECT id FROM _sync_server_tx)
+          OR json_extract(pk, '$.id') LIKE 'manual-%')) OR
+       (tbl = 'transaction_tags' AND (json_extract(pk, '$.transaction_id') IN (SELECT id FROM _sync_server_tx)
+          OR json_extract(pk, '$.transaction_id') LIKE 'manual-%')
+          AND json_extract(pk, '$.tag_id') IS NOT NULL) OR
+       (tbl IN ('accounts', 'balance_history') AND reason = 'no_derived_id'))`,
+  );
+}
+
+// Client-owned accounts keep their local id (the UIs recognise its prefix); the
+// server identifies them by a derived `acct-<uuid>` held in accounts.wire_id.
+// Derived once, here (SQL cannot SHA-1), then never changed. Pending ops carry
+// the local id until the wire id is patched in, exactly like tags and rules.
+async function deriveClientAccountIds(c: Client, userId: string): Promise<void> {
+  let rows: Row[];
+  try {
+    await c.execute(`UPDATE accounts SET origin = 'client' WHERE origin IS NULL AND item_id IS NULL`);
+    rows = await all(c, `SELECT * FROM accounts WHERE wire_id IS NULL AND ${clientAccountSql('accounts')} ORDER BY rowid`);
+  } catch { return; } // schema without the client-owned columns (BYOK-era tests)
+  if (rows.length > 0) {
+    const taken = new Set((await all(c, 'SELECT wire_id FROM accounts WHERE wire_id IS NOT NULL')).map((r) => String(r.wire_id)));
+    for (const r of rows) {
+      let wire = '';
+      for (let dup = 0; ; dup++) {
+        wire = await deriveAccountWireId(
+          userId, { name: r.name, type: r.type, subtype: r.subtype, institution_name: r.institution_name }, dup);
+        if (!taken.has(wire)) break;
+      }
+      taken.add(wire);
+      await c.execute({ sql: 'UPDATE accounts SET wire_id = ? WHERE id = ? AND wire_id IS NULL', args: [wire, String(r.id)] });
+    }
+  }
+  await c.execute(
+    `UPDATE _oplog SET pk = json_set(pk, '$.wire', (SELECT wire_id FROM accounts WHERE accounts.id = json_extract(_oplog.pk, '$.id')))
+      WHERE tbl = 'accounts' AND json_extract(pk, '$.wire') IS NULL
+        AND (SELECT wire_id FROM accounts WHERE accounts.id = json_extract(_oplog.pk, '$.id')) IS NOT NULL`,
+  );
+  await c.execute(
+    `UPDATE _oplog SET pk = json_set(pk, '$.wire', (SELECT wire_id FROM accounts WHERE accounts.id = json_extract(_oplog.pk, '$.account_id')))
+      WHERE tbl = 'balance_history' AND json_extract(pk, '$.wire') IS NULL
+        AND (SELECT wire_id FROM accounts WHERE accounts.id = json_extract(_oplog.pk, '$.account_id')) IS NOT NULL`,
   );
 }
 
@@ -140,7 +182,7 @@ interface WireOp {
 
 function identityOf(op: Row): string {
   const pk = JSON.parse(String(op.pk)) as Record<string, unknown>;
-  const t = SYNC_TABLES[String(op.tbl)];
+  const t = SYNC_TABLES[String(op.tbl)] ?? CLIENT_TABLES[String(op.tbl)];
   if (!t) return String(op.pk);
   if (t.kind === 'uuid') return `${op.tbl}|${pk.id ?? `lid:${pk.lid}`}`;
   if (t.kind === 'link') return `${op.tbl}|${pk.transaction_id}|${pk.tag_id ?? `lid:${pk.tag_lid}`}`;
@@ -178,7 +220,7 @@ async function resolveForWire(
 ): Promise<Resolution> {
   const tbl = String(op.tbl);
   const pk = JSON.parse(String(op.pk)) as Record<string, unknown>;
-  const t = SYNC_TABLES[tbl];
+  const t = SYNC_TABLES[tbl] ?? CLIENT_TABLES[tbl];
   if (!t) return { moot: 'unknown_table' };
   const base = {
     op_id: String(op.op_id), tbl, kind: op.kind as 'upsert' | 'delete', hlc: String(op.hlc),
@@ -210,21 +252,62 @@ async function resolveForWire(
       }
       return withFields({ id: pk.id });
     }
+    case 'accounts': {
+      const acct = await one(c, `SELECT wire_id, ${clientAccountSql('accounts')} AS client FROM accounts WHERE id = ?`, [String(pk.id)]);
+      if (base.kind === 'delete') {
+        // Never derived means never pushed: nothing to delete on the server.
+        return pk.wire == null ? { moot: 'never_synced' } : withFields({ id: pk.wire });
+      }
+      if (!acct) return { moot: 'row_gone' };
+      if (!acct.client) return { moot: 'not_client_owned' };
+      const wire = acct.wire_id ?? pk.wire;
+      return wire == null ? { held: 'no_derived_id' } : withFields({ id: wire });
+    }
+    case 'balance_history': {
+      const acct = await one(c, `SELECT wire_id, ${clientAccountSql('accounts')} AS client FROM accounts WHERE id = ?`, [String(pk.account_id)]);
+      if (!acct) return { moot: 'account_gone' };
+      if (!acct.client) return { moot: 'not_client_owned' };
+      const wire = acct.wire_id ?? pk.wire;
+      return wire == null ? { held: 'no_derived_id' } : withFields({ account_id: wire, date: pk.date });
+    }
     case 'transaction_tags': {
       if (pk.tag_id == null) {
         const alive = pk.tag_lid != null && (await one(c, 'SELECT 1 AS x FROM tags WHERE id = ?', [Number(pk.tag_lid)]));
         return alive ? { held: 'no_derived_id' } : { moot: 'tag_gone' };
       }
-      if (!(await one(c, 'SELECT 1 AS x FROM _sync_server_tx WHERE id = ?', [String(pk.transaction_id)]))) {
+      const link = String(pk.transaction_id);
+      if (link.startsWith('csv-')) return { held: 'local_only_csv' };
+      if (!link.startsWith('manual-') && !(await one(c, 'SELECT 1 AS x FROM _sync_server_tx WHERE id = ?', [link]))) {
         return { held: 'local_only_transaction' };
       }
       return withFields({ transaction_id: pk.transaction_id, tag_id: pk.tag_id });
     }
     case 'transactions': {
-      if (!(await one(c, 'SELECT 1 AS x FROM _sync_server_tx WHERE id = ?', [String(pk.id)]))) {
-        return { held: 'local_only_transaction' };
+      const id = String(pk.id);
+      if (!isClientTxId(id)) {
+        // Plaid-owned: annotations only, and only on rows the server sent us.
+        if (!(await one(c, 'SELECT 1 AS x FROM _sync_server_tx WHERE id = ?', [id]))) {
+          return { held: 'local_only_transaction' };
+        }
+        return withFields({ id });
       }
-      return withFields({ id: pk.id });
+      // CSV rows are not syncable yet (ids not derivable): local-only, counted
+      // in SyncInfo.localOnlyCount.
+      if (id.startsWith('csv-')) {
+        return base.kind === 'delete' ? { moot: 'local_only_csv' } : { held: 'local_only_csv' };
+      }
+      if (base.kind === 'delete') return withFields({ id });
+      const row = await one(c, 'SELECT 1 AS x FROM transactions WHERE id = ?', [id]);
+      if (!row) return { moot: 'row_gone' };
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields ?? {})) if ((CLIENT_TX_FIELDS as readonly string[]).includes(k)) out[k] = v;
+      if (out.account_id != null) {
+        const a = await one(c, `SELECT wire_id, ${clientAccountSql('accounts')} AS client FROM accounts WHERE id = ?`, [String(out.account_id)]);
+        if (!a) return { moot: 'account_gone' };
+        if (a.client && a.wire_id == null) return { held: 'no_derived_id' };
+        if (a.wire_id != null) out.account_id = a.wire_id;
+      }
+      return { wire: { ...base, pk: { id }, fields: out } };
     }
     default: return { moot: 'unknown_table' };
   }
@@ -232,7 +315,7 @@ async function resolveForWire(
 
 const GROUP_RANK: Record<string, number> = {
   categories: 0, hidden_categories: 0, settings: 0, household_members: 0,
-  tags: 1, category_rules: 1, name_rules: 1, transactions: 2, transaction_tags: 3,
+  tags: 1, category_rules: 1, name_rules: 1, accounts: 1, transactions: 2, balance_history: 2, transaction_tags: 3,
 };
 
 async function restamp(c: Client, opIds: string[], deviceId: string): Promise<void> {
@@ -253,8 +336,34 @@ async function push(c: Client, userId: string, deviceId: string): Promise<PushSt
   if (pending.length === 0) return stats;
   const member = await loadMemberCtx(c, userId);
 
+  // Deleting a client account cascades on the server (it emits one delete per
+  // child). Child ops queued with the parent's delete are therefore moot.
+  const deadAccounts = new Set<string>();
+  for (const r of pending) {
+    if (r.tbl === 'accounts' && r.kind === 'delete') deadAccounts.add(String(JSON.parse(String(r.pk)).id));
+  }
+  const cascadedTx = new Set<string>();
+  const cascaded = (r: Row): boolean => {
+    if (deadAccounts.size === 0) return false;
+    const pk = JSON.parse(String(r.pk)) as Record<string, unknown>;
+    const f = r.fields ? (JSON.parse(String(r.fields)) as Record<string, unknown>) : {};
+    if (r.tbl === 'balance_history') return deadAccounts.has(String(pk.account_id));
+    if (r.tbl === 'transactions') {
+      const acct = r.kind === 'delete' ? pk.account_id : f.account_id;
+      if (acct != null && deadAccounts.has(String(acct))) { cascadedTx.add(String(pk.id)); return true; }
+    }
+    return false;
+  };
+  const cascadeIds = new Set<string>();
+  for (const r of pending) if (cascaded(r)) cascadeIds.add(String(r.op_id));
+
   const sendable: { wire: WireOp; row: Row }[] = [];
   for (const row of pending) {
+    if (cascadeIds.has(String(row.op_id))
+        || (row.tbl === 'transaction_tags' && cascadedTx.has(String(JSON.parse(String(row.pk)).transaction_id)))) {
+      await c.execute({ sql: `UPDATE _oplog SET pushed = ${OP_MOOT}, reason = 'cascade' WHERE op_id = ?`, args: [String(row.op_id)] });
+      continue;
+    }
     // Our own clock guard: a far-future HLC would be refused wholesale.
     const res = await resolveForWire(c, row, member);
     if ('moot' in res) {
@@ -359,7 +468,7 @@ interface AppliedPage { stats: ApplyStats; byok: AdoptStats }
  */
 async function applyPage(
   c: Client, userId: string, ops: RemoteOp[],
-  after: { cursor: string | null; bootstrapped?: boolean },
+  after: { cursor: string | null; bootstrapped?: boolean; snapshot?: SnapshotTables },
 ): Promise<AppliedPage> {
   const accounts = asRows(ops, 'accounts');
   const txs = asRows(ops, 'transactions');
@@ -410,6 +519,10 @@ async function applyPage(
         args: [userId],
       });
     }
+    if (after.snapshot) {
+      // The snapshot omits tombstones: client rows deleted elsewhere vanish here.
+      if ((await pruneVanishedClientRows(tx, after.snapshot)) > 0) stats.touchedTransactions = true;
+    }
     await setApplying(tx, false);
     await tx.commit();
   } catch (e) {
@@ -442,7 +555,7 @@ async function bootstrap(c: Client, userId: string): Promise<AppliedPage> {
   const body = (await res.json()) as { server_seq?: string | number | null; tables?: SnapshotTables };
   if (body.server_seq == null) throw new SyncError('bootstrap_no_server_seq');
   const ops = snapshotOps(body.tables ?? {});
-  return applyPage(c, userId, ops, { cursor: String(body.server_seq), bootstrapped: true });
+  return applyPage(c, userId, ops, { cursor: String(body.server_seq), bootstrapped: true, snapshot: body.tables ?? {} });
 }
 
 async function pullOps(c: Client, userId: string): Promise<PullStats> {
@@ -586,6 +699,11 @@ export type SyncInfo = {
   rejectedCount: number;
   /** Ops held back because their target exists only on this device. */
   heldCount: number;
+  /**
+   * Imported (CSV) transactions that exist only on this device because their
+   * ids cannot be derived yet. UIs: "N imported rows not yet synced".
+   */
+  localOnlyCount: number;
   cursor:     string | null;
   lastSyncAt: string | null;
   userId:     string | null;
@@ -597,6 +715,7 @@ export async function getSyncInfo(client: Client = db): Promise<SyncInfo> {
   let pendingCount = 0;
   let rejectedCount = 0;
   let heldCount = 0;
+  let localOnlyCount = 0;
   if (mode === 'hosted' || userId != null) {
     const n = async (where: string) =>
       Number((await one(client, `SELECT COUNT(*) AS n FROM _oplog WHERE ${where}`))?.n ?? 0);
@@ -604,8 +723,11 @@ export async function getSyncInfo(client: Client = db): Promise<SyncInfo> {
       // Annotations/links on rows only this device has are not "pending": they cannot be sent.
       pendingCount = await n(
         `pushed = ${OP_PENDING}
-         AND NOT (tbl = 'transactions' AND json_extract(pk, '$.id') NOT IN (SELECT id FROM _sync_server_tx))
-         AND NOT (tbl = 'transaction_tags' AND json_extract(pk, '$.transaction_id') NOT IN (SELECT id FROM _sync_server_tx))`);
+         AND NOT (tbl = 'transactions' AND json_extract(pk, '$.id') NOT IN (SELECT id FROM _sync_server_tx)
+                  AND json_extract(pk, '$.id') NOT LIKE 'manual-%')
+         AND NOT (tbl = 'transaction_tags' AND json_extract(pk, '$.transaction_id') NOT IN (SELECT id FROM _sync_server_tx)
+                  AND json_extract(pk, '$.transaction_id') NOT LIKE 'manual-%')`);
+      localOnlyCount = Number((await one(client, `SELECT COUNT(*) AS n FROM transactions WHERE source = 'csv'`))?.n ?? 0);
       rejectedCount = await n(`pushed = ${OP_REJECTED}`);
       heldCount = await n(`pushed = ${OP_HELD}`);
     } catch { /* oplog not installed */ }
@@ -617,6 +739,7 @@ export async function getSyncInfo(client: Client = db): Promise<SyncInfo> {
     dirtyCount: pendingCount,
     rejectedCount,
     heldCount,
+    localOnlyCount,
     cursor:     userId ? await readSyncState(cursorKey(userId), client) : null,
     lastSyncAt: await readSyncState('last_sync_at', client),
     userId,

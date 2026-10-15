@@ -1,7 +1,11 @@
 import type { Client } from '@libsql/client';
 import { db } from './db.js';
 import { migrate, getDeviceId } from './migrate.js';
-import { installStatements, oplogInstalled, collectBackfill, queueOpsStatements, OPLOG_MIGRATION_VERSION } from './sync-oplog.js';
+import {
+  installStatements, installClientOwnedStatements, oplogInstalled, collectBackfill, collectClientBackfill,
+  queueOpsStatements, OPLOG_MIGRATION_VERSION, CLIENT_OWNED_MIGRATION_VERSION,
+} from './sync-oplog.js';
+import { isMigrationApplied } from './migrate.js';
 import { setBeforeAdoptHook } from './sync-adopt.js';
 import { login, register, logout, sessionUserId, isAuthConfigured } from './auth-client.js';
 
@@ -96,7 +100,12 @@ export async function resetForNewAccount(client: Client = db): Promise<void> {
   for (const t of ['tags', 'category_rules', 'name_rules']) {
     stmts.push(`UPDATE ${t} SET uuid = NULL`);
   }
-  stmts.push(...(await queueOpsStatements(client, await collectBackfill(client))));
+  // Wire ids of client accounts embed the user id too.
+  if (await isMigrationApplied(CLIENT_OWNED_MIGRATION_VERSION, client)) {
+    stmts.push('UPDATE accounts SET wire_id = NULL');
+  }
+  const ops = [...(await collectBackfill(client)), ...(await collectClientBackfill(client))];
+  stmts.push(...(await queueOpsStatements(client, ops)));
   await client.batch(stmts, 'write');
 }
 
@@ -137,13 +146,25 @@ export async function enableHostedMode(opts: EnableOptions): Promise<void> {
   if (snap === false) setBeforeAdoptHook(async () => {});
   else if (snap) setBeforeAdoptHook(async () => { await snap('pre-adopt-sync'); });
 
-  if (!(await oplogInstalled(client))) {
+  const freshInstall = !(await oplogInstalled(client));
+  if (freshInstall) {
     // device_id is read inside the migration body, i.e. after the snapshot,
     // so a failed snapshot leaves the database exactly as it was.
     await migrate(
       OPLOG_MIGRATION_VERSION, 'sync-oplog',
       async (c) => installStatements(c, await getDeviceId(c)),
       { client, snapshot: snap, reason: 'pre-enable-sync', dataDir: opts.dataDir },
+    );
+  }
+
+  // Client-owned rows (CSV/manual accounts, manual transactions, balances):
+  // columns, triggers and backfill. Covered by the pre-enable snapshot when the
+  // oplog was just installed; an existing hosted install gets its own.
+  if (!(await isMigrationApplied(CLIENT_OWNED_MIGRATION_VERSION, client))) {
+    await migrate(
+      CLIENT_OWNED_MIGRATION_VERSION, 'sync-client-owned',
+      async (c) => installClientOwnedStatements(c),
+      { client, snapshot: freshInstall ? false : snap, reason: 'pre-client-owned-sync', dataDir: opts.dataDir },
     );
   }
 

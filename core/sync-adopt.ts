@@ -24,6 +24,11 @@ import { queueOpsStatements, type OpInput } from './sync-oplog.js';
 //                 annotations (manual_category, ignored) and tag links move
 //                 with it and are queued as ops against the server id (unless
 //                 the server row already carries annotations).
+//   client rows   a CSV/manual (client-owned) account that never reached the
+//                 server is a candidate too, matched by the same tiers. It
+//                 becomes the server's account (origin plaid) and its manual
+//                 transactions follow. One already on the server is left beside
+//                 its twin (needs a client-driven merge, not built yet).
 //   unmatched     local transactions stay local-only: never pushed (held), keep their
 //                 annotations, and are retried whenever new server rows arrive.
 //
@@ -145,6 +150,7 @@ export async function adoptByokData(
        FROM accounts a`,
   );
   const localIds = new Set(localAccounts.map((a) => String(a.id)));
+  const hasOrigin = localAccounts.length > 0 && 'origin' in localAccounts[0];
   const mapped = new Set((await rows(c, `SELECT value FROM _sync_state WHERE key LIKE 'account_map:%'`)).map((r) => String(r.value)));
   const pulledAccountIds = new Set(serverAccounts.map((a) => String(a.id)));
 
@@ -152,9 +158,18 @@ export async function adoptByokData(
   {
     // Plaid-linked, not already a server account, not the target of an earlier match.
     const plaidish = new Set((await rows(c, `SELECT DISTINCT account_id FROM transactions WHERE COALESCE(source, 'plaid') = 'plaid'`)).map((r) => String(r.account_id)));
+    // Client-owned accounts (CSV/manual) that never reached the server join the
+    // candidates, so the same real account is not duplicated once the server
+    // brings its Plaid twin. Unambiguous matches only (see matchAccounts); an
+    // account the server already holds stays beside its twin until a client-driven
+    // merge exists (merged_into).
+    const pushed = new Set((await rows(c,
+      `SELECT DISTINCT json_extract(pk, '$.id') AS id FROM _oplog WHERE tbl = 'accounts' AND pushed = 1`)).map((r) => String(r.id)));
+    const clientOwned = (a: Row): boolean =>
+      hasOrigin && a.item_id == null && (a.origin ?? 'client') === 'client' && !plaidish.has(String(a.id)) && !pushed.has(String(a.id));
     const candLocal = localAccounts.filter((a) => {
       const id = String(a.id);
-      return !pulledAccountIds.has(id) && !mapped.has(id) && (a.item_id != null || plaidish.has(id));
+      return !pulledAccountIds.has(id) && !mapped.has(id) && (a.item_id != null || plaidish.has(id) || clientOwned(a));
     });
     // Server side: pulled accounts we do not hold yet, plus accounts already
     // adopted (a BYOK refresh re-created the old local account -> merge).
@@ -185,6 +200,16 @@ export async function adoptByokData(
         A('UPDATE transactions SET account_id = ? WHERE account_id = ?', m.server, m.local);
         A('UPDATE balance_history SET account_id = ? WHERE account_id = ?', m.server, m.local);
         A('DELETE FROM sync_state WHERE account_id = ?', m.local);
+        if (hasOrigin) {
+          // A client-owned account becomes the (server-owned) Plaid account: its
+          // own ops and balance ops can never be sent, and manual transactions
+          // follow it with their account_id re-pointed in the queued ops.
+          A(`UPDATE accounts SET origin = 'plaid', wire_id = NULL WHERE id = ? AND origin IS NOT 'plaid' AND item_id IS NULL`, m.server);
+          A(`UPDATE _oplog SET pushed = 4, reason = 'adopted' WHERE pushed IN (0, 2) AND tbl = 'accounts' AND json_extract(pk, '$.id') = ?`, m.local);
+          A(`UPDATE _oplog SET pushed = 4, reason = 'adopted' WHERE pushed IN (0, 2) AND tbl = 'balance_history' AND json_extract(pk, '$.account_id') = ?`, m.local);
+          A(`UPDATE _oplog SET fields = json_set(fields, '$.account_id', ?) WHERE pushed IN (0, 2) AND tbl = 'transactions' AND json_extract(fields, '$.account_id') = ?`, m.server, m.local);
+          A(`UPDATE _oplog SET pk = json_set(pk, '$.account_id', ?) WHERE pushed IN (0, 2) AND tbl = 'transactions' AND kind = 'delete' AND json_extract(pk, '$.account_id') = ?`, m.server, m.local);
+        }
         stats.accounts++;
       }
       A('UPDATE category_rules SET account_id = ? WHERE account_id = ?', m.server, m.local);

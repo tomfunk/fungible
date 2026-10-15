@@ -35,3 +35,23 @@ export function deriveRuleUuid(
 ): Promise<string> {
   return sha1Uuid(`fungible/${table}/v1:${userId}:${matchType}:${pattern}`);
 }
+
+const normPart = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Wire id of a client-owned account: `acct-<uuidv5>` over the user and the
+ * account's natural key at FIRST derivation. The id never changes afterwards
+ * (a rename keeps it; the caller persists it in accounts.wire_id). `dup`
+ * disambiguates two accounts that share a natural key on one device.
+ */
+export async function deriveAccountWireId(
+  userId: string,
+  a: { institution_name?: unknown; name: unknown; type?: unknown; subtype?: unknown },
+  dup = 0,
+): Promise<string> {
+  const kind = `${normPart(a.type)}/${normPart(a.subtype)}`;
+  const uuid = await sha1Uuid(
+    `fungible/account/v1:${userId}:${normPart(a.institution_name)}:${normPart(a.name)}:${kind}:${dup}`,
+  );
+  return `acct-${uuid}`;
+}
