@@ -117,7 +117,19 @@ export const CLIENT_TX_BODY_FIELDS = [
 export const CLIENT_TX_SOURCES = ['csv', 'manual'] as const;
 export const isClientTxId = (id: string): boolean => id.startsWith('manual-') || id.startsWith('csv-');
 
+/** Fields of a synced import (config, imported, skipped stay local). */
+export const CLIENT_IMPORT_FIELDS = [
+  'file_name', 'file_hash', 'imported_at', 'row_count', 'account_id', 'min_date', 'max_date',
+] as const;
+
+/** Derived CSV transaction ids: `csv-` + a uuid. Legacy local ids are `csv-<importId>-<row>`. */
+export const CSV_DERIVED_ID_RE = /^csv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const isDerivedCsvId = (id: string): boolean => CSV_DERIVED_ID_RE.test(id);
+/** SQL GLOB for the same shape (no regex in SQLite). */
+export const CSV_DERIVED_GLOB = 'csv-????????-????-????-????-????????????';
+
 export const CLIENT_TABLES: Record<string, SyncTable> = {
+  imports:         { tbl: 'imports', kind: 'client', keyCols: ['id'], fields: [...CLIENT_IMPORT_FIELDS] },
   accounts:        { tbl: 'accounts', kind: 'client', keyCols: ['id'], fields: [...CLIENT_ACCOUNT_FIELDS] },
   transactions:    { tbl: 'transactions', kind: 'client', keyCols: ['id'], fields: [...CLIENT_TX_FIELDS] },
   balance_history: { tbl: 'balance_history', kind: 'client', keyCols: ['account_id', 'date'], fields: ['balance'] },

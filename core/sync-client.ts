@@ -1,14 +1,17 @@
 import type { Client } from '@libsql/client';
 import { db } from './db.js';
 import { getAccessToken, sessionUserId } from './auth-client.js';
-import { adoptByokData, setBeforeAdoptHook, type AdoptStats } from './sync-adopt.js';
+import { adoptByokData, ensureBackup, setBeforeAdoptHook, type AdoptStats } from './sync-adopt.js';
 import {
   SyncError, getSyncMode, readSyncState, writeSyncState, cursorKey,
 } from './sync-mode.js';
 import {
-  SYNC_TABLES, CLIENT_TABLES, CLIENT_TX_FIELDS, isSyncedSetting, isClientTxId, clientAccountSql,
+  SYNC_TABLES, CLIENT_TABLES, CLIENT_TX_FIELDS, CLIENT_IMPORT_FIELDS, CSV_DERIVED_GLOB, isSyncedSetting,
+  isClientTxId, isDerivedCsvId, clientAccountSql,
 } from './sync-spec.js';
-import { deriveTagUuid, deriveRuleUuid, deriveAccountWireId } from './sync-ids.js';
+import {
+  deriveTagUuid, deriveRuleUuid, deriveAccountWireId, deriveCsvTxId, deriveImportWireId,
+} from './sync-ids.js';
 import {
   OP_PENDING, OP_DONE, OP_HELD, OP_REJECTED, OP_MOOT, OP_SUPERSEDED,
 } from './sync-oplog.js';
@@ -111,17 +114,95 @@ async function reconcile(c: Client, userId: string): Promise<void> {
         AND (SELECT uuid FROM tags WHERE tags.id = json_extract(_oplog.pk, '$.tag_lid')) IS NOT NULL`,
   );
   await deriveClientAccountIds(c, userId);
+  await deriveImportIds(c, userId);
+  await rekeyCsvTransactions(c, userId);
   // Ops held for a local-only transaction become sendable once the server row
   // is known (Plaid-owned), or always for a client-owned transaction (manual-).
   await c.execute(
     `UPDATE _oplog SET pushed = ${OP_PENDING} WHERE pushed = ${OP_HELD} AND (
        (tbl = 'transactions' AND (json_extract(pk, '$.id') IN (SELECT id FROM _sync_server_tx)
-          OR json_extract(pk, '$.id') LIKE 'manual-%')) OR
+          OR json_extract(pk, '$.id') LIKE 'manual-%' OR json_extract(pk, '$.id') GLOB '${CSV_DERIVED_GLOB}')) OR
        (tbl = 'transaction_tags' AND (json_extract(pk, '$.transaction_id') IN (SELECT id FROM _sync_server_tx)
-          OR json_extract(pk, '$.transaction_id') LIKE 'manual-%')
+          OR json_extract(pk, '$.transaction_id') LIKE 'manual-%'
+          OR json_extract(pk, '$.transaction_id') GLOB '${CSV_DERIVED_GLOB}')
           AND json_extract(pk, '$.tag_id') IS NOT NULL) OR
-       (tbl IN ('accounts', 'balance_history') AND reason = 'no_derived_id'))`,
+       (tbl IN ('accounts', 'balance_history', 'imports') AND reason = 'no_derived_id'))`,
   );
+}
+
+// Wire ids of imports (uuidv5 of file hash + the account's wire id), derived
+// once the account's wire id is known. Never changed afterwards.
+async function deriveImportIds(c: Client, userId: string): Promise<void> {
+  let rows: Row[];
+  try {
+    rows = await all(c,
+      `SELECT i.id, i.file_hash, COALESCE(a.wire_id, a.id) AS acct_wire, a.wire_id AS aw, a.item_id, a.origin
+         FROM imports i JOIN accounts a ON a.id = i.account_id WHERE i.wire_id IS NULL ORDER BY i.id`);
+  } catch { return; } // schema without imports.wire_id
+  if (rows.length > 0) {
+    const taken = new Set((await all(c, 'SELECT wire_id FROM imports WHERE wire_id IS NOT NULL')).map((r) => String(r.wire_id)));
+    for (const r of rows) {
+      const clientNoWire = r.item_id == null && (r.origin ?? 'client') === 'client' && r.aw == null;
+      if (clientNoWire) continue;
+      const wire = await deriveImportWireId(userId, String(r.file_hash), String(r.acct_wire));
+      if (taken.has(wire)) continue; // the same file imported twice into one account: one synced row
+      taken.add(wire);
+      await c.execute({ sql: 'UPDATE imports SET wire_id = ? WHERE id = ? AND wire_id IS NULL', args: [wire, Number(r.id)] });
+    }
+  }
+  await c.execute(
+    `UPDATE _oplog SET pk = json_set(pk, '$.wire', (SELECT wire_id FROM imports WHERE imports.id = json_extract(_oplog.pk, '$.id')))
+      WHERE tbl = 'imports' AND json_extract(pk, '$.wire') IS NULL
+        AND (SELECT wire_id FROM imports WHERE imports.id = json_extract(_oplog.pk, '$.id')) IS NOT NULL`,
+  );
+}
+
+// CSV rows carry local ids `csv-<importId>-<row>`; the wire id is derived from
+// (user, account wire id, dedup key) so two devices importing the same file
+// agree. Re-keyed in place (children and queued ops follow) under the applying
+// flag, behind the pre-adopt snapshot, the first time a row needs it.
+async function rekeyCsvTransactions(c: Client, userId: string): Promise<void> {
+  let rows: Row[];
+  try {
+    rows = await all(c,
+      `SELECT t.id, t.dedup_key, a.wire_id AS aw, a.id AS aid, a.item_id, a.origin
+         FROM transactions t JOIN accounts a ON a.id = t.account_id
+        WHERE t.source = 'csv' AND t.dedup_key IS NOT NULL AND t.id NOT GLOB '${CSV_DERIVED_GLOB}'
+        ORDER BY t.rowid`);
+  } catch { return; }
+  const todo: { old: string; next: string }[] = [];
+  const claimed = new Set<string>();
+  for (const r of rows) {
+    const isClientAcct = r.item_id == null && (r.origin ?? 'client') === 'client';
+    const accountWire = isClientAcct ? r.aw : r.aid;
+    if (accountWire == null) continue; // wire id not derived yet
+    const next = await deriveCsvTxId(userId, String(accountWire), String(r.dedup_key));
+    if (claimed.has(next) || (await one(c, 'SELECT 1 AS x FROM transactions WHERE id = ?', [next]))) continue;
+    claimed.add(next);
+    todo.push({ old: String(r.id), next });
+  }
+  if (todo.length === 0) return;
+  await ensureBackup(c);
+  const APPLYING_ON = `INSERT INTO _sync_state (key, value) VALUES ('applying', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`;
+  const APPLYING_OFF = `DELETE FROM _sync_state WHERE key = 'applying'`;
+  for (let i = 0; i < todo.length; i += 200) {
+    const stmts: { sql: string; args: Arg[] }[] = [{ sql: 'PRAGMA defer_foreign_keys = ON', args: [] }, { sql: APPLYING_ON, args: [] }];
+    for (const { old, next } of todo.slice(i, i + 200)) {
+      stmts.push({ sql: 'UPDATE OR IGNORE transactions SET id = ? WHERE id = ?', args: [next, old] });
+      stmts.push({ sql: 'UPDATE transaction_tags SET transaction_id = ? WHERE transaction_id = ?', args: [next, old] });
+      stmts.push({ sql: 'UPDATE tag_rule_suppressions SET transaction_id = ? WHERE transaction_id = ?', args: [next, old] });
+      stmts.push({
+        sql: `UPDATE _oplog SET pk = json_set(pk, '$.id', ?) WHERE pushed IN (${OP_PENDING}, ${OP_HELD})
+              AND tbl = 'transactions' AND json_extract(pk, '$.id') = ?`, args: [next, old],
+      });
+      stmts.push({
+        sql: `UPDATE _oplog SET pk = json_set(pk, '$.transaction_id', ?) WHERE pushed IN (${OP_PENDING}, ${OP_HELD})
+              AND tbl = 'transaction_tags' AND json_extract(pk, '$.transaction_id') = ?`, args: [next, old],
+      });
+    }
+    stmts.push({ sql: APPLYING_OFF, args: [] });
+    await c.batch(stmts, 'write');
+  }
 }
 
 // Client-owned accounts keep their local id (the UIs recognise its prefix); the
@@ -263,6 +344,22 @@ async function resolveForWire(
       const wire = acct.wire_id ?? pk.wire;
       return wire == null ? { held: 'no_derived_id' } : withFields({ id: wire });
     }
+    case 'imports': {
+      if (base.kind === 'delete') return pk.wire == null ? { moot: 'never_synced' } : withFields({ id: pk.wire });
+      const imp = await one(c, 'SELECT wire_id, account_id FROM imports WHERE id = ?', [Number(pk.id)]);
+      if (!imp) return { moot: 'row_gone' };
+      const wire = imp.wire_id ?? pk.wire;
+      if (wire == null) return { held: 'no_derived_id' };
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields ?? {})) if ((CLIENT_IMPORT_FIELDS as readonly string[]).includes(k)) out[k] = v;
+      if (out.account_id != null) {
+        const a = await one(c, `SELECT COALESCE(wire_id, id) AS w, wire_id, ${clientAccountSql('accounts')} AS client FROM accounts WHERE id = ?`, [String(out.account_id)]);
+        if (!a) return { moot: 'account_gone' };
+        if (a.client && a.wire_id == null) return { held: 'no_derived_id' };
+        out.account_id = a.w;
+      }
+      return { wire: { ...base, pk: { id: wire }, fields: out } };
+    }
     case 'balance_history': {
       const acct = await one(c, `SELECT wire_id, ${clientAccountSql('accounts')} AS client FROM accounts WHERE id = ?`, [String(pk.account_id)]);
       if (!acct) return { moot: 'account_gone' };
@@ -276,8 +373,8 @@ async function resolveForWire(
         return alive ? { held: 'no_derived_id' } : { moot: 'tag_gone' };
       }
       const link = String(pk.transaction_id);
-      if (link.startsWith('csv-')) return { held: 'local_only_csv' };
-      if (!link.startsWith('manual-') && !(await one(c, 'SELECT 1 AS x FROM _sync_server_tx WHERE id = ?', [link]))) {
+      if (link.startsWith('csv-') && !isDerivedCsvId(link)) return { held: 'local_only_csv' };
+      if (!link.startsWith('manual-') && !isDerivedCsvId(link) && !(await one(c, 'SELECT 1 AS x FROM _sync_server_tx WHERE id = ?', [link]))) {
         return { held: 'local_only_transaction' };
       }
       return withFields({ transaction_id: pk.transaction_id, tag_id: pk.tag_id });
@@ -291,9 +388,9 @@ async function resolveForWire(
         }
         return withFields({ id });
       }
-      // CSV rows are not syncable yet (ids not derivable): local-only, counted
-      // in SyncInfo.localOnlyCount.
-      if (id.startsWith('csv-')) {
+      // A CSV row syncs once its id is derived (re-key at reconcile); until
+      // then it is local-only and counted in SyncInfo.localOnlyCount.
+      if (id.startsWith('csv-') && !isDerivedCsvId(id)) {
         return base.kind === 'delete' ? { moot: 'local_only_csv' } : { held: 'local_only_csv' };
       }
       if (base.kind === 'delete') return withFields({ id });
@@ -307,6 +404,14 @@ async function resolveForWire(
         if (a.client && a.wire_id == null) return { held: 'no_derived_id' };
         if (a.wire_id != null) out.account_id = a.wire_id;
       }
+      if (out.import_id != null) {
+        const imp = await one(c, 'SELECT wire_id FROM imports WHERE id = ?', [Number(out.import_id)]);
+        if (imp?.wire_id == null) {
+          // The import is gone or not derivable: the row stands on its own.
+          if (imp) return { held: 'no_derived_id' };
+          out.import_id = null;
+        } else out.import_id = imp.wire_id;
+      }
       return { wire: { ...base, pk: { id }, fields: out } };
     }
     default: return { moot: 'unknown_table' };
@@ -315,7 +420,7 @@ async function resolveForWire(
 
 const GROUP_RANK: Record<string, number> = {
   categories: 0, hidden_categories: 0, settings: 0, household_members: 0,
-  tags: 1, category_rules: 1, name_rules: 1, accounts: 1, transactions: 2, balance_history: 2, transaction_tags: 3,
+  tags: 1, category_rules: 1, name_rules: 1, accounts: 1, imports: 1, transactions: 2, balance_history: 2, transaction_tags: 3,
 };
 
 async function restamp(c: Client, opIds: string[], deviceId: string): Promise<void> {
@@ -375,7 +480,9 @@ async function push(c: Client, userId: string, deviceId: string): Promise<PushSt
     }
   }
   if (sendable.length === 0) return stats;
-  sendable.sort((a, b) => (GROUP_RANK[a.wire.tbl] ?? 9) - (GROUP_RANK[b.wire.tbl] ?? 9)
+  // An import's delete goes after its rows' deletes (undo-import).
+  const rankOf = (w: WireOp) => (w.tbl === 'imports' && w.kind === 'delete' ? 4 : (GROUP_RANK[w.tbl] ?? 9));
+  sendable.sort((a, b) => rankOf(a.wire) - rankOf(b.wire)
     || Number(a.row.seq) - Number(b.row.seq));
 
   const baseUrl = need();
@@ -724,10 +831,12 @@ export async function getSyncInfo(client: Client = db): Promise<SyncInfo> {
       pendingCount = await n(
         `pushed = ${OP_PENDING}
          AND NOT (tbl = 'transactions' AND json_extract(pk, '$.id') NOT IN (SELECT id FROM _sync_server_tx)
-                  AND json_extract(pk, '$.id') NOT LIKE 'manual-%')
+                  AND json_extract(pk, '$.id') NOT LIKE 'manual-%' AND json_extract(pk, '$.id') NOT GLOB '${CSV_DERIVED_GLOB}')
          AND NOT (tbl = 'transaction_tags' AND json_extract(pk, '$.transaction_id') NOT IN (SELECT id FROM _sync_server_tx)
-                  AND json_extract(pk, '$.transaction_id') NOT LIKE 'manual-%')`);
-      localOnlyCount = Number((await one(client, `SELECT COUNT(*) AS n FROM transactions WHERE source = 'csv'`))?.n ?? 0);
+                  AND json_extract(pk, '$.transaction_id') NOT LIKE 'manual-%'
+                  AND json_extract(pk, '$.transaction_id') NOT GLOB '${CSV_DERIVED_GLOB}')`);
+      localOnlyCount = Number((await one(client,
+        `SELECT COUNT(*) AS n FROM transactions WHERE source = 'csv' AND id NOT GLOB '${CSV_DERIVED_GLOB}'`))?.n ?? 0);
       rejectedCount = await n(`pushed = ${OP_REJECTED}`);
       heldCount = await n(`pushed = ${OP_HELD}`);
     } catch { /* oplog not installed */ }

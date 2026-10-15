@@ -70,7 +70,16 @@ function buildMatchSql(csvSources: readonly string[]): string {
  * Carries the two rowids so pairing can break ties by insertion order rather
  * than by whatever order SQLite happened to return.
  */
-type Candidate = DupePair & { plaidId: string; csvRowid: number; plaidRowid: number };
+type Candidate = DupePair & { plaidId: string; csvRowid: number; plaidRowid: number; csvDedupKey?: string | null };
+
+// The occurrence number inside a dedup key (`date|name|cents|ord`): the file
+// order of otherwise identical rows, identical on every device.
+const dedupOrd = (key: string | null | undefined): number => {
+  if (!key) return 0;
+  const n = Number(key.slice(key.lastIndexOf('|') + 1));
+  return Number.isFinite(n) ? n : 0;
+};
+const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 // LEFT JOIN, not INNER: a candidate row whose account was deleted out from under
 // it still deduplicates against Plaid the way it always has. An INNER JOIN here
@@ -80,7 +89,7 @@ function buildCandidateSql(csvSources: readonly string[]): string {
     SELECT csv.id as csvId, csv.date as csvDate, csv.name as csvName, csv.amount as csvAmount,
            csv.source as csvSource,
            plaid.id as plaidId, plaid.date as plaidDate, plaid.name as plaidName,
-           csv.rowid as csvRowid, plaid.rowid as plaidRowid,
+           csv.rowid as csvRowid, plaid.rowid as plaidRowid, csv.dedup_key as csvDedupKey,
            COALESCE(a.name, '') as accountName
     FROM transactions csv
     JOIN transactions plaid ON ${buildMatchSql(csvSources)}
@@ -129,15 +138,19 @@ const dayGap = (a: string, b: string) =>
  *      three days out is better evidence than a different-name match on the
  *      same day.
  *   2. Date proximity, to settle same-strength names.
- *   3. Insertion order, so the outcome is deterministic when a file contains
- *      literally identical rows. The earliest row is the one consumed.
+ *   3. File order (the dedup key's occurrence number), then id, so the outcome
+ *      is deterministic, and identical across synced devices, when a file
+ *      contains literally identical rows. The earliest occurrence is consumed.
  */
 export function pairCandidates(candidates: Candidate[]): Candidate[] {
   const ranked = [...candidates].sort((x, y) =>
     nameRank(x.csvName, x.plaidName) - nameRank(y.csvName, y.plaidName) ||
     dayGap(x.csvDate, x.plaidDate) - dayGap(y.csvDate, y.plaidDate) ||
-    x.csvRowid - y.csvRowid ||
-    x.plaidRowid - y.plaidRowid,
+    // Ties must resolve the same on every device, so they cannot depend on
+    // local insertion order (rowid): file occurrence first, then the ids.
+    dedupOrd(x.csvDedupKey) - dedupOrd(y.csvDedupKey) ||
+    cmpStr(x.csvId, y.csvId) ||
+    cmpStr(x.plaidId, y.plaidId),
   );
 
   const takenCsv = new Set<string>();

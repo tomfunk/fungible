@@ -316,19 +316,17 @@ describe('ordering, volume, kill and resume', () => {
     await d.client.execute(
       `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, source, dedup_key)
        VALUES ('csv-1-0', ?, '2026-01-06', 'From CSV', 3, 'Fees', 0, 'csv', 'k')`, [acct] as never);
-    await enable(d);
+    await enableHostedMode({ userId: USER, client: d.client, snapshot: false });
     const ops = await q<{ tbl: string; origin: string }>(d.client, `SELECT tbl, origin FROM _oplog WHERE tbl IN ('accounts','transactions','balance_history') ORDER BY seq`);
-    expect(ops.map((o) => o.tbl)).toEqual(['accounts', 'transactions', 'balance_history']);
+    // Accounts, then manual transactions, then balances; CSV rows follow (their ids are re-keyed at the first cycle).
+    expect(ops.map((o) => o.tbl)).toEqual(['accounts', 'transactions', 'balance_history', 'transactions']);
     expect(ops.every((o) => o.origin === 'backfill')).toBe(true);
     expect((await accounts(d))[0].origin).toBe('client');
 
     const stats = await cycle(d);
     expect(stats.errors).toEqual([]);
-    expect(server.liveRows(USER, 'transactions').map((t) => t.name)).toEqual(['Old']);
-    // CSV rows are local-only until their ids are derivable; say so.
-    const info = await getSyncInfo(d.client);
-    expect(info.localOnlyCount).toBe(1);
-    expect(info.heldCount).toBeGreaterThanOrEqual(0);
+    expect(server.liveRows(USER, 'transactions').map((t) => t.name).sort()).toEqual(['From CSV', 'Old']);
+    expect((await getSyncInfo(d.client)).localOnlyCount).toBe(0);
   });
 
   it('5k rows: <=500 per batch, killed mid-push, resumes without duplicates', { timeout: 120_000 }, async () => {

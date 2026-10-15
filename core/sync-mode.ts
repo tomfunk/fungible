@@ -2,8 +2,9 @@ import type { Client } from '@libsql/client';
 import { db } from './db.js';
 import { migrate, getDeviceId } from './migrate.js';
 import {
-  installStatements, installClientOwnedStatements, oplogInstalled, collectBackfill, collectClientBackfill,
-  queueOpsStatements, OPLOG_MIGRATION_VERSION, CLIENT_OWNED_MIGRATION_VERSION,
+  installStatements, installClientOwnedStatements, installImportsStatements, oplogInstalled, collectBackfill,
+  collectClientBackfill, collectCsvBackfill, queueOpsStatements, OPLOG_MIGRATION_VERSION,
+  CLIENT_OWNED_MIGRATION_VERSION, IMPORTS_MIGRATION_VERSION,
 } from './sync-oplog.js';
 import { isMigrationApplied } from './migrate.js';
 import { setBeforeAdoptHook } from './sync-adopt.js';
@@ -104,7 +105,11 @@ export async function resetForNewAccount(client: Client = db): Promise<void> {
   if (await isMigrationApplied(CLIENT_OWNED_MIGRATION_VERSION, client)) {
     stmts.push('UPDATE accounts SET wire_id = NULL');
   }
-  const ops = [...(await collectBackfill(client)), ...(await collectClientBackfill(client))];
+  let ops = [...(await collectBackfill(client)), ...(await collectClientBackfill(client))];
+  if (await isMigrationApplied(IMPORTS_MIGRATION_VERSION, client)) {
+    stmts.push('UPDATE imports SET wire_id = NULL');
+    ops = [...ops, ...(await collectCsvBackfill(client))];
+  }
   stmts.push(...(await queueOpsStatements(client, ops)));
   await client.batch(stmts, 'write');
 }
@@ -147,6 +152,7 @@ export async function enableHostedMode(opts: EnableOptions): Promise<void> {
   else if (snap) setBeforeAdoptHook(async () => { await snap('pre-adopt-sync'); });
 
   const freshInstall = !(await oplogInstalled(client));
+  let snapTaken = freshInstall; // this call already snapshotted (or just created the schema)
   if (freshInstall) {
     // device_id is read inside the migration body, i.e. after the snapshot,
     // so a failed snapshot leaves the database exactly as it was.
@@ -164,7 +170,16 @@ export async function enableHostedMode(opts: EnableOptions): Promise<void> {
     await migrate(
       CLIENT_OWNED_MIGRATION_VERSION, 'sync-client-owned',
       async (c) => installClientOwnedStatements(c),
-      { client, snapshot: freshInstall ? false : snap, reason: 'pre-client-owned-sync', dataDir: opts.dataDir },
+      { client, snapshot: snapTaken ? false : snap, reason: 'pre-client-owned-sync', dataDir: opts.dataDir },
+    );
+    snapTaken = true;
+  }
+
+  if (!(await isMigrationApplied(IMPORTS_MIGRATION_VERSION, client))) {
+    await migrate(
+      IMPORTS_MIGRATION_VERSION, 'sync-imports',
+      async (c) => installImportsStatements(c),
+      { client, snapshot: snapTaken ? false : snap, reason: 'pre-imports-sync', dataDir: opts.dataDir },
     );
   }
 

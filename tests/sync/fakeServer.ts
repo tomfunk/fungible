@@ -44,7 +44,9 @@ const CO_OWNED: Record<string, { pk: string[]; fields: string[] }> = {
   transactions: { pk: ['id'], fields: ['manual_category', 'display_name', 'ignored'] },
   accounts: { pk: ['id'], fields: [] },
   balance_history: { pk: ['account_id', 'date'], fields: ['balance'] },
+  imports: { pk: ['id'], fields: [] },
 };
+const CLIENT_IMPORT_FIELDS = ['file_name', 'file_hash', 'imported_at', 'row_count', 'account_id', 'min_date', 'max_date'];
 const PLAID_TX_ANNOTATIONS = ['manual_category', 'display_name', 'ignored'];
 const CLIENT_ACCOUNT_FIELDS = [
   'name', 'type', 'subtype', 'institution_name', 'mask', 'nickname', 'owner', 'apr', 'excluded', 'origin', 'merged_into',
@@ -215,7 +217,7 @@ export class FakeServer {
   private snapshot(u: UserState) {
     const tables: Record<string, { rows: Record<string, unknown>[]; deletes: unknown[] }> = {};
     for (const tbl of Object.keys(CO_OWNED)) {
-      if (tbl === 'transactions' || tbl === 'accounts' || tbl === 'balance_history') continue;
+      if (tbl === 'transactions' || tbl === 'accounts' || tbl === 'balance_history' || tbl === 'imports') continue;
       const rows: Record<string, unknown>[] = [];
       for (const [k, r] of u.rows) {
         if (!k.startsWith(`${tbl}|`) || !r.exists) continue;
@@ -231,6 +233,7 @@ export class FakeServer {
       }
       return out;
     };
+    tables.imports = { rows: clientRows('imports', () => true), deletes: [] };
     tables.accounts = { rows: [...u.plaid.accounts.values(), ...clientRows('accounts', () => true)], deletes: [] };
     tables.transactions = {
       rows: [...u.plaid.transactions.values()].map((t) => {
@@ -256,7 +259,7 @@ export class FakeServer {
 
   /** Client-origin write to a transactions row the client may own (csv-/manual-)? */
   private isClientWrite(u: UserState, op: { tbl: string; pk: Record<string, unknown> }, fields: Record<string, unknown>): boolean {
-    if (op.tbl === 'accounts' || op.tbl === 'balance_history') return true;
+    if (op.tbl === 'accounts' || op.tbl === 'balance_history' || op.tbl === 'imports') return true;
     if (op.tbl !== 'transactions') return false;
     const id = String(op.pk.id);
     return !u.plaid.transactions.has(id) && (/^(manual|csv)-/.test(id) || 'source' in fields);
@@ -282,6 +285,16 @@ export class FakeServer {
         if (o !== undefined && o !== 'client') return 'invalid_source';
         if (!hadRow && o === undefined) return 'invalid_source';
       }
+      return null;
+    }
+    if (op.tbl === 'imports') {
+      if (!/^[0-9a-f-]{36}$/.test(String(op.pk.id))) return 'invalid_pk';
+      if (op.kind === 'delete') return null;
+      for (const f of Object.keys(fields)) if (!CLIENT_IMPORT_FIELDS.includes(f)) return 'forbidden_field';
+      const cur = u.rows.get(rowKey('imports', op.pk));
+      const acct = fields.account_id ?? cur?.fields.account_id?.v;
+      if (acct == null) return 'invalid_pk';
+      if (!u.plaid.accounts.has(String(acct)) && !this.liveClientAccount(u, String(acct))) return 'row_missing';
       return null;
     }
     if (op.tbl === 'balance_history') {
@@ -324,6 +337,7 @@ export class FakeServer {
       if ('account_id' in fields || !exists) {
         if (!u.plaid.accounts.has(String(acct)) && !this.liveClientAccount(u, String(acct))) return 'row_missing';
       }
+      if (fields.import_id != null && u.rows.get(rowKey('imports', { id: fields.import_id }))?.exists !== true) return 'row_missing';
       const dk = fields.dedup_key ?? cur?.fields.dedup_key?.v;
       if (dk != null) {
         for (const [k, r] of u.rows) {
@@ -340,7 +354,8 @@ export class FakeServer {
     for (const [k, r] of u.rows) {
       const child =
         (k.startsWith('transactions|') && r.fields.account_id?.v === accountId && /^(manual|csv)-/.test(String(r.pk.id))) ||
-        (k.startsWith('balance_history|') && r.pk.account_id === accountId);
+        (k.startsWith('balance_history|') && r.pk.account_id === accountId) ||
+        (k.startsWith('imports|') && r.fields.account_id?.v === accountId);
       if (!child || !r.exists) continue;
       r.exists = false;
       r.deletedHlc = hlc;

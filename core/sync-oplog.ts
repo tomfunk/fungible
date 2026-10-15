@@ -2,6 +2,7 @@ import type { Client, InStatement } from '@libsql/client';
 import { formatHlc, tickHlc, type HlcState } from './hlc.js';
 import {
   SYNC_TABLES, SYNCED_SETTINGS_SQL_LIST, CLIENT_ACCOUNT_FIELDS, CLIENT_TX_FIELDS, CLIENT_TX_BODY_FIELDS,
+  CLIENT_IMPORT_FIELDS,
   clientAccountSql, type SyncTable,
 } from './sync-spec.js';
 
@@ -38,6 +39,8 @@ export const OP_SUPERSEDED = 5;
 export const OPLOG_MIGRATION_VERSION = 2;
 /** Client-owned accounts / transactions / balances (see installClientOwnedStatements). */
 export const CLIENT_OWNED_MIGRATION_VERSION = 3;
+/** Synced imports + CSV rows (installImportsStatements). */
+export const IMPORTS_MIGRATION_VERSION = 4;
 
 const NOW_MS = `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`;
 const APPLYING_OFF = `NOT EXISTS (SELECT 1 FROM _sync_state WHERE key = 'applying' AND value = '1')`;
@@ -444,6 +447,82 @@ export async function installClientOwnedStatements(
   );
   stmts.push(...clientOwnedTriggers());
   const ops = await collectClientBackfill(client);
+  stmts.push(...(await queueOpsStatements(client, ops, nowMs)));
+  return stmts;
+}
+
+// ── Synced imports + CSV rows (migration 4) ──────────────────────────────────
+//
+//   imports   {"id": <local integer id>, "wire": <uuid or null until derived>}
+//
+// The wire id is uuidv5(user, file hash, account wire id) and lives in
+// imports.wire_id (like accounts.wire_id). transactions.import_id is the local
+// integer; it is mapped to the import's uuid at push and back at apply.
+
+export function importsTriggers(): string[] {
+  const off = APPLYING_OFF;
+  const pk = (p: 'NEW' | 'OLD') => `json_object('id', ${p}.id, 'wire', ${p}.wire_id)`;
+  const cols = [...CLIENT_IMPORT_FIELDS];
+  const json = `json_object(${cols.map((c) => `${q(c)}, NEW.${c}`).join(', ')})`;
+  const changed = `(SELECT json_group_object(k, v) FROM (${cols
+    .map((c, i) => `${i ? 'UNION ALL ' : ''}SELECT ${q(c)} AS k, NEW.${c} AS v WHERE OLD.${c} IS NOT NEW.${c}`)
+    .join(' ')}))`;
+  return [
+    trigger('_sync_imports_ins', 'INSERT ON imports', off, logOp('imports', 'upsert', pk('NEW'), json)),
+    trigger('_sync_imports_upd', `UPDATE OF ${cols.join(', ')} ON imports`,
+      `${off} AND (${anyChanged(cols)})`, logOp('imports', 'upsert', pk('NEW'), changed)),
+    trigger('_sync_imports_del', 'DELETE ON imports', off, logOp('imports', 'delete', pk('OLD'), null)),
+  ];
+}
+
+/** Rows with no op of any state for (tbl, id) yet, as backfill input. */
+async function hasOpFor(client: Pick<Client, 'execute'>, tbl: string, id: unknown): Promise<boolean> {
+  const r = await client.execute({
+    sql: `SELECT 1 FROM _oplog WHERE tbl = ? AND json_extract(pk, '$.id') = ? LIMIT 1`, args: [tbl, String(id)],
+  });
+  return r.rows.length > 0;
+}
+
+/**
+ * Upsert ops for local imports and CSV-source transactions (legacy ids; the
+ * engine re-keys them to derived ids and patches these ops). Parents first.
+ * `skipExisting`: leave out rows that already have an op (migration on top of
+ * migration 3 / reset never double-queues).
+ */
+export async function collectCsvBackfill(
+  client: Pick<Client, 'execute'>,
+  opts: { skipExisting?: boolean } = {},
+): Promise<OpInput[]> {
+  const ops: OpInput[] = [];
+  if (!(await tableExists(client, 'imports')) || !(await tableExists(client, 'transactions'))) return ops;
+  const add = (tbl: string, pk: Record<string, unknown>, fields: Record<string, unknown>) =>
+    ops.push({ tbl, pk, kind: 'upsert', fields, origin: 'backfill' });
+  for (const i of await rowsOf(client, 'SELECT * FROM imports ORDER BY id')) {
+    if (opts.skipExisting && (await hasOpFor(client, 'imports', i.id))) continue;
+    const f: Record<string, unknown> = {};
+    for (const c of CLIENT_IMPORT_FIELDS) f[c] = i[c] ?? null;
+    add('imports', { id: i.id, wire: null }, f);
+  }
+  for (const t of await rowsOf(client, `SELECT * FROM transactions WHERE source = 'csv' ORDER BY rowid`)) {
+    if (opts.skipExisting && (await hasOpFor(client, 'transactions', t.id))) continue;
+    const f: Record<string, unknown> = {};
+    for (const c of CLIENT_TX_FIELDS) f[c] = t[c] ?? null;
+    add('transactions', { id: t.id }, f);
+  }
+  return ops;
+}
+
+/** Migration 4: imports.wire_id, import triggers, backfill of imports and CSV rows. */
+export async function installImportsStatements(
+  client: Pick<Client, 'execute'>,
+  nowMs: number = Date.now(),
+): Promise<InStatement[]> {
+  const stmts: InStatement[] = [];
+  if (!(await tableExists(client, 'imports'))) return stmts;
+  if (!(await hasColumn(client, 'imports', 'wire_id'))) stmts.push('ALTER TABLE imports ADD COLUMN wire_id TEXT');
+  stmts.push('CREATE INDEX IF NOT EXISTS idx_imports_wire_id ON imports(wire_id)');
+  stmts.push(...importsTriggers());
+  const ops = await collectCsvBackfill(client, { skipExisting: true });
   stmts.push(...(await queueOpsStatements(client, ops, nowMs)));
   return stmts;
 }
