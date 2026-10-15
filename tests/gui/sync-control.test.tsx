@@ -59,6 +59,16 @@ describe('FilterBar sync control', () => {
     expect(await screen.findByText('Sync done — 1 new transaction')).toBeTruthy();
   });
 
+  it('appends the engine notes (web results carry a cycle summary) without calling it a failure', async () => {
+    const cycle = { pushed: 0, pulled: 1, superseded: 2, retrying: 0, held: 1, rejected: 1, clockSkew: false };
+    syncAll.mockResolvedValue(res({ added: 1, cycle } as Partial<SyncResults[number]>));
+    renderScreen(<div />, { filterBar: true });
+    await userEvent.click(await ready());
+    expect(await screen.findByText(
+      'Sync done — 1 new transaction · 2 edits merged with newer changes · 1 change waiting on other data, will retry · 1 change rejected by the server',
+    )).toBeTruthy();
+  });
+
   it('zero added is plural', async () => {
     renderScreen(<div />, { filterBar: true });
     await userEvent.click(await ready());

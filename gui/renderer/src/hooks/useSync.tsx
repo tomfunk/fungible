@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useQuery } from './useQuery.js';
 import { useBumpRefresh } from './useRefresh.js';
 import { useSyncProgress } from './useSyncProgress.js';
+import { cycleNotes, type CycleSummary } from '../../../shared/account-types.js';
 
 export type SyncResult = { ok: boolean; message: string };
 
@@ -40,7 +41,11 @@ export function useSync() {
         return { ok: false, message: `Sync failed: ${failed.map((r) => r.error).join('  ·  ')}` };
       }
       const added = results.reduce((s, r) => s + r.added, 0);
-      return { ok: true, message: `Sync done — ${added} new transaction${added === 1 ? '' : 's'}` };
+      // The web build's engine reports a cycle summary per result (merged edits,
+      // waiting changes, rejections, clock skew); desktop Plaid results carry none.
+      const notes = results.flatMap((r) => cycleNotes((r as { cycle?: CycleSummary }).cycle));
+      const tail = notes.length > 0 ? ` · ${notes.join(' · ')}` : '';
+      return { ok: true, message: `Sync done — ${added} new transaction${added === 1 ? '' : 's'}${tail}` };
     } catch {
       return { ok: false, message: 'Sync failed' };
     } finally {

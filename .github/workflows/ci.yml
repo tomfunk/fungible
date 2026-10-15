@@ -16,6 +16,11 @@ jobs:
 
       - run: npm run typecheck
 
+      # Browser app bundle; skipped until web/ exists on the branch.
+      - name: Build web app
+        if: ${{ hashFiles('web/tsconfig.json') != '' }}
+        run: npx vite build web
+
       - run: npm run test:coverage
 
       # Reporting only: no thresholds. Tolerates a missing summary (e.g. the

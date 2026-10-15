@@ -1,12 +1,11 @@
-import { EventEmitter } from 'node:events';
-
-const emitter = new EventEmitter();
+// Plain listener set (no node:events) so this module is bundle-portable.
+const listeners = new Set<() => void>();
 
 export function notifyChange(): void {
-  emitter.emit('change');
+  for (const fn of [...listeners]) fn();
 }
 
 export function onRefresh(fn: () => void): () => void {
-  emitter.on('change', fn);
-  return () => { emitter.off('change', fn); };
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
 }

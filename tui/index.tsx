@@ -7,6 +7,10 @@ import { writeFileSync } from 'node:fs';
 import { stripVTControlCharacters as stripAnsi } from 'node:util';
 import { initDb } from '../core/db.js';
 import { backupDb } from '../core/backup.js';
+import { configureAuth, hasSession } from '../core/auth-client.js';
+import { envFileAuthAdapter } from '../core/auth-env-file.js';
+import { configureSync, startBackgroundSync, runSyncCycle } from '../core/sync-client.js';
+import { getSyncMode } from '../core/sync-mode.js';
 import { syncAll } from '../core/sync.js';
 import { setSyncResult } from '../core/sync-status.js';
 import { notifyChange } from '../core/refresh.js';
@@ -40,6 +44,18 @@ const isDemo = process.argv.includes('--demo');
 await initDb();
 if (!isDemo) backupDb().catch(() => {});
 applyTheme((await getSetting(THEME_KEY)) ?? 'default');
+
+// Hosted sync: opt-in via FUNGIBLE_SYNC_URL. Unset => BYOK, untouched.
+const syncUrl = process.env.FUNGIBLE_SYNC_URL;
+if (syncUrl && !isDemo) {
+  configureAuth(envFileAuthAdapter(), syncUrl);
+  configureSync(syncUrl);
+  // Cycles are inert in BYOK; only start syncing for an already-connected install.
+  if ((await getSyncMode()) === 'hosted' && hasSession()) {
+    startBackgroundSync();
+    runSyncCycle().catch((err) => console.error('[sync] initial cycle:', err));
+  }
+}
 
 if (process.argv.includes('--setup')) {
   render(<Setup />);

@@ -1,0 +1,11 @@
+/* Same treatment as gui/renderer/src/App.module.css's .syncBanner and
+   gui/renderer/src/screens/Accounts.module.css's .keyBanner — no new banner
+   visual language, just the warning-color variant of that existing bar. */
+.banner {
+  flex: none;
+  padding: 8px 28px;
+  font-size: 0.85rem;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+}

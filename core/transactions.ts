@@ -1,10 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames, applyNameRulesWithRules, loadNameRules } from './rename.js';
 import { applyCategoriesToAll } from './categorize.js';
 import { validateRegex } from './rule-utils.js';
 import { applyTagRules } from './tag-rules.js';
+
+const randomUUID = (): string => globalThis.crypto.randomUUID();
 
 /**
  * True when `s` is a real calendar date in YYYY-MM-DD form. Used by both the

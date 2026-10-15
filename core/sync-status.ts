@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import type { SyncItemResult } from './sync.js';
 
 // Session-only store for the most recent sync's per-item failures, shared by
@@ -9,7 +8,11 @@ import type { SyncItemResult } from './sync.js';
 
 export type SyncFailure = { itemId: string; error: string };
 
-const emitter = new EventEmitter();
+// Plain listener set (no node:events) so this module is bundle-portable.
+const listeners = new Set<() => void>();
+const emitter = {
+  emit(_e: 'status'): void { for (const fn of [...listeners]) fn(); },
+};
 let failures: SyncFailure[] = [];
 
 /** Record a sync's outcome. Keeps only the failed items; a clean run clears all. */
@@ -48,6 +51,6 @@ export function clearSyncFailures(): void {
 }
 
 export function onSyncStatus(fn: () => void): () => void {
-  emitter.on('status', fn);
-  return () => { emitter.off('status', fn); };
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
 }

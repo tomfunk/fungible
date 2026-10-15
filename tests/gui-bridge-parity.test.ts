@@ -338,6 +338,20 @@ const EXPECTED_UNBRIDGED: Record<string, Claim> = {
   // Pure formatter for syncAll's onProgress steps; the callback can't cross IPC
   describeSyncProgress: { kind: 'gui-unused', file: 'gui/main/sync-progress-ipc.ts', needle: 'sync-progress', why: 'progress callback cannot cross IPC; the GUI pushes an in-progress flag over the sync-progress channel instead' },
 
+  // Account / op-log sync: consumed directly in gui/main/account-sync.ts; the renderer reaches
+  // it only through the `account` namespace in gui/main/bridge.ts (connect, syncNow, disconnect, getSyncState).
+  isAuthConfigured: { kind: 'main-direct', module: 'auth-client', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  sessionEmail: { kind: 'main-direct', module: 'auth-client', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  runSyncCycle: { kind: 'main-direct', module: 'sync-client', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  startBackgroundSync: { kind: 'main-direct', module: 'sync-client', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  stopBackgroundSync: { kind: 'main-direct', module: 'sync-client', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  getSyncInfo: { kind: 'main-direct', module: 'sync-client', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  getSyncMode: { kind: 'main-direct', module: 'sync-mode', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  connectAccount:{ kind: 'main-direct', module: 'sync-mode', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  disconnectAccount:{ kind: 'main-direct', module: 'sync-mode', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  SyncError: { kind: 'main-direct', module: 'sync-mode', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+  MigrateError: { kind: 'main-direct', module: 'migrate', files: ['gui/main/account-sync.ts'], why: 'used by gui/main/account-sync.ts behind the bridge account namespace' },
+
   // Plaid error text
   plaidErrorMessage: { kind: 'main-direct', module: 'plaid', files: ['gui/main/app.ts'], why: 'gui/main/app.ts formats startup-sync errors with it; syncAll results already carry formatted errors' },
 

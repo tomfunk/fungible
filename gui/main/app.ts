@@ -10,6 +10,7 @@ import { setSyncResult } from '../../core/sync-status.js';
 import { plaidErrorMessage } from '../../core/plaid.js';
 import { notifyChange } from '../../core/refresh.js';
 import { registerBridge } from './bridge.js';
+import { configureSyncFromEnv, startSyncBackgroundIfConnected, stopSyncBackground } from './account-sync.js';
 import { registerRefreshPush } from './refresh-ipc.js';
 import { registerSyncStatusPush } from './sync-status-ipc.js';
 import { registerSyncProgressPush } from './sync-progress-ipc.js';
@@ -51,6 +52,14 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
 
+    // Opt-in account sync (FUNGIBLE_SYNC_URL), never in demo mode. With the variable
+    // unset nothing is configured and the app is the plain local (BYOK) app.
+    // Background sync starts only for an install that is in hosted mode AND
+    // has a session; it never starts one for a local-only install.
+    if (configureSyncFromEnv({ demo: isDemo })) {
+      startSyncBackgroundIfConnected().catch((err) => console.error('[gui] sync start failed:', err));
+    }
+
     registerBridge();
     registerRefreshPush();
     registerSyncStatusPush();
@@ -85,6 +94,8 @@ if (!app.requestSingleInstanceLock()) {
     }
 
   });
+
+  app.on('before-quit', () => stopSyncBackground());
 
   app.on('window-all-closed', () => {
     app.quit();
