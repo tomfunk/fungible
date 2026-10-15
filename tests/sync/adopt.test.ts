@@ -273,7 +273,7 @@ describe('BYOK adoption', () => {
     });
 
     it('does nothing in BYOK mode', async () => {
-      await disableHostedMode({ client: d.client });
+      await disableHostedMode(d.client);
       await localAccount('old-chk', 'Checking', 'depository', '1234');
       await localTx('csv-a', 'old-chk', '2026-07-10', 'Costco', 80, { source: 'csv' });
       await localTx('p-a', 'old-chk', '2026-07-10', 'Costco', 80);
