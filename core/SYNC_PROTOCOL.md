@@ -63,6 +63,16 @@ Rules the server enforces (and the client mirrors):
   client-owned transactions, balances (and imports) and appends **one delete op
   per child with `device_id` null**, which every device including the origin
   receives: apply idempotently, never echo.
+- `balance_history` INSERTs must carry `origin: 'client'` in `fields` (the owner
+  column is not inherited from the account; missing: `invalid_source`). An
+  update need not send it; if sent it must equal the stored value.
+- the server does NOT emit delete ops for `transaction_tags` links when a client
+  transaction or account is deleted (no FK). The client sends explicit link
+  deletes (pk `{transaction_id, tag_id}`) with the transaction delete, and for
+  an account delete for the links of all its child transactions. Child
+  transaction/balance deletes queued in the same batch as the account delete
+  are dropped (they would come back `stale`); link deletes are kept. Import
+  deletes do not cascade to rows.
 - `row_missing` is also returned when the parent account does not exist on the
   server (yet, or any more): retryable, the op stays queued.
 - `(account_id, dedup_key)` is unique among live client transactions

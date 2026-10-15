@@ -352,7 +352,7 @@ export function clientOwnedTriggers(): string[] {
     `json_object('account_id', ${p}.account_id, 'wire', ${wireOf(`${p}.account_id`)}, 'date', ${p}.date)`;
   out.push(trigger('_sync_balance_history_ins', 'INSERT ON balance_history',
     `${off} AND ${acctOwnedSql('NEW.account_id')}`,
-    logOp('balance_history', 'upsert', bpk('NEW'), `json_object('balance', NEW.balance)`)));
+    logOp('balance_history', 'upsert', bpk('NEW'), `json_object('balance', NEW.balance, 'origin', 'client')`)));
   out.push(trigger('_sync_balance_history_upd', 'UPDATE OF balance ON balance_history',
     `${off} AND ${acctOwnedSql('NEW.account_id')} AND OLD.balance IS NOT NEW.balance AND OLD.account_id IS NEW.account_id AND OLD.date IS NEW.date`,
     logOp('balance_history', 'upsert', bpk('NEW'), `json_object('balance', NEW.balance)`)));
@@ -407,7 +407,7 @@ export async function collectClientBackfill(client: Pick<Client, 'execute'>): Pr
     for (const b of await rowsOf(client, 'SELECT account_id, date, balance FROM balance_history ORDER BY account_id, date')) {
       if (!ids.has(String(b.account_id))) continue;
       const a = accts.find((x) => String(x.id) === String(b.account_id));
-      add('balance_history', { account_id: b.account_id, wire: a?.wire_id ?? null, date: b.date }, { balance: b.balance });
+      add('balance_history', { account_id: b.account_id, wire: a?.wire_id ?? null, date: b.date }, { balance: b.balance, origin: 'client' });
     }
   }
   return ops;
