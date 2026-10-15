@@ -203,6 +203,14 @@ describe('core/db busy_timeout', () => {
 
 // ─── 1d: backup and restore ───────────────────────────────────────────────────
 
+/** The fungible.db inside the single daily snapshot dir under <dir>/backups. */
+function snapshotDbPath(dataDir: string): string {
+  const root = path.join(dataDir, 'backups');
+  const snap = fs.readdirSync(root).find((n) => n.endsWith('-daily'));
+  if (!snap) throw new Error(`no daily snapshot in ${root}`);
+  return path.join(root, snap, 'fungible.db');
+}
+
 describe('backup and restore', () => {
   const TABLES = ['accounts', 'transactions', 'tags', 'transaction_tags', 'plaid_items', 'balance_history'];
   const dump = async (db: Client, table: string) =>
@@ -226,17 +234,16 @@ describe('backup and restore', () => {
       { sql: "INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item-1', ?, 'Bank')", args: [crypto.encryptToken(token)] },
       "INSERT INTO balance_history (account_id, balance, date) VALUES ('a1', 100.5, '2026-02-01'), ('a1', 120.5, '2026-02-02'), ('a2', -50, '2026-02-02')",
     ], 'write');
-    const today = new Date().toISOString().slice(0, 10);
-    const backupPath = path.join(t.dir, 'backups', `fungible.${today}.bak`);
-    return { t, core, crypto, backup, db, token, backupPath };
+    return { t, core, crypto, backup, db, token };
   }
 
   it('produces a standalone, intact copy with the same rows and a still-decryptable token', async () => {
-    const { db, backup, backupPath, crypto, token } = await seed();
+    const { t, db, backup, crypto, token } = await seed();
     await backup.backupDb();
 
+    const backupPath = snapshotDbPath(t.dir);
     expect(fs.existsSync(backupPath)).toBe(true);
-    const copy = createClient({ url: `file:${backupPath}` });
+    const copy = createClient({ url: `file:${snapshotDbPath(t.dir)}` });
     clients.push(copy);
     expect(await integrity(copy)).toBe('ok');
     expect(String((await copy.execute('PRAGMA foreign_key_check')).rows.length)).toBe('0');
@@ -250,14 +257,14 @@ describe('backup and restore', () => {
   });
 
   it('restoring the backup over the database and re-running initDb is idempotent and loses nothing', async () => {
-    const { t, db, backup, backupPath } = await seed();
+    const { t, db, backup } = await seed();
     await backup.backupDb();
     const before: Record<string, unknown[]> = {};
     for (const table of TABLES) before[table] = await dump(db, table);
     db.close();
 
     // Restore: copy the backup over the live file, then reopen it as a fresh process would.
-    fs.copyFileSync(backupPath, t.dbPath);
+    fs.copyFileSync(snapshotDbPath(t.dir), t.dbPath);
     const { db: restored, initDb } = await loadCore(t, { init: false });
     await initDb();
     await initDb();
@@ -267,7 +274,7 @@ describe('backup and restore', () => {
   });
 
   it('excludes a transaction another connection has not committed', async () => {
-    const { t, db, backup, backupPath } = await seed();
+    const { t, db, backup } = await seed();
     const other = createClient({ url: `file:${t.dbPath}` });
     clients.push(other);
     const open = await other.transaction('write');
@@ -279,7 +286,7 @@ describe('backup and restore', () => {
       await open.rollback();
       open.close();
     }
-    const copy = createClient({ url: `file:${backupPath}` });
+    const copy = createClient({ url: `file:${snapshotDbPath(t.dir)}` });
     clients.push(copy);
     expect(await count(copy, 'transactions')).toBe(25);
     expect((await copy.execute("SELECT id FROM accounts WHERE id = 'ghost'")).rows).toHaveLength(0);
@@ -304,8 +311,7 @@ describe('backup and restore', () => {
     const rs = await writers;
     expect(rs.flatMap((r) => r.report?.errors ?? ['no report'])).toEqual([]);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const copy = createClient({ url: `file:${path.join(t.dir, 'backups', `fungible.${today}.bak`)}` });
+    const copy = createClient({ url: `file:${snapshotDbPath(t.dir)}` });
     clients.push(copy);
     expect(await integrity(copy)).toBe('ok');
     const n = await count(copy, 'transactions');

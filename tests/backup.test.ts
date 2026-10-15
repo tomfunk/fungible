@@ -1,17 +1,15 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createClient } from '@libsql/client';
 
 // vi.hoisted runs before vi.mock factories, giving us a temp dir that backup.ts
-// can pick up when it computes its module-level DB_PATH and BACKUP_DIR constants.
+// can pick up as DATA_DIR.
 const { TEST_DATA_DIR } = vi.hoisted(() => {
   const os = require('os') as typeof import('os');
   const fs = require('fs') as typeof import('fs');
   const path = require('path') as typeof import('path');
-  const dir = path.join(os.tmpdir(), `fungible-backup-${Date.now()}`);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fungible-backup-'));
   return { TEST_DATA_DIR: dir };
 });
 
@@ -22,30 +20,24 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
-import { backupDb } from '../core/backup.js';
+import { backupDb, getBackupStatus } from '../core/backup.js';
+import { snapshot, listSnapshots } from '../core/snapshot.js';
 import { setSetting, BACKUP_INCLUDE_KEY_KEY } from '../core/settings.js';
-import { useFixedClock, FIXED_NOW_ISO } from './helpers/fakeClock.js';
-
-useFixedClock();
 
 const BACKUP_DIR = path.join(TEST_DATA_DIR, 'backups');
-const TODAY = FIXED_NOW_ISO.slice(0, 10);
-const BACKUP_PATH = path.join(BACKUP_DIR, `fungible.${TODAY}.bak`);
-const KEY_PATH = path.join(TEST_DATA_DIR, 'key');
-const KEY_BACKUP_PATH = path.join(BACKUP_DIR, `key.${TODAY}.bak`);
-const CANVAS_HISTORY_PATH = path.join(TEST_DATA_DIR, 'canvas-history.json');
-const CANVAS_BACKUP_PATH = path.join(BACKUP_DIR, `canvas-history.${TODAY}.bak`);
 
 beforeEach(async () => {
-  // Fake db file on disk so the existsSync guard passes
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
+  for (const e of fs.readdirSync(TEST_DATA_DIR)) fs.rmSync(path.join(TEST_DATA_DIR, e), { recursive: true, force: true });
+  // backupDb only checks the file exists; the data comes from the (mocked) client.
   fs.writeFileSync(path.join(TEST_DATA_DIR, 'fungible.db'), '');
-  fs.writeFileSync(KEY_PATH, 'dummy-key-material');
-  // Reset backup dir and in-memory data between tests
-  if (fs.existsSync(BACKUP_DIR)) fs.rmSync(BACKUP_DIR, { recursive: true });
-  if (fs.existsSync(CANVAS_HISTORY_PATH)) fs.rmSync(CANVAS_HISTORY_PATH);
   await db.execute('DELETE FROM tags');
   await db.execute('DELETE FROM settings');
+});
+
+afterEach(() => {
+  delete process.env.FUNGIBLE_BACKUP_DAYS;
+  vi.restoreAllMocks();
 });
 
 afterAll(() => {
@@ -53,162 +45,75 @@ afterAll(() => {
 });
 
 describe('backupDb', () => {
-  it('creates a single backup file containing data written to the db', async () => {
+  it('writes one verified daily snapshot containing the data and records success', async () => {
     await db.execute("INSERT INTO tags (name) VALUES ('brussels-trip')");
 
     await backupDb();
 
-    expect(fs.existsSync(BACKUP_PATH)).toBe(true);
-    const backup = createClient({ url: `file:${BACKUP_PATH}` });
-    const { rows } = await backup.execute('SELECT name FROM tags');
+    const snaps = listSnapshots(TEST_DATA_DIR);
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0].reason).toBe('daily');
+    const copy = createClient({ url: `file:${path.join(snaps[0].dir, 'fungible.db')}` });
+    const { rows } = await copy.execute('SELECT name FROM tags');
+    copy.close();
     expect(rows.map((r) => r.name)).toContain('brussels-trip');
+
+    const status = getBackupStatus(TEST_DATA_DIR);
+    expect(status).toMatchObject({ lastError: null, count: 1, newestDir: snaps[0].dir });
+    expect(status.lastSuccessAt).toBeTruthy();
   });
 
-  it('does not overwrite an existing backup for today', async () => {
+  it('does not take a second snapshot on the same day', async () => {
     await backupDb();
-    const sizeBefore = fs.statSync(BACKUP_PATH).size;
-
     await db.execute("INSERT INTO tags (name) VALUES ('extra-tag')");
     await backupDb();
-
-    expect(fs.statSync(BACKUP_PATH).size).toBe(sizeBefore);
+    expect(listSnapshots(TEST_DATA_DIR)).toHaveLength(1);
   });
 
-  it('rotates backups older than keepDays', async () => {
-    fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
-      fs.writeFileSync(path.join(BACKUP_DIR, `fungible.${d}.bak`), '');
-    }
+  it('does not throw on failure; records the error and logs it once', async () => {
+    const real = db.execute.bind(db);
+    vi.spyOn(db, 'execute').mockImplementation(((q: unknown) => {
+      if (typeof q === 'object' && q && 'sql' in q && String((q as { sql: string }).sql).startsWith('VACUUM')) {
+        return Promise.reject(new Error('disk full'));
+      }
+      return real(q as never);
+    }) as never);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    process.env.FUNGIBLE_BACKUP_DAYS = '2';
-    try {
-      await backupDb();
-    } finally {
-      delete process.env.FUNGIBLE_BACKUP_DAYS;
-    }
+    await expect(backupDb()).resolves.toBeUndefined();
+    await backupDb();
 
-    const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.bak'));
-    // keepDays=2: today + 2026-01-03 kept; 2026-01-01 and 2026-01-02 rotated out
-    expect(files).not.toContain('fungible.2026-01-01.bak');
-    expect(files).not.toContain('fungible.2026-01-02.bak');
-    expect(files).toContain('fungible.2026-01-03.bak');
-    expect(files).toContain(`fungible.${TODAY}.bak`);
+    expect(getBackupStatus(TEST_DATA_DIR).lastError).toMatch(/disk full/);
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    expect(listSnapshots(TEST_DATA_DIR)).toHaveLength(0);
   });
 
-  it('skips backup when FUNGIBLE_BACKUP_DAYS is 0', async () => {
+  it('skips daily snapshots when FUNGIBLE_BACKUP_DAYS <= 0 but named ones still work', async () => {
     process.env.FUNGIBLE_BACKUP_DAYS = '0';
-    try {
-      await backupDb();
-    } finally {
-      delete process.env.FUNGIBLE_BACKUP_DAYS;
-    }
+    await backupDb();
+    expect(fs.existsSync(BACKUP_DIR)).toBe(false);
 
-    expect(fs.existsSync(BACKUP_PATH)).toBe(false);
+    const r = await snapshot('manual', { dataDir: TEST_DATA_DIR });
+    expect(fs.existsSync(path.join(r.dir, 'fungible.db'))).toBe(true);
   });
 
-  describe('key backup (backupIncludeKey setting)', () => {
-    it('does not back up the key file when the setting is off (default)', async () => {
-      await backupDb();
+  it('includes the key only when backup_include_key is on, with mode 0600', async () => {
+    fs.writeFileSync(path.join(TEST_DATA_DIR, 'key'), 'dummy-key-material');
+    await backupDb();
+    expect(fs.existsSync(path.join(listSnapshots(TEST_DATA_DIR)[0].dir, 'key'))).toBe(false);
 
-      expect(fs.existsSync(KEY_BACKUP_PATH)).toBe(false);
-    });
-
-    it('backs up the key file, chmod 0o600, when the setting is on', async () => {
-      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
-
-      await backupDb();
-
-      expect(fs.existsSync(KEY_BACKUP_PATH)).toBe(true);
-      expect(fs.readFileSync(KEY_BACKUP_PATH, 'utf8')).toBe('dummy-key-material');
-      expect(fs.statSync(KEY_BACKUP_PATH).mode & 0o777).toBe(0o600);
-    });
-
-    it('does not back up the key when the setting is on but no key file exists', async () => {
-      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
-      fs.unlinkSync(KEY_PATH);
-
-      await backupDb();
-
-      expect(fs.existsSync(KEY_BACKUP_PATH)).toBe(false);
-    });
-
-    it('does not overwrite an existing key backup for today', async () => {
-      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
-      await backupDb();
-      fs.writeFileSync(KEY_PATH, 'rotated-key-material');
-
-      await backupDb();
-
-      expect(fs.readFileSync(KEY_BACKUP_PATH, 'utf8')).toBe('dummy-key-material');
-    });
-
-    it('rotates key backups older than keepDays, same cadence as db backups', async () => {
-      await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
-      fs.mkdirSync(BACKUP_DIR, { recursive: true });
-      for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
-        fs.writeFileSync(path.join(BACKUP_DIR, `key.${d}.bak`), '');
-      }
-
-      process.env.FUNGIBLE_BACKUP_DAYS = '2';
-      try {
-        await backupDb();
-      } finally {
-        delete process.env.FUNGIBLE_BACKUP_DAYS;
-      }
-
-      const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.bak'));
-      expect(files).not.toContain('key.2026-01-01.bak');
-      expect(files).not.toContain('key.2026-01-02.bak');
-      expect(files).toContain('key.2026-01-03.bak');
-      expect(files).toContain(`key.${TODAY}.bak`);
-    });
+    fs.rmSync(BACKUP_DIR, { recursive: true });
+    await setSetting(BACKUP_INCLUDE_KEY_KEY, 'true');
+    await backupDb();
+    const keyCopy = path.join(listSnapshots(TEST_DATA_DIR)[0].dir, 'key');
+    expect(fs.readFileSync(keyCopy, 'utf8')).toBe('dummy-key-material');
+    expect(fs.statSync(keyCopy).mode & 0o777).toBe(0o600);
   });
 
-  describe('canvas history backup', () => {
-    it('does not create a canvas history backup when no history file exists', async () => {
-      await backupDb();
-
-      expect(fs.existsSync(CANVAS_BACKUP_PATH)).toBe(false);
-    });
-
-    it('copies canvas-history.json into the backup dir', async () => {
-      fs.writeFileSync(CANVAS_HISTORY_PATH, '[{"id":"1","title":"trip"}]');
-
-      await backupDb();
-
-      expect(fs.existsSync(CANVAS_BACKUP_PATH)).toBe(true);
-      expect(fs.readFileSync(CANVAS_BACKUP_PATH, 'utf8')).toBe('[{"id":"1","title":"trip"}]');
-    });
-
-    it('does not overwrite an existing canvas history backup for today', async () => {
-      fs.writeFileSync(CANVAS_HISTORY_PATH, '[{"id":"1","title":"trip"}]');
-      await backupDb();
-
-      fs.writeFileSync(CANVAS_HISTORY_PATH, '[{"id":"1","title":"trip"},{"id":"2","title":"other"}]');
-      await backupDb();
-
-      expect(fs.readFileSync(CANVAS_BACKUP_PATH, 'utf8')).toBe('[{"id":"1","title":"trip"}]');
-    });
-
-    it('rotates canvas history backups older than keepDays, same cadence as db backups', async () => {
-      fs.writeFileSync(CANVAS_HISTORY_PATH, '[]');
-      fs.mkdirSync(BACKUP_DIR, { recursive: true });
-      for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
-        fs.writeFileSync(path.join(BACKUP_DIR, `canvas-history.${d}.bak`), '[]');
-      }
-
-      process.env.FUNGIBLE_BACKUP_DAYS = '2';
-      try {
-        await backupDb();
-      } finally {
-        delete process.env.FUNGIBLE_BACKUP_DAYS;
-      }
-
-      const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.bak'));
-      expect(files).not.toContain('canvas-history.2026-01-01.bak');
-      expect(files).not.toContain('canvas-history.2026-01-02.bak');
-      expect(files).toContain('canvas-history.2026-01-03.bak');
-      expect(files).toContain(`canvas-history.${TODAY}.bak`);
-    });
+  it('copies canvas-history.json into the snapshot', async () => {
+    fs.writeFileSync(path.join(TEST_DATA_DIR, 'canvas-history.json'), '[{"id":"1","title":"trip"}]');
+    await backupDb();
+    const copy = path.join(listSnapshots(TEST_DATA_DIR)[0].dir, 'canvas-history.json');
+    expect(fs.readFileSync(copy, 'utf8')).toBe('[{"id":"1","title":"trip"}]');
   });
 });
