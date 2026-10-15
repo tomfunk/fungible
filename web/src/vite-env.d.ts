@@ -2,8 +2,8 @@
 
 interface ImportMetaEnv {
   /** Base URL of a running sync server instance, e.g. http://localhost:3000.
-   *  Defaults to http://localhost:3000 (the sync server's own PORT default) when
-   *  unset. See web/src/account-client.ts. */
+   *  Unset or empty: the web app is purely local (no Connect UI, no sync
+   *  requests, no default URL). See web/src/account-client.ts. */
   readonly VITE_FUNGIBLE_SYNC_URL?: string;
 }
 

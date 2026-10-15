@@ -6,7 +6,7 @@ import { KeyHints } from '../components/KeyHints.js';
 import { useUiPrefs, type PaletteName, type RowDensity, type Theme } from '../hooks/useUiPrefs.js';
 import { useQuery } from '../hooks/useQuery.js';
 import {
-  cycleNotes, describeCycle, SYNC_DISCLOSURE, type AccountState, type CycleSummary,
+  cycleNotes, describeCycle, describeError, SYNC_DISCLOSURE, type AccountState, type CycleSummary,
 } from '../../../shared/account-types.js';
 import styles from './Settings.module.css';
 
@@ -201,6 +201,7 @@ function AccountPanel() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgDetail, setMsgDetail] = useState<string | undefined>(undefined);
   const [mismatch, setMismatch] = useState<{ createAccount: boolean } | null>(null);
   const [eraseOpen, setEraseOpen] = useState(false);
   const [eraseWord, setEraseWord] = useState('');
@@ -209,10 +210,14 @@ function AccountPanel() {
     if (busy) return;
     setBusy(true);
     setMsg(null);
+    setMsgDetail(undefined);
     try {
       await fn();
     } catch (e) {
-      setMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      const d = describeError(e);
+      console.error('account action failed:', d.detail);
+      setMsg(`Error: ${d.message}`);
+      setMsgDetail(d.network ? d.detail : undefined);
     } finally {
       setBusy(false);
       setReload((n) => n + 1);
@@ -409,7 +414,7 @@ function AccountPanel() {
       )}
 
       {notes.length > 0 && !msg && <p className="dim">{notes.join(' · ')}</p>}
-      {msg && <p className="dim" role="status">{msg}</p>}
+      {msg && <p className="dim" role="status" title={msgDetail}>{msg}</p>}
     </section>
   );
 }

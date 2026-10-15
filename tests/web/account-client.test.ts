@@ -48,7 +48,8 @@ let loggedInAs = USER;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-async function load(opts: { hint?: boolean } = {}) {
+async function load(opts: { hint?: boolean; url?: string } = {}) {
+  vi.stubEnv('VITE_FUNGIBLE_SYNC_URL', opts.url ?? BASE);
   storage = fakeLocalStorage(opts.hint ? { [SESSION_HINT_KEY]: '1' } : {});
   vi.stubGlobal('localStorage', storage);
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL, init?: RequestInit) => {
@@ -80,10 +81,28 @@ beforeEach(async () => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   device.close();
 });
 
 const calledPaths = () => requests.map((r) => r.path);
+
+describe('unconfigured build (VITE_FUNGIBLE_SYNC_URL unset)', () => {
+  it('is purely local: no resume, no sync, no account state, not a single request', async () => {
+    const c = await load({ hint: true, url: '' });
+    expect(c.isSyncConfigured()).toBe(false);
+    expect(c.BASE_URL).toBeNull();
+    expect(await c.resumeSession()).toBe('none');
+    expect(await c.getAccountState()).toBeNull();
+    expect(await c.isConnected()).toBe(false);
+    await c.startSyncSession();
+    const r = await c.syncNow({ refreshPlaid: true });
+    expect(r[0]).toMatchObject({ skipped: true });
+    expect(r[0].error).toBeUndefined();
+    await expect(c.connect('a@b.test', 'pw')).rejects.toThrow(/not configured/);
+    expect(requests).toHaveLength(0);
+  });
+});
 
 describe('resumeSession', () => {
   it('makes no network call when this browser has never logged in', async () => {
@@ -161,7 +180,7 @@ describe('connect', () => {
     routes['/auth/login'] = () => json({ error: 'invalid_credentials' }, 401);
     const c = await load();
     await expect(c.connect('me@example.test', 'nope')).rejects.toMatchObject({ code: 'invalid_credentials' });
-    expect((await c.getAccountState()).mode).toBe('byok');
+    expect((await c.getAccountState())?.mode).toBe('byok');
     expect(storage.m.has(SESSION_HINT_KEY)).toBe(false);
   });
 
@@ -304,7 +323,7 @@ describe('sign out', () => {
     expect(await q(device.client, "SELECT value FROM _sync_state WHERE key = 'mode'")).toEqual([{ value: 'byok' }]);
     expect(storage.m.has(SESSION_HINT_KEY)).toBe(false);
     expect(calledPaths()).toContain('/auth/logout');
-    expect((await c.getAccountState()).signedIn).toBe(false);
+    expect((await c.getAccountState())?.signedIn).toBe(false);
   });
 
   it('plain sign out pushes pending edits first (one final cycle)', async () => {

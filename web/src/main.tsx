@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { installBridge } from './bridge.js';
 import { initDb } from './core-bridge.js';
-import { resumeSession, startSyncSession, setConnState } from './account-client.js';
+import { resumeSession, startSyncSession, setConnState, isSyncConfigured } from './account-client.js';
 import { getSyncMode } from '../../core/sync-mode.js';
 import { SyncStatusBanner } from './SyncStatusBanner.js';
 import { TabLockedScreen, StartupFailedScreen, isTabLockedError } from './BootScreens.js';
@@ -59,8 +59,9 @@ async function boot() {
       : <StartupFailedScreen message={err instanceof Error ? err.message : String(err)} />);
     return;
   }
-  const resumed = await resumeSession();
-  if (resumed === 'none' && (await getSyncMode()) === 'hosted') {
+  // No VITE_FUNGIBLE_SYNC_URL: purely local, no resume attempt, no banner state.
+  const resumed = isSyncConfigured() ? await resumeSession() : 'none';
+  if (isSyncConfigured() && resumed === 'none' && (await getSyncMode()) === 'hosted') {
     setConnState('error', 'Signed out. Sign in from Settings to resume syncing.');
   }
   renderShell();

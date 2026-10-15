@@ -41,12 +41,14 @@ beforeEach(async () => {
     if (path === '/auth/logout') return json({ ok: true });
     return server.fetch(input, init);
   }));
+  vi.stubEnv('VITE_FUNGIBLE_SYNC_URL', 'http://localhost:3000');
   vi.resetModules();
   const mod = await import('../../web/src/bridge.js');
   mod.installBridge();
   bridge = (window as unknown as { __bridge: typeof bridge }).__bridge;
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   const c = await import('../../web/src/account-client.js');
   c.stopBackgroundCycles();
   vi.unstubAllGlobals();
@@ -76,6 +78,17 @@ describe('web bridge', () => {
     expect(res[0]).toMatchObject({ skipped: true });
     expect(res[0].error).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('without VITE_FUNGIBLE_SYNC_URL the account namespace reports unconfigured and nothing hits the network', async () => {
+    vi.stubEnv('VITE_FUNGIBLE_SYNC_URL', '');
+    vi.resetModules();
+    (await import('../../web/src/bridge.js')).installBridge();
+    const b = (window as unknown as { __bridge: typeof bridge }).__bridge;
+    expect(await b.call('account', 'getSyncState', [])).toBeNull();
+    expect(await b.call('plaid', 'isConfigured', [])).toBe(false);
+    await expect(b.call('account', 'connect', ['a@b.test', 'pw', {}])).rejects.toThrow(/not configured/);
+    expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
 
   it('account.connect signs in, pulls, and the panel state reflects the connection', async () => {

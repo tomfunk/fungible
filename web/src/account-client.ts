@@ -6,6 +6,8 @@
 // the desktop app and TUI run); this module only configures them for a browser
 // and adapts their results to what the renderer expects.
 //
+//   - VITE_FUNGIBLE_SYNC_URL unset/empty: the build is purely local. No Connect UI
+//     (getAccountState() is null), no resume, no auth/sync requests, no default URL.
 //   - The web app starts local-only (mode 'byok'): nothing here touches the
 //     network until the user connects from Settings.
 //   - tokens: auth-adapter.ts keeps the access token in memory and relies on
@@ -27,12 +29,21 @@ import { connectAccount, disableHostedMode, getSyncMode, SyncError } from '../..
 import { configureSync, runSyncCycle, getSyncInfo, type CycleStats } from '../../core/sync-client.js';
 import { isPersistent, resetBrowserDb } from '../../core/db.browser.js';
 import { notifyChange } from '../../core/refresh.js';
+import { describeError } from '../../gui/shared/account-types.js';
 import type {
   AccountState, ConnectOptions, ConnectResult, CycleSummary, EraseResult,
 } from '../../gui/shared/account-types.js';
 import { browserAuthAdapter, readSessionHint } from './auth-adapter.js';
 
-export const BASE_URL: string = (import.meta.env.VITE_FUNGIBLE_SYNC_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
+/** The sync server this build talks to, or null when VITE_FUNGIBLE_SYNC_URL is
+ *  unset/empty: the web app is then purely local (no Connect UI, no auth or sync
+ *  requests, no default URL). */
+export const BASE_URL: string | null = (import.meta.env.VITE_FUNGIBLE_SYNC_URL ?? '').trim().replace(/\/+$/, '') || null;
+
+/** True when this build has a sync server to connect to. */
+export function isSyncConfigured(): boolean {
+  return BASE_URL !== null;
+}
 
 // ─── Connectivity state ─────────────────────────────────────────────────────
 // 'unreachable': network failure or 5xx. 'error': the server answered but a
@@ -97,6 +108,7 @@ let configured = false;
 /** Idempotent. Called at module load; exported for tests that stub fetch first. */
 export function configureWebEngine(): void {
   if (configured) return;
+  if (BASE_URL === null) return;
   configured = true;
   configureAuth(adapter, BASE_URL, { fetch: authFetch, credentials: 'include' });
   configureSync(BASE_URL, { fetch: authFetch });
@@ -130,6 +142,7 @@ export function hasSession(): boolean {
 /** This install syncs and has a session: the only state in which the
  *  server-backed features (Plaid, the LLM proxy) can be used. */
 export async function isConnected(): Promise<boolean> {
+  if (!isSyncConfigured()) return false;
   return (await getSyncMode()) === 'hosted' && hasSession();
 }
 
@@ -139,6 +152,7 @@ export type ResumeResult = 'resumed' | 'none' | 'offline';
  *  logged in (no hint). 'offline' means a session probably exists but the
  *  server could not be reached: boot the shell from local data, keep the hint. */
 export async function resumeSession(): Promise<ResumeResult> {
+  if (!isSyncConfigured()) return 'none';
   if (adapter.getAccessToken()) return 'resumed';
   if (!readSessionHint()) return 'none';
   try {
@@ -157,6 +171,7 @@ const FRIENDLY: Record<string, string> = {
  *  (no file snapshot: the browser DB has none), then the first cycle (auto pull)
  *  and the background timer. Throws AuthError for bad credentials. */
 export async function connect(email: string, password: string, opts: ConnectOptions = {}): Promise<ConnectResult> {
+  if (!isSyncConfigured()) throw new Error('Sync is not configured (VITE_FUNGIBLE_SYNC_URL is not set).');
   try {
     await connectAccount(email.trim(), password, {
       createAccount: !!opts.createAccount,
@@ -178,6 +193,7 @@ export async function connect(email: string, password: string, opts: ConnectOpti
 }
 
 async function postLogout(): Promise<void> {
+  if (BASE_URL === null) return;
   try {
     await fetch(`${BASE_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
   } catch {
@@ -241,7 +257,10 @@ export async function eraseLocalData(): Promise<void> {
   await resetBrowserDb();
 }
 
-export async function getAccountState(): Promise<AccountState> {
+/** null when this build has no sync server configured: Settings renders no
+ *  Account section at all (same contract as the desktop app without FUNGIBLE_SYNC_URL). */
+export async function getAccountState(): Promise<AccountState | null> {
+  if (!isSyncConfigured()) return null;
   const info = await getSyncInfo();
   return {
     platform: 'web',
@@ -263,6 +282,7 @@ type Json = Record<string, unknown>;
 type RequestOpts = Omit<RequestInit, 'body'> & { json?: Json };
 
 async function request<T>(path: string, init: RequestOpts = {}, retried = false): Promise<T> {
+  if (BASE_URL === null) throw new Error('Sync is not configured (VITE_FUNGIBLE_SYNC_URL is not set).');
   const { json, headers, ...rest } = init;
   const access = await getAccessToken().catch(() => adapter.getAccessToken());
   const res = await authFetch(`${BASE_URL}${path}`, {
@@ -318,8 +338,8 @@ export type WebSyncResult = {
 function describeFailure(err: unknown): { text: string; network: boolean } {
   if (err instanceof SyncError) return { text: FRIENDLY[err.code] ?? `Sync error (${err.code})`, network: false };
   if (err instanceof AuthError) return { text: FRIENDLY[err.code] ?? `Auth error (${err.code})`, network: false };
-  const msg = err instanceof Error ? err.message : String(err);
-  return { text: msg, network: err instanceof TypeError };
+  const d = describeError(err);
+  return { text: d.message, network: err instanceof TypeError || d.network };
 }
 
 export function summarizeCycle(stats: CycleStats, held = 0): CycleSummary {
@@ -356,6 +376,7 @@ function failureResult(err: unknown): WebSyncResult {
  *  a result carrying `error` and update the connection banner. With
  *  `refreshPlaid`, first asks the sync server to pull fresh data from Plaid. */
 export async function syncNow(opts: { refreshPlaid?: boolean } = {}): Promise<WebSyncResult[]> {
+  if (!isSyncConfigured()) return [{ itemId: 'hosted', added: 0, modified: 0, removed: 0, dupes: 0, skipped: true }];
   // Local-only installs have no server-side Plaid to refresh.
   if (opts.refreshPlaid && (await getSyncMode()) === 'hosted') {
     try {
@@ -383,6 +404,7 @@ const BACKGROUND_INTERVAL_MS = 2 * 60_000;
 let timer: ReturnType<typeof setInterval> | null = null;
 
 async function backgroundTick(): Promise<void> {
+  if (!isSyncConfigured()) return;
   // Never a request without a session, and nothing in local-only mode.
   if (!hasSession() || (await getSyncMode()) !== 'hosted') return;
   await syncNow();
@@ -397,6 +419,7 @@ export function startBackgroundCycles(intervalMs: number = BACKGROUND_INTERVAL_M
 /** Boot/resume: auto pull right away plus the interval, only when this install
  *  syncs and a session exists. Fire and forget; never blocks the UI shell. */
 export async function startSyncSession(intervalMs: number = BACKGROUND_INTERVAL_MS): Promise<void> {
+  if (!isSyncConfigured()) return;
   if ((await getSyncMode()) !== 'hosted' || !hasSession()) return;
   startBackgroundCycles(intervalMs);
   await syncNow();
@@ -435,6 +458,7 @@ function extractErrorCode(parsed: unknown): string | null {
 /** POSTs `body` to /llm/:provider and returns the raw Response (JSON or an SSE
  *  stream). Throws LlmProxyError on non-2xx, after one refresh-and-retry on 401. */
 export async function llmRequest(provider: LlmProvider, body: Json, retried = false): Promise<Response> {
+  if (BASE_URL === null) throw new Error('Sync is not configured (VITE_FUNGIBLE_SYNC_URL is not set).');
   const access = await getAccessToken().catch(() => adapter.getAccessToken());
   const res = await authFetch(`${BASE_URL}/llm/${provider}`, {
     method: 'POST',

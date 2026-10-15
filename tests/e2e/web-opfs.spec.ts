@@ -15,8 +15,9 @@ let browser: Browser;
 
 test.beforeAll(async () => {
   server = spawn('npx', ['vite', 'web', '--port', String(PORT), '--strictPort'], {
-    // Nothing here ever needs a backend; point at a dead port so any stray call fails fast.
-    env: { ...process.env, VITE_FUNGIBLE_SYNC_URL: 'http://127.0.0.1:59999' },
+    // Local-only: no VITE_FUNGIBLE_SYNC_URL, so no Connect UI and no auth/sync requests.
+    // Empty (not just deleted) so a repo-root .env cannot supply one: process env wins over .env files.
+    env: { ...process.env, VITE_FUNGIBLE_SYNC_URL: '' },
     stdio: 'ignore',
   });
   for (let i = 0; i < 60; i++) {
@@ -46,7 +47,8 @@ test('local-only: data persists across reload and a second tab gets the open-els
   await p.getByText('Dashboard').first().waitFor();
 
   expect(await call(p, 'app', 'isPersistent')).toBe(true);
-  expect(await call(p, 'account', 'getSyncState')).toMatchObject({ mode: 'byok', signedIn: false, persistent: true });
+  // Unconfigured build: no account state at all, so Settings renders no Account section.
+  expect(await call(p, 'account', 'getSyncState')).toBeNull();
   await call(p, 'tags', 'createTag', 'persisted');
 
   await p.reload();

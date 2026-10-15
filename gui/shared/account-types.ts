@@ -64,3 +64,24 @@ export function describeCycle(c: CycleSummary): string {
   const notes = cycleNotes(c);
   return notes.length ? `${head} · ${notes.join(' · ')}` : head;
 }
+
+/** Message shown when the sync server cannot be reached at all. */
+export const UNREACHABLE_MESSAGE = "Can't reach the sync server. Check your connection and try again.";
+
+const IPC_PREFIX = /^(?:Error:\s*)?Error invoking remote method '[^']*':\s*/;
+const NETWORK_FAILURE = /fetch failed|failed to fetch|networkerror|network request failed|load failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|sync server unreachable/i;
+
+/**
+ * One cleaner for every error string a person sees from the account/sync path.
+ * Strips Electron's IPC wrapper ("Error invoking remote method 'bridge:call': ")
+ * and a leading "TypeError: " / "Error: ", and maps network-level failures to a
+ * friendly sentence. `detail` always keeps the unwrapped raw text for a tooltip
+ * or console, so diagnostics are not lost.
+ */
+export function describeError(err: unknown): { message: string; detail: string; network: boolean } {
+  let raw = err instanceof Error ? err.message : String(err);
+  raw = raw.replace(IPC_PREFIX, '').replace(/^(?:[A-Za-z]*Error):\s*/, '').trim();
+  if (raw === '') raw = 'Unknown error';
+  if (NETWORK_FAILURE.test(raw)) return { message: UNREACHABLE_MESSAGE, detail: raw, network: true };
+  return { message: raw, detail: raw, network: false };
+}
