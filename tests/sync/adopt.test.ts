@@ -229,4 +229,19 @@ describe('BYOK adoption', () => {
       expect((await q(byok.client, 'SELECT id FROM accounts')).map((r) => r.id)).toEqual(['old-chk']);
     } finally { byok.close(); }
   });
+
+  it('matches Plaid-synced accounts whose institution lives only on plaid_items', async () => {
+    // Real BYOK shape: sync.ts never writes accounts.institution_name.
+    await d.client.execute(`INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item-1', 'tok', 'Example Bank')`);
+    await d.client.execute(`INSERT INTO accounts (id, name, type, subtype, mask, item_id) VALUES ('p-chk', 'Checking', 'depository', 'checking', '1234', 'item-1')`);
+    await d.client.execute(`INSERT INTO accounts (id, name, type, subtype, mask, item_id) VALUES ('p-nomask', 'Savings', 'depository', 'savings', NULL, 'item-1')`);
+    await localTx('p-1', 'p-chk', '2026-07-01', 'Whole Foods', 50);
+    srvAcct('S-chk', 'Everyday Checking', 'depository', '1234');
+    srvAcct('S-sav', 'Savings', 'depository', null);
+    srvTx('S-1', 'S-chk', '2026-07-01', 'Whole Foods', 50);
+    const s = await cycle();
+    expect(s.byokAdopted).toEqual({ accounts: 2, transactions: 1 });
+    expect((await sql('SELECT id FROM accounts ORDER BY id')).map((a) => a.id)).toEqual(['S-chk', 'S-sav']);
+    expect((await sql('SELECT id FROM transactions')).map((r) => r.id)).toEqual(['S-1']);
+  });
 });

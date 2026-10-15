@@ -94,6 +94,11 @@ async function ensureBackup(c: Client): Promise<void> {
   await setState(c, 'adopt_backup_done', '1');
 }
 
+// Real Plaid-synced accounts never carry accounts.institution_name (sync.ts
+// only writes it for CSV imports); the name lives on plaid_items. localAccounts
+// therefore selects a match_institution that falls back to the item's name.
+const instOf = (r: Row): unknown => (norm(r.institution_name) ? r.institution_name : r.match_institution);
+
 const key = (inst: unknown, mask: unknown, type: unknown) => `${norm(inst)}|${String(mask ?? '').trim()}|${norm(type)}`;
 
 type Match = { local: string; server: string; serverRow: Row; merge: boolean };
@@ -105,8 +110,8 @@ function matchAccounts(locals: Row[], servers: { row: Row; merge: boolean }[]): 
   const L = [...locals];
   const S = [...servers];
   const tiers: Array<(r: Row) => string | null> = [
-    (r) => (norm(r.institution_name) && String(r.mask ?? '').trim() ? key(r.institution_name, r.mask, r.type) : null),
-    (r) => (norm(r.institution_name) && norm(r.name) ? `${norm(r.institution_name)}|${norm(r.name)}|${norm(r.type)}` : null),
+    (r) => (norm(instOf(r)) && String(r.mask ?? '').trim() ? key(instOf(r), r.mask, r.type) : null),
+    (r) => (norm(instOf(r)) && norm(r.name) ? `${norm(instOf(r))}|${norm(r.name)}|${norm(r.type)}` : null),
   ];
   for (const k of tiers) {
     const lk = new Map<string, Row[]>();
@@ -134,7 +139,11 @@ export async function adoptByokData(
   const serverTx = (pulled.transactions ?? []).filter((t) => !t.removed);
   if (serverAccounts.length === 0 && serverTx.length === 0) return stats;
 
-  const localAccounts = await rows(c, 'SELECT * FROM accounts');
+  const localAccounts = await rows(
+    c,
+    `SELECT a.*, (SELECT pi.institution_name FROM plaid_items pi WHERE pi.item_id = a.item_id) AS match_institution
+       FROM accounts a`,
+  );
   const localIds = new Set(localAccounts.map((a) => String(a.id)));
   const mapped = new Set((await rows(c, `SELECT value FROM _sync_state WHERE key LIKE 'account_map:%'`)).map((r) => String(r.value)));
   const pulledAccountIds = new Set(serverAccounts.map((a) => String(a.id)));
