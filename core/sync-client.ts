@@ -419,6 +419,15 @@ async function applyPage(
     tx.close();
   }
   await derive(stats);
+  // Hosted engine equivalent of the BYOK sync's post-pull pass: a CSV row that
+  // is the same real transaction as a server-owned Plaid row folds into it
+  // (edits transfer to the server row and ride out as ordinary annotation ops).
+  // Runs after account re-keying so CSV rows already sit on server accounts.
+  // Only when this page brought transactions or adopted accounts; idempotent.
+  if (stats.touchedTransactions || byok.accounts + byok.transactions + byok.merged > 0) {
+    const { deduplicateCsvVsPlaid } = await import('./dedup.js');
+    await deduplicateCsvVsPlaid();
+  }
   return { stats, byok };
 }
 
