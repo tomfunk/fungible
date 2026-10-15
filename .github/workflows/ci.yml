@@ -71,6 +71,10 @@ jobs:
       # installs that dependency set on the bare runner image.
       - run: npx playwright install-deps chromium
 
+      # The web OPFS spec drives a plain Chromium (chromium.launch()), not
+      # Electron, so it needs the Playwright browser binary as well.
+      - run: npx playwright install chromium
+
       # xvfb-run gives Electron the virtual X display the headless runner lacks.
       - run: xvfb-run -a npm run test:e2e
 
