@@ -97,7 +97,7 @@ describe('backupDb', () => {
     expect(fs.existsSync(path.join(r.dir, 'fungible.db'))).toBe(true);
   });
 
-  it('includes the key only when backup_include_key is on, with mode 0600', async () => {
+  it.skipIf(process.platform === 'win32')('includes the key only when backup_include_key is on, with mode 0600', async () => {
     fs.writeFileSync(path.join(TEST_DATA_DIR, 'key'), 'dummy-key-material');
     await backupDb();
     expect(fs.existsSync(path.join(listSnapshots(TEST_DATA_DIR)[0].dir, 'key'))).toBe(false);

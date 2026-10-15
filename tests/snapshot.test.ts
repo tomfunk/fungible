@@ -123,7 +123,7 @@ describe('snapshot creation', () => {
     await expect(snapshot('manual', opts({ lockWaitMs: 150 }))).resolves.toBeTruthy();
   });
 
-  it('includes the key only when opted in, with mode 0600, and never .env', async () => {
+  it.skipIf(process.platform === 'win32')('includes the key only when opted in, with mode 0600, and never .env', async () => {
     fs.writeFileSync(path.join(dir, 'key'), 'base64key', { mode: 0o644 });
     fs.writeFileSync(path.join(dir, '.env'), 'ANTHROPIC_API_KEY=sk-secret');
 

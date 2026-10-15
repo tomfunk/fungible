@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { createClient, type Client } from '@libsql/client';
 import { DATA_DIR } from './paths.js';
 import { SCHEMA_USER_VERSION } from './schema-version.js';
+import { dbInitializedInProcess, liveInUsePids } from './in-use.js';
 
 const BACKUP_INCLUDE_KEY_SETTING = 'backup_include_key';
 const LOCK_STALE_MS = 2 * 60_000;
@@ -82,17 +83,40 @@ function pathsFor(dataDir: string = DATA_DIR): Paths {
 const wallMs = () => performance.timeOrigin + performance.now();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export function appVersion(): string {
-  try {
-    const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-    try {
-      const v = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim();
-      if (v && !v.includes('$Format')) return v.replace(/^v/, '');
-    } catch { /* fall through */ }
-    return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version ?? 'unknown';
-  } catch {
-    return 'unknown';
+/**
+ * App version for manifests. Order: FUNGIBLE_APP_VERSION env override, then
+ * walk up from the module location, the app resources dir and process.cwd()
+ * to the nearest VERSION file (skipping the export-subst placeholder) or
+ * package.json named "fungible". Bundled builds (GUI main lives in out/) are
+ * covered by the walk-up. Falls back to 'unknown' and never throws.
+ */
+export function appVersion(startDirs?: string[]): string {
+  const env = process.env.FUNGIBLE_APP_VERSION?.trim();
+  if (env) return env;
+  const starts = startDirs ?? [];
+  if (!startDirs) {
+    try { starts.push(path.dirname(fileURLToPath(import.meta.url))); } catch { /* bundled oddities */ }
+    const res = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    if (res) starts.push(res, path.join(res, 'app.asar'), path.join(res, 'app'));
+    starts.push(process.cwd());
   }
+  for (const start of starts) {
+    let cur = path.resolve(start);
+    for (let i = 0; i < 12; i++) {
+      try {
+        const v = fs.readFileSync(path.join(cur, 'VERSION'), 'utf8').trim();
+        if (v && !v.includes('$Format')) return v.replace(/^v/, '');
+      } catch { /* none here */ }
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(cur, 'package.json'), 'utf8'));
+        if (pkg?.name === 'fungible' && typeof pkg.version === 'string') return pkg.version;
+      } catch { /* none here */ }
+      const up = path.dirname(cur);
+      if (up === cur) break;
+      cur = up;
+    }
+  }
+  return 'unknown';
 }
 
 export function sha256File(p: string): string {
@@ -107,6 +131,20 @@ function fsyncPath(p: string): void {
 async function liveClient(opts: SnapshotOptions): Promise<Client> {
   if (opts.client) return opts.client;
   return (await import('./db.js')).db;
+}
+
+/** Full PRAGMA integrity_check (slower than quick_check; used by verify/restore). */
+export async function integrityCheck(dbPath: string): Promise<string> {
+  const c = createClient({ url: `file:${dbPath}` });
+  try {
+    const res = await c.execute('PRAGMA integrity_check');
+    const msgs = res.rows.map((r) => String(Object.values(r)[0]));
+    return msgs.length === 1 && msgs[0] === 'ok' ? 'ok' : msgs.slice(0, 5).join('; ') || 'no result';
+  } catch (e) {
+    return `error: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    c.close();
+  }
 }
 
 export async function quickCheck(dbPath: string): Promise<string> {
@@ -142,22 +180,40 @@ async function inspectDb(dbPath: string): Promise<{ userVersion: number; rowCoun
 
 // --- lock -----------------------------------------------------------------
 
+/**
+ * Takeover of a stale lock is done by atomically renaming it to a unique name
+ * and judging the file we actually got: if it turns out to be a fresh lock
+ * (its owner created it between our stat and our rename) it is linked back
+ * instead of destroyed. Releasing only unlinks a lock still carrying our token.
+ */
 async function acquireLock(p: Paths, waitMs: number): Promise<() => void> {
   fs.mkdirSync(p.backups, { recursive: true });
   const deadline = wallMs() + waitMs;
+  const token = crypto.randomBytes(8).toString('hex');
   for (;;) {
     try {
       const fd = fs.openSync(p.lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, at: wallMs() }));
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, token }));
       fs.closeSync(fd);
-      return () => { try { fs.unlinkSync(p.lock); } catch { /* already gone */ } };
+      return () => {
+        try {
+          const cur = JSON.parse(fs.readFileSync(p.lock, 'utf8')) as { token?: string };
+          if (cur.token === token) fs.unlinkSync(p.lock);
+        } catch { /* gone or not ours */ }
+      };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
     }
     try {
-      const age = wallMs() - fs.statSync(p.lock).mtimeMs;
-      if (age > LOCK_STALE_MS) {
-        fs.unlinkSync(p.lock); // stale takeover; the O_EXCL retry decides the winner
+      if (wallMs() - fs.statSync(p.lock).mtimeMs > LOCK_STALE_MS) {
+        const moved = `${p.lock}.stale-${process.pid}-${token}`;
+        fs.renameSync(p.lock, moved);
+        let stillStale = true;
+        try { stillStale = wallMs() - fs.statSync(moved).mtimeMs > LOCK_STALE_MS; } catch { /* treat as stale */ }
+        if (!stillStale) {
+          try { fs.linkSync(moved, p.lock); } catch { /* someone else holds it now */ }
+        }
+        fs.rmSync(moved, { force: true });
         continue;
       }
     } catch { continue; /* vanished between calls */ }
@@ -237,8 +293,8 @@ export async function verifySnapshot(dir: string): Promise<VerifyResult> {
   const dbFile = path.join(dir, 'fungible.db');
   if (!manifest.files.some((f) => f.name === 'fungible.db')) problems.push('fungible.db not in manifest');
   else if (fs.existsSync(dbFile)) {
-    const qc = await quickCheck(dbFile);
-    if (qc !== 'ok') problems.push(`quick_check: ${qc}`);
+    const qc = await integrityCheck(dbFile);
+    if (qc !== 'ok') problems.push(`integrity_check: ${qc}`);
   }
   return { ok: problems.length === 0, problems, manifest };
 }
@@ -480,6 +536,19 @@ export interface RestoreOptions {
   appUserVersion?: number;
   /** Runs after the swap. Defaults to core/key-health.ts checkKeyHealth against the shared db. */
   keyCheck?: () => Promise<{ ok: boolean; reason?: string; linkedAccountCount?: number }>;
+  /**
+   * Skip ONLY the "another process has the database open" registry check.
+   * Everything else (verification, version guard, pre-restore snapshot) still runs.
+   */
+  force?: boolean;
+  /**
+   * Library callers whose process already ran initDb must hand over a function
+   * that closes the shared db client; otherwise restore refuses, because the
+   * open client would keep writing to the replaced (unlinked) file.
+   */
+  closeClient?: () => void | Promise<void>;
+  /** Test seam: runs after the pre-restore snapshot, before the swap. */
+  beforeSwap?: () => void | Promise<void>;
 }
 
 export interface RestoreResult {
@@ -497,7 +566,8 @@ export function resolveSnapshotDir(target: string, dataDir?: string): string {
     return snaps[snaps.length - 1].dir;
   }
   const p = pathsFor(dataDir);
-  for (const c of [path.resolve(target), path.join(p.backups, target)]) {
+  // A name inside backups/ wins over a same-named directory in the cwd.
+  for (const c of [path.join(p.backups, target), path.resolve(target)]) {
     if (fs.existsSync(path.join(c, 'manifest.json'))) return c;
   }
   throw new SnapshotError(`no snapshot found at '${target}'`);
@@ -526,9 +596,33 @@ export async function restoreSnapshot(target: string, opts: RestoreOptions = {})
   const v = await verifySnapshot(dir);
   if (!v.ok || !v.manifest) throw new SnapshotError(`snapshot failed verification: ${v.problems.join('; ')}`);
   const appUv = opts.appUserVersion ?? SCHEMA_USER_VERSION;
-  if (v.manifest.userVersion > appUv) {
+  // Trust the database itself, not the (editable) manifest: use the larger of the two.
+  const dbUv = (await inspectDb(path.join(dir, 'fungible.db'))).userVersion;
+  const snapUv = Math.max(v.manifest.userVersion, dbUv);
+  if (snapUv > appUv) {
     throw new SnapshotError(
-      `snapshot schema version ${v.manifest.userVersion} is newer than this build (${appUv}); update Fungible before restoring`,
+      `snapshot schema version ${snapUv} is newer than this build (${appUv}); update Fungible before restoring`,
+    );
+  }
+
+  if (dbInitializedInProcess()) {
+    if (!opts.closeClient) {
+      throw new SnapshotError(
+        'this process already has the database open; pass closeClient to restoreSnapshot or run `fungible restore` from a separate process',
+      );
+    }
+    await opts.closeClient();
+  }
+  const others = liveInUsePids(p.dataDir);
+  if (others.length && !opts.force) {
+    throw new SnapshotError(
+      `the database is open in other process(es) (pid ${others.join(', ')}); quit TUI/GUI/MCP first (or use --force at your own risk)`,
+    );
+  }
+  if (others.length) {
+    warnings.push(
+      `WARNING: --force used while pid ${others.join(', ')} still has the database open; `
+      + 'their later writes will be lost and they should be restarted immediately.',
     );
   }
 
@@ -544,6 +638,7 @@ export async function restoreSnapshot(target: string, opts: RestoreOptions = {})
     } finally { cur.close(); }
   }
 
+  await opts.beforeSwap?.();
   fs.mkdirSync(p.dataDir, { recursive: true });
   const tmpDb = path.join(p.dataDir, `.fungible.db.restore-${process.pid}`);
   fs.copyFileSync(path.join(dir, 'fungible.db'), tmpDb);

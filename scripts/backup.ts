@@ -24,7 +24,7 @@ const USAGE = [
   'Usage: fungible backup [--reason <text>]',
   '       fungible backup list [--json]',
   '       fungible backup verify <dir|latest>',
-  '       fungible restore <dir|latest>',
+  '       fungible restore <dir|latest> [--force]   (--force skips only the "database open elsewhere" check)',
 ].join('\n');
 
 export async function run(argv: string[], ctx: CliContext): Promise<number> {
@@ -33,7 +33,9 @@ export async function run(argv: string[], ctx: CliContext): Promise<number> {
     if (cmd === 'restore') {
       const target = rest.find((a) => !a.startsWith('--'));
       if (!target) { ctx.err(USAGE); return 1; }
-      const r = await restoreSnapshot(target, { dataDir: ctx.dataDir, now: ctx.now });
+      const r = await restoreSnapshot(target, {
+        dataDir: ctx.dataDir, now: ctx.now, force: rest.includes('--force'),
+      });
       ctx.out(`Restored ${r.restoredFrom}`);
       if (r.preRestoreDir) ctx.out(`Previous state saved as ${r.preRestoreDir}`);
       if (r.canvasRestored) ctx.out('Canvas history restored.');
