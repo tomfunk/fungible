@@ -74,7 +74,7 @@ async function baseFixture(): Promise<void> {
   await localTx('old-c1', 'old-card', '2026-07-03', 'Starbucks Store 1182', 5);
   await localTx('old-c2', 'old-card', '2026-07-03', 'Starbucks Store 1182', 5, { manual_category: 'Coffee' });
   await localTx('old-far', 'old-card', '2026-06-01', 'Netflix', 15); // outside the 3-day window
-  await localTx('csv-1', 'old-chk', '2026-07-01', 'Whole Foods Market', 50, { source: 'csv' });
+  await localTx('csv-1', 'old-chk', '2026-07-01', 'Whole Foods Market', 51.5, { source: 'csv' });
   await d.client.execute(`INSERT INTO accounts (id, name, type, institution_name) VALUES ('csv-acct', 'Old Savings', 'depository', 'Credit Union')`);
   await localTx('csv-2', 'csv-acct', '2026-07-01', 'Interest', -1, { source: 'csv' });
   await d.client.execute(`INSERT INTO tags (name) VALUES ('groceries')`);
@@ -243,5 +243,43 @@ describe('BYOK adoption', () => {
     expect(s.byokAdopted).toEqual({ accounts: 2, transactions: 1 });
     expect((await sql('SELECT id FROM accounts ORDER BY id')).map((a) => a.id)).toEqual(['S-chk', 'S-sav']);
     expect((await sql('SELECT id FROM transactions')).map((r) => r.id)).toEqual(['S-1']);
+  });
+
+  describe('CSV rows vs pulled server rows', () => {
+    it('folds a CSV row into its server twin, keeps annotations, keeps genuine repeats', async () => {
+      await localAccount('old-chk', 'Checking', 'depository', '1234');
+      // same real purchase imported from CSV (annotated), plus an unrelated CSV row
+      await localTx('csv-a', 'old-chk', '2026-07-10', 'Costco', 80, { source: 'csv', manual_category: 'Groceries', ignored: 0 });
+      await localTx('csv-b', 'old-chk', '2026-07-11', 'Local Bakery', 12, { source: 'csv' });
+      // two real $5 coffees on CSV, the bank reports only one so far
+      await localTx('csv-c1', 'old-chk', '2026-07-12', 'Blue Bottle', 5, { source: 'csv' });
+      await localTx('csv-c2', 'old-chk', '2026-07-12', 'Blue Bottle', 5, { source: 'csv' });
+      srvAcct('S-chk', 'Everyday Checking', 'depository', '1234');
+      srvTx('S-costco', 'S-chk', '2026-07-10', 'COSTCO WHSE', 80);
+      srvTx('S-coffee', 'S-chk', '2026-07-12', 'Blue Bottle', 5);
+      await cycle();
+
+      const ids = (await sql('SELECT id FROM transactions ORDER BY id')).map((r) => r.id);
+      // csv-a folded into S-costco; one coffee absorbed; the repeat and the bakery survive
+      expect(ids).toEqual(['S-coffee', 'S-costco', 'csv-b', 'csv-c2']);
+      expect((await sql(`SELECT manual_category FROM transactions WHERE id = 'S-costco'`))[0].manual_category).toBe('Groceries');
+      // the transferred annotation reaches the server against the server id
+      await cycle();
+      expect(server.row(USER, 'transactions', { id: 'S-costco' })).toMatchObject({ manual_category: 'Groceries' });
+
+      // idempotent: another cycle changes nothing
+      await cycle();
+      expect((await sql('SELECT id FROM transactions ORDER BY id')).map((r) => r.id)).toEqual(ids);
+    });
+
+    it('does nothing in BYOK mode', async () => {
+      await disableHostedMode({ client: d.client });
+      await localAccount('old-chk', 'Checking', 'depository', '1234');
+      await localTx('csv-a', 'old-chk', '2026-07-10', 'Costco', 80, { source: 'csv' });
+      await localTx('p-a', 'old-chk', '2026-07-10', 'Costco', 80);
+      const s = await cycle();
+      expect(s.inert).toBe('byok');
+      expect(await sql('SELECT id FROM transactions')).toHaveLength(2);
+    });
   });
 });
