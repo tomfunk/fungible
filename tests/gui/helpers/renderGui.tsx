@@ -31,6 +31,15 @@ const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
     },
   },
   app: { getVersion: async () => '0.0.0-test' },
+  // Desktop without FUNGIBLE_SYNC_URL: sync state null, so Settings shows no Account section.
+  account: {
+    getSyncState: async () => null,
+    connect: async () => ({ status: 'account_mismatch' }),
+    syncNow: async () => ({ pushed: 0, pulled: 0, superseded: 0, retrying: 0, held: 0, rejected: 0, clockSkew: false }),
+    disconnect: async () => {},
+    signOutAndErase: async () => ({ erased: false, reason: 'web only' }),
+    eraseLocalData: async () => {},
+  },
 };
 
 /** Captures files.saveCsv calls. `result` is what the native dialog "returns":

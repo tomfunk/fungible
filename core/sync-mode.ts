@@ -54,8 +54,7 @@ export async function clearSyncState(key: string, client: Client = db): Promise<
 
 export async function getSyncMode(client: Client = db): Promise<SyncMode> {
   const mode = await readSyncState('mode', client);
-  // 'mycelium' is the pre-release name of 'hosted'.
-  return mode === 'hosted' || mode === 'mycelium' ? 'hosted' : 'byok';
+  return mode === 'hosted' ? 'hosted' : 'byok';
 }
 
 /** The server_seq cursor is kept per user: another account never inherits it. */

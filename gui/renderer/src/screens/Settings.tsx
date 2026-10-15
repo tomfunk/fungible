@@ -4,7 +4,16 @@ import { useStatus } from '../hooks/useStatus.js';
 import type { Profile, HouseholdMember } from '../../../../core/profile.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { useUiPrefs, type PaletteName, type RowDensity, type Theme } from '../hooks/useUiPrefs.js';
+import { useQuery } from '../hooks/useQuery.js';
+import {
+  cycleNotes, describeCycle, describeError, SYNC_DISCLOSURE, type AccountState, type CycleSummary,
+} from '../../../shared/account-types.js';
 import styles from './Settings.module.css';
+
+/** True in the browser build, where .env keys and key backups are not local concepts. */
+function isWeb(): boolean {
+  return (window as unknown as { __bridge?: { platform?: string } }).__bridge?.platform === 'web';
+}
 
 const MIN_YEAR = 1900;
 
@@ -106,6 +115,8 @@ export function Settings() {
       <KeyHints hints="[1-9·0] screens" />
       <h1 className={styles.title}>Settings</h1>
 
+      <AccountPanel />
+
       <AppearancePanel />
 
       <section className={styles.section}>
@@ -159,12 +170,252 @@ export function Settings() {
         </div>
       </section>
 
-      <ConfigPanel showStatus={showStatus} />
+      {!isWeb() && <ConfigPanel showStatus={showStatus} />}
 
-      <BackupPanel />
+      {!isWeb() && <BackupPanel />}
 
       {statusEl}
     </div>
+  );
+}
+
+function formatWhen(iso: string | null): string {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? 'never' : d.toLocaleString();
+}
+
+const ERASE_WORD = 'erase';
+
+// Three shapes, one panel:
+//   desktop without FUNGIBLE_SYNC_URL (state null): nothing at all, the plain BYOK app
+//   not connected (desktop local, or a web browser that has not signed in): connect form
+//   connected: counts, Sync now, and a way out (desktop: Disconnect; web: Sign out,
+//   plus a separate, typed-confirmation "Sign out and erase this device")
+function AccountPanel() {
+  const web = isWeb();
+  const [reload, setReload] = useState(0);
+  const state: AccountState | null | undefined = useQuery(() => api.account.getSyncState(), [reload]);
+  const [last, setLast] = useState<CycleSummary | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [msgDetail, setMsgDetail] = useState<string | undefined>(undefined);
+  const [mismatch, setMismatch] = useState<{ createAccount: boolean } | null>(null);
+  const [eraseOpen, setEraseOpen] = useState(false);
+  const [eraseWord, setEraseWord] = useState('');
+
+  async function run(fn: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setMsg(null);
+    setMsgDetail(undefined);
+    try {
+      await fn();
+    } catch (e) {
+      const d = describeError(e);
+      console.error('account action failed:', d.detail);
+      setMsg(`Error: ${d.message}`);
+      setMsgDetail(d.network ? d.detail : undefined);
+    } finally {
+      setBusy(false);
+      setReload((n) => n + 1);
+    }
+  }
+
+  async function connect(createAccount: boolean, resetForNewAccount = false) {
+    await run(async () => {
+      const r = await api.account.connect(email.trim(), password, { createAccount, resetForNewAccount });
+      if (r.status === 'account_mismatch') {
+        setMismatch({ createAccount });
+        setMsg(
+          web
+            ? 'This browser holds data from a different account. Erase it to start clean, or keep it and add it to this account.'
+            : 'This device last synced as a different account. Reset its local sync state to continue '
+              + '(your local data is kept and pushed to this account), or cancel.',
+        );
+        return;
+      }
+      if (r.status === 'snapshot_failed') {
+        setMsg(`Error: ${r.message}`);
+        return;
+      }
+      setMismatch(null);
+      setPassword('');
+      setLast(r.summary);
+      setMsg(`Connected. ${describeCycle(r.summary)}`);
+    });
+  }
+
+  if (!state) return null;
+
+  const connected = state.mode === 'hosted';
+  const notes = last ? cycleNotes(last) : [];
+  return (
+    <section className={styles.section} aria-label="Account">
+      <h2 className={`sectionLabel ${styles.sectionTitle}`}>Account</h2>
+
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>Mode</label>
+        <span>
+          {connected
+            ? state.signedIn
+              ? `Synced via account: ${state.email ?? 'signed in'}`
+              : 'Sync paused: signed out'
+            : 'Local only'}
+        </span>
+      </div>
+
+      {state.persistent === false && (
+        <p className="dim" role="status">
+          This browser is not keeping your data between visits.
+        </p>
+      )}
+
+      {connected && (
+        <>
+          <div className={styles.configRow}>
+            <label className={styles.configLabel}>Last sync</label>
+            <span>{formatWhen(state.lastSyncAt)}</span>
+          </div>
+          <div className={styles.configRow}>
+            <label className={styles.configLabel}>Pending changes</label>
+            <span>{state.pendingCount}</span>
+          </div>
+          {state.heldCount > 0 && (
+            <div className={styles.configRow}>
+              <label className={styles.configLabel}>Waiting on other data</label>
+              <span>{state.heldCount}</span>
+            </div>
+          )}
+          {state.rejectedCount > 0 && (
+            <div className={styles.configRow}>
+              <label className={styles.configLabel}>Rejected by server</label>
+              <span>{state.rejectedCount}</span>
+            </div>
+          )}
+        </>
+      )}
+
+      {connected && state.signedIn ? (
+        <>
+          <div className={styles.actions}>
+            <button
+              className="btnPrimary"
+              disabled={busy}
+              onClick={() => void run(async () => {
+                const s = await api.account.syncNow();
+                setLast(s);
+                setMsg(describeCycle(s));
+              })}
+            >
+              {busy ? 'Syncing…' : 'Sync now'}
+            </button>
+            <button
+              className="ghostBtn"
+              disabled={busy}
+              onClick={() => void run(async () => {
+                await api.account.disconnect();
+                setLast(null);
+                setMsg(web
+                  ? 'Signed out. Your data stays in this browser.'
+                  : 'Disconnected. Local data stays on this machine.');
+              })}
+            >
+              {web ? 'Sign out (data stays in this browser)' : 'Disconnect (data stays local)'}
+            </button>
+          </div>
+          {web && (
+            <div className={styles.configRow}>
+              {!eraseOpen ? (
+                <button className="ghostBtn" disabled={busy} onClick={() => setEraseOpen(true)}>
+                  Sign out and erase this device…
+                </button>
+              ) : (
+                <div>
+                  <p className="dim">
+                    This signs you out and deletes this browser&rsquo;s copy of your data. It only goes ahead
+                    when everything is synced. Type <strong>{ERASE_WORD}</strong> to confirm.
+                  </p>
+                  <input
+                    aria-label="Type erase to confirm"
+                    value={eraseWord}
+                    onChange={(e) => setEraseWord(e.target.value)}
+                    autoComplete="off"
+                    disabled={busy}
+                  />
+                  <div className={styles.actions}>
+                    <button
+                      className="btnPrimary"
+                      disabled={busy || eraseWord.trim().toLowerCase() !== ERASE_WORD}
+                      onClick={() => void run(async () => {
+                        const r = await api.account.signOutAndErase();
+                        if (!r.erased) {
+                          setMsg(`Nothing was erased. ${r.reason}`);
+                          return;
+                        }
+                        window.location.reload();
+                      })}
+                    >
+                      Sign out and erase
+                    </button>
+                    <button className="ghostBtn" disabled={busy} onClick={() => { setEraseOpen(false); setEraseWord(''); }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : mismatch ? (
+        <div className={styles.actions}>
+          <button className="btnPrimary" disabled={busy} onClick={() => void connect(mismatch.createAccount, true)}>
+            {web ? 'Keep this data and sign in' : 'Reset local sync state for this account and connect'}
+          </button>
+          {web && (
+            <button
+              className="ghostBtn"
+              disabled={busy}
+              onClick={() => void run(async () => { await api.account.eraseLocalData(); window.location.reload(); })}
+            >
+              Erase local data
+            </button>
+          )}
+          <button className="ghostBtn" disabled={busy} onClick={() => { setMismatch(null); setMsg(null); setPassword(''); }}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="dim">{SYNC_DISCLOSURE}</p>
+          <div className={styles.configRow}>
+            <label className={styles.configLabel} htmlFor="sync-email">Email</label>
+            <input id="sync-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} disabled={busy} />
+          </div>
+          <div className={styles.configRow}>
+            <label className={styles.configLabel} htmlFor="sync-password">Password</label>
+            <input id="sync-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} />
+          </div>
+          <div className={styles.actions}>
+            <button
+              className="btnPrimary"
+              disabled={busy || !email.trim() || !password}
+              onClick={() => void connect(false)}
+            >
+              {busy ? 'Connecting…' : 'Connect (log in)'}
+            </button>
+            <button className="ghostBtn" disabled={busy || !email.trim() || !password} onClick={() => void connect(true)}>
+              Connect with a new account
+            </button>
+          </div>
+        </>
+      )}
+
+      {notes.length > 0 && !msg && <p className="dim">{notes.join(' · ')}</p>}
+      {msg && <p className="dim" role="status" title={msgDetail}>{msg}</p>}
+    </section>
   );
 }
 

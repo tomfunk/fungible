@@ -11,6 +11,8 @@ export type RendererApi = {
 };
 
 export type Bridge = {
+  /** Set by the web build only. Absent on desktop. */
+  platform?: 'web';
   call: (ns: string, fn: string, args: unknown[]) => Promise<unknown>;
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
   on: (channel: string, cb: (...args: unknown[]) => void) => () => void;

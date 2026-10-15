@@ -9,6 +9,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node --import tsx/esm tui/index.tsx",
+    "web": "vite web",
     "gui": "electron-vite dev",
     "gui:demo": "FUNGIBLE_DEMO=1 electron-vite dev",
     "gui:build": "electron-vite build",
@@ -21,7 +22,7 @@
     "link": "node --import tsx/esm scripts/link.ts",
     "mcp": "node --import tsx/esm mcp/server.ts",
     "api": "node --import tsx/esm api/server.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer && node -e \"if(require('fs').existsSync('web/tsconfig.json'))require('child_process').execSync('tsc --noEmit -p web',{stdio:'inherit'})\"",
     "test": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest run",
     "test:watch": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest",
     "test:coverage": "node -e \"if (+process.versions.node.split('.')[0] < 22) { console.error('Node >=22 required (found ' + process.version + '). Run: nvm use 22'); process.exit(1); }\" && node ./node_modules/.bin/vitest run --coverage",
@@ -37,6 +38,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
     "@libsql/client": "^0.17.3",
+    "@libsql/client-wasm": "^0.18.0",
+    "@libsql/libsql-wasm-experimental": "^0.0.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
     "ink": "^7.0.5",

@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { useQuery } from './useQuery.js';
 import { useBumpRefresh } from './useRefresh.js';
 import { useSyncProgress } from './useSyncProgress.js';
+import { cycleNotes, describeError, type CycleSummary } from '../../../shared/account-types.js';
 
 export type SyncResult = { ok: boolean; message: string };
 
@@ -37,12 +38,18 @@ export function useSync() {
       const results = await api.sync.syncAll(true);
       const failed = results.filter((r) => r.error);
       if (failed.length > 0) {
-        return { ok: false, message: `Sync failed: ${failed.map((r) => r.error).join('  ·  ')}` };
+        return { ok: false, message: `Sync failed: ${failed.map((r) => describeError(r.error).message).join('  ·  ')}` };
       }
       const added = results.reduce((s, r) => s + r.added, 0);
-      return { ok: true, message: `Sync done — ${added} new transaction${added === 1 ? '' : 's'}` };
-    } catch {
-      return { ok: false, message: 'Sync failed' };
+      // The web build's engine reports a cycle summary per result (merged edits,
+      // waiting changes, rejections, clock skew); desktop Plaid results carry none.
+      const notes = results.flatMap((r) => cycleNotes((r as { cycle?: CycleSummary }).cycle));
+      const tail = notes.length > 0 ? ` · ${notes.join(' · ')}` : '';
+      return { ok: true, message: `Sync done — ${added} new transaction${added === 1 ? '' : 's'}${tail}` };
+    } catch (e) {
+      const d = describeError(e);
+      console.error('sync failed:', d.detail);
+      return { ok: false, message: d.network ? `Sync failed: ${d.message}` : 'Sync failed' };
     } finally {
       setLocalSyncing(false);
       bump();

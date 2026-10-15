@@ -16,6 +16,11 @@ jobs:
 
       - run: npm run typecheck
 
+      # Browser app bundle; skipped until web/ exists on the branch.
+      - name: Build web app
+        if: ${{ hashFiles('web/tsconfig.json') != '' }}
+        run: npx vite build web
+
       - run: npm run test:coverage
 
       # Reporting only: no thresholds. Tolerates a missing summary (e.g. the
@@ -65,6 +70,10 @@ jobs:
       # Electron's renderer is Chromium and needs the same system libraries; this
       # installs that dependency set on the bare runner image.
       - run: npx playwright install-deps chromium
+
+      # The web OPFS spec drives a plain Chromium (chromium.launch()), not
+      # Electron, so it needs the Playwright browser binary as well.
+      - run: npx playwright install chromium
 
       # xvfb-run gives Electron the virtual X display the headless runner lacks.
       - run: xvfb-run -a npm run test:e2e

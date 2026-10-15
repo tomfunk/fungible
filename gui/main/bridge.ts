@@ -7,6 +7,8 @@ import { isPlaidConfigured } from '../../core/plaid.js';
 import { getDefaultDaysRequested } from '../../core/settings.js';
 import { cancelActivePlaidLink, runPlaidLink } from './plaid-link.js';
 import { registry } from './registry.js';
+import { account as syncAccount } from './account-sync.js';
+import type { EraseResult } from '../shared/account-types.js';
 
 const plaid = {
   isConfigured: async (): Promise<boolean> => isPlaidConfigured(),
@@ -87,7 +89,21 @@ const appInfo = {
   },
 };
 
-export const fullRegistry = { ...registry, files, plaid, app: appInfo } as const;
+// Account / sync (gui/main/account-sync.ts). The web app implements the same
+// namespace in-browser; the two web-only calls below exist so the shared
+// renderer type covers both platforms and throw on desktop, where "disconnect"
+// is the only way out and local data is never erased from the UI.
+const account = {
+  ...syncAccount,
+  signOutAndErase: async (): Promise<EraseResult> => {
+    throw new Error('account.signOutAndErase is web-only');
+  },
+  eraseLocalData: async (): Promise<void> => {
+    throw new Error('account.eraseLocalData is web-only');
+  },
+};
+
+export const fullRegistry = { ...registry, files, plaid, app: appInfo, account } as const;
 
 export function registerBridge() {
   ipcMain.handle('bridge:call', (_e, ns: string, fn: string, args: unknown[]) => {

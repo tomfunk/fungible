@@ -1,13 +1,16 @@
-import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyTagRules } from './tag-rules.js';
-import { parseDate, assignOrdinals, dedupKey } from './csv.js';
+import { parseDate } from './csv-date.js';
+import { assignOrdinals, dedupKey } from './csv-dedup.js';
+
 import { deleteDuplicatesKeepingEdits } from './dedup.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
 import { resolveCsvAmount } from './csv-amount.js';
 import type { CsvSkippedRow } from './csv-import-copy.js';
+
+const randomUUID = (): string => globalThis.crypto.randomUUID();
 
 export { resolveCsvAmount } from './csv-amount.js';
 

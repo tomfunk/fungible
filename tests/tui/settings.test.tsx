@@ -46,6 +46,14 @@ describe('Settings', () => {
     expect(f).toContain('Birth year');
   });
 
+  it('shows no sync UI when FUNGIBLE_SYNC_URL is unset (BYOK, unchanged)', async () => {
+    const r = settings();
+    await waitFor(() => expect(frame(r)).toContain('BACKUP'));
+    const f = frame(r);
+    expect(f).not.toContain('SYNC');
+    expect(f).not.toContain('BYOK');
+  });
+
   it('Enter commits the edit and exits edit mode', async () => {
     const r = settings();
     r.stdin.write('\r');       // open
