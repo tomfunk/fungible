@@ -46,6 +46,9 @@ case "$SUBCOMMAND" in
     shift
     exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/scripts/export-csv.ts" "$@"
     ;;
+  backup|restore)
+    exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/scripts/backup.ts" "$@"
+    ;;
   *)
     exec node --no-warnings --import "$TSX_ESM" "$PACKAGE_DIR/tui/index.tsx" "$@"
     ;;

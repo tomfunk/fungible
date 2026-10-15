@@ -3,6 +3,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { encryptToken } from './crypto.js';
 import { DATA_DIR } from './paths.js';
+import { SCHEMA_USER_VERSION } from './schema-version.js';
+import { registerInUse } from './in-use.js';
 
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 
@@ -20,6 +22,8 @@ export const db: Client = createClient({ url: `file:${DB_PATH}` });
 db.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`).catch(() => {});
 
 export async function initDb() {
+  // Additive and failure-tolerant: lets `fungible restore` see this process.
+  registerInUse(DATA_DIR);
   // Create all tables (idempotent)
   await db.batch([
     `CREATE TABLE IF NOT EXISTS accounts (
@@ -376,4 +380,11 @@ export async function initDb() {
     })),
     'write',
   );
+
+  // Stamp the schema version on databases that predate it (user_version 0).
+  // Never lowers or rewrites a non-zero value.
+  const uv = await db.execute('PRAGMA user_version');
+  if (Number((uv.rows[0] as unknown as { user_version: number | bigint }).user_version) === 0) {
+    await db.execute(`PRAGMA user_version = ${SCHEMA_USER_VERSION}`);
+  }
 }
