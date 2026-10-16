@@ -30,6 +30,7 @@ Synced tables:
 | transactions (`source` in `csv`,`manual`) | client-owned | `{id: text}` (`manual-`/`csv-` prefix) | `account_id, date, name, merchant_name, amount, raw_category, source` (insert only), `import_id, dedup_key, original_date, manual_category, display_name, ignored`; upsert + delete |
 | accounts (`origin='plaid'`) | server-owned | pull only | |
 | accounts (`origin='client'`) | client-owned | `{id: text}` (`acct-` prefix) | `name, type, subtype, institution_name, mask, nickname, owner, apr, excluded`, `origin` (insert only); upsert + delete |
+| imports | client-owned | `{id: uuid}` | `file_name, file_hash, imported_at, row_count, account_id, min_date, max_date`; upsert + delete (`config`, `imported`, `skipped` stay local) |
 | balance_history | owner follows the account | `{account_id, date}` | client-owned rows: `balance` (per-field LWW); upsert + delete |
 
 `accounts.excluded` and `transactions.ignored` are JSON booleans on the wire
@@ -106,6 +107,18 @@ validated server-side and not used by this client yet.
 - `transactions`: Plaid rows use the Plaid-assigned text id; a client only sends
   annotation ops for transactions it received from the server. Manual
   transactions are `manual-<uuid>` (same id locally and on the wire).
+- CSV `transactions`: `csv-<uuidv5>` over `fungible/csv_tx/v1:<userId>:<account
+  wire id>:<dedup_key>` where `dedup_key` is `date|lower(name)|cents|ord` (ord =
+  occurrence of an identical row within its file, so identical same-day rows
+  stay distinct and two devices importing the same file agree). Locally an
+  import writes `csv-<importId>-<row>`; the engine re-keys those in place the
+  first cycle their account's wire id is known (children and queued ops
+  follow, behind a `pre-adopt-sync` snapshot). A row moved to another account
+  keeps its id; the dedup unique index is the real identity.
+- `imports`: uuidv5 over `fungible/import/v1:<userId>:<file hash>:<account wire
+  id>`. Local `imports.id` stays an integer; the uuid lives in
+  `imports.wire_id`, and `transactions.import_id` is the integer locally and the
+  import uuid on the wire.
 - `accounts` (client-owned): wire id `acct-<uuidv5>` over `fungible/account/v1:
   <userId>:<norm institution>:<norm name>:<norm type>/<norm subtype>:<dup>`,
   derived once and never changed (a rename keeps it). Two devices that create
@@ -158,11 +171,15 @@ not paid (any endpoint).
 
 ```
 request  { device_id, ops: [ {op_id, tbl, pk, kind, fields?, hlc} ... ] }   max 500
-response 200 { accepted: [op_id], rejected: [ {op_id, reason} ], server_seq }
+response 200 { accepted: [op_id], rejected: [ {op_id, reason, detail?} ], server_seq }
 ```
 
 Each op is applied in its own savepoint; a bad op does not poison the batch.
-Per-op results are in `accepted` / `rejected`. Reject reasons:
+Per-op results are in `accepted` / `rejected`. `detail` (`{field, expected}`) is
+present for `forbidden_field`, `forbidden_owner`, `invalid_amount`,
+`invalid_source` and `invalid_pk`; the client surfaces it on the `errors` entry of
+`runSyncCycle` (`PushConflict.detail`, rendered by `formatPushError` as e.g.
+`forbidden_field: excluded expected boolean`). Reject reasons:
 
 | reason | client behaviour |
 |---|---|
@@ -236,6 +253,11 @@ A device does not mix `/sync/push` and `/sync/ops` after cutover.
   the `accounts.origin` / `accounts.wire_id` columns (hosted enable only; a BYOK
   database never gets them). Enable backfills existing client accounts, manual
   transactions and balances, parents first, after the snapshot.
+- **Undo import**: per-row deletes then the import's delete (no bulk op). A
+  pulled import delete removes the import and any of its rows still present.
+- **Duplicate CSV row**: `conflict_unique` is reported once; the colliding
+  server row arrives by pull and the local copy adopts its id (as does a pulled
+  row whose `(account, dedup_key)` a local row already holds).
 - **Cascade**: a pending account delete makes the child ops queued in the same
   push moot (the server cascades and emits the child deletes); applying a
   pulled account delete removes its children locally.

@@ -36,6 +36,16 @@ export function deriveRuleUuid(
   return sha1Uuid(`fungible/${table}/v1:${userId}:${matchType}:${pattern}`);
 }
 
+/** `csv-<uuidv5>` over (user, the account's wire id, the row's dedup key). */
+export async function deriveCsvTxId(userId: string, accountWireId: string, dedupKey: string): Promise<string> {
+  return `csv-${await sha1Uuid(`fungible/csv_tx/v1:${userId}:${accountWireId}:${dedupKey}`)}`;
+}
+
+/** Wire id of an import: uuidv5 over (user, file hash, the account's wire id). */
+export function deriveImportWireId(userId: string, fileHash: string, accountWireId: string): Promise<string> {
+  return sha1Uuid(`fungible/import/v1:${userId}:${fileHash}:${accountWireId}`);
+}
+
 const normPart = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 /**

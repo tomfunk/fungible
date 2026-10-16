@@ -15,5 +15,6 @@ export const BASE_USER_VERSION = 1;
  *   1  base schema (initDb)
  *   2  sync operation log + triggers (installed only when hosted sync is enabled)
  *   3  client-owned rows: accounts.origin / wire_id + triggers (hosted sync only)
+ *   4  synced imports (imports.wire_id + triggers) and CSV row backfill (hosted sync only)
  */
-export const SCHEMA_USER_VERSION = 3;
+export const SCHEMA_USER_VERSION = 4;

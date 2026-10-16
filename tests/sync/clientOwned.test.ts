@@ -17,7 +17,7 @@ vi.mock('../../core/db.js', () => ({
 
 import { makeDevice, connect, q, type Device } from './harness.js';
 import { FakeServer } from './fakeServer.js';
-import { runSyncCycle, getSyncInfo } from '../../core/sync-client.js';
+import { runSyncCycle, getSyncInfo, formatPushError } from '../../core/sync-client.js';
 import { enableHostedMode, disableHostedMode } from '../../core/sync-mode.js';
 import {
   createManualAccount, createCsvAccount, updateAccountValue, updateAccountNickname, deleteAccount,
@@ -326,6 +326,26 @@ describe('boolean wire fields', () => {
   });
 });
 
+describe('reject detail', () => {
+  it('surfaces the server detail on the error entry and formats it', async () => {
+    const [a] = await twoDevices();
+    use(a);
+    const acct = await createManualAccount('Rental House', 1000);
+    await cycle(a);
+    // Queue an op carrying a field outside the server's allowlist.
+    const dev = (await q<{ device_id: string }>(a.client, 'SELECT device_id FROM _oplog LIMIT 1'))[0].device_id;
+    await a.client.execute({
+      sql: `INSERT INTO _oplog (op_id, tbl, pk, kind, fields, hlc, device_id, pushed) VALUES ('0123456789abcdef0123456789abcdef', 'accounts', ?, 'upsert', ?, ?, ?, 0)`,
+      args: [JSON.stringify({ id: acct }), JSON.stringify({ bogus_col: 1 }), `${String(Date.now()).padStart(15, '0')}-09999-${dev}`, dev],
+    });
+    const res = await cycle(a);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0]).toMatchObject({ table: 'accounts', reason: 'forbidden_field', detail: { field: 'bogus_col', expected: 'allowed account field' } });
+    expect(formatPushError(res.errors[0])).toBe('forbidden_field: bogus_col expected allowed account field');
+    expect(formatPushError({ reason: 'invalid_pk' })).toBe('invalid_pk');
+  });
+});
+
 describe('tag link deletes', () => {
   it('deleting a tagged manual transaction removes the link on the other device', async () => {
     const [a, b] = await twoDevices();
@@ -397,19 +417,17 @@ describe('ordering, volume, kill and resume', () => {
     await d.client.execute(
       `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, source, dedup_key)
        VALUES ('csv-1-0', ?, '2026-01-06', 'From CSV', 3, 'Fees', 0, 'csv', 'k')`, [acct] as never);
-    await enable(d);
+    await enableHostedMode({ userId: USER, client: d.client, snapshot: false });
     const ops = await q<{ tbl: string; origin: string }>(d.client, `SELECT tbl, origin FROM _oplog WHERE tbl IN ('accounts','transactions','balance_history') ORDER BY seq`);
-    expect(ops.map((o) => o.tbl)).toEqual(['accounts', 'transactions', 'balance_history']);
+    // Accounts, then manual transactions, then balances; CSV rows follow (their ids are re-keyed at the first cycle).
+    expect(ops.map((o) => o.tbl)).toEqual(['accounts', 'transactions', 'balance_history', 'transactions']);
     expect(ops.every((o) => o.origin === 'backfill')).toBe(true);
     expect((await accounts(d))[0].origin).toBe('client');
 
     const stats = await cycle(d);
     expect(stats.errors).toEqual([]);
-    expect(server.liveRows(USER, 'transactions').map((t) => t.name)).toEqual(['Old']);
-    // CSV rows are local-only until their ids are derivable; say so.
-    const info = await getSyncInfo(d.client);
-    expect(info.localOnlyCount).toBe(1);
-    expect(info.heldCount).toBeGreaterThanOrEqual(0);
+    expect(server.liveRows(USER, 'transactions').map((t) => t.name).sort()).toEqual(['From CSV', 'Old']);
+    expect((await getSyncInfo(d.client)).localOnlyCount).toBe(0);
   });
 
   it('5k rows: <=500 per batch, killed mid-push, resumes without duplicates', { timeout: 120_000 }, async () => {

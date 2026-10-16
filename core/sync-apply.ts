@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 import { deriveMemberUuid } from './sync-ids.js';
 import {
-  SYNC_TABLES, SERVER_OWNED_TABLES, CLIENT_TABLES, ACCOUNT_WIRE_PREFIX, isClientTxId, isSyncedSetting,
+  SYNC_TABLES, SERVER_OWNED_TABLES, CLIENT_TABLES, ACCOUNT_WIRE_PREFIX, CSV_DERIVED_GLOB, isClientTxId, isSyncedSetting,
   type SyncTable,
 } from './sync-spec.js';
 import { OP_PENDING, OP_DONE, OP_HELD, OP_SUPERSEDED } from './sync-oplog.js';
@@ -497,7 +497,7 @@ export function localIdForWireAccount(wire: string, subtype: unknown): string {
 
 const isClientOp = (op: RemoteOp): boolean =>
   (op.kind === 'upsert' || op.kind === 'delete') && (
-    op.tbl === 'accounts' || op.tbl === 'balance_history' ||
+    op.tbl === 'accounts' || op.tbl === 'balance_history' || op.tbl === 'imports' ||
     (op.tbl === 'transactions' && isClientTxId(String(op.pk.id ?? ''))));
 
 async function deleteAccountCascade(x: Exec, localId: string): Promise<void> {
@@ -528,6 +528,12 @@ async function resolveClient(x: Exec, op: RemoteOp): Promise<ClientResolved | nu
     case 'transactions': {
       const id = String(op.pk.id);
       return { pk: { id }, where: 'id = ?', args: [id] };
+    }
+    case 'imports': {
+      const wire = String(op.pk.id ?? '');
+      const hit = await one(x, 'SELECT id FROM imports WHERE wire_id = ?', [wire]);
+      const local = hit ? Number(hit.id) : null;
+      return { pk: { id: local, wire }, where: 'id = ?', args: [local] };
     }
     case 'balance_history': {
       const wire = String(op.pk.account_id ?? '');
@@ -566,6 +572,16 @@ async function applyClientOp(x: Exec, op: RemoteOp, stats: ApplyStats): Promise<
       await x.execute({ sql: 'DELETE FROM tag_rule_suppressions WHERE transaction_id = ?', args: [String(r.pk.id)] });
       await x.execute({ sql: 'DELETE FROM transactions WHERE id = ?', args: [String(r.pk.id)] });
       stats.touchedTransactions = true;
+    } else if (op.tbl === 'imports') {
+      // Undo import: the rows it brought go with it.
+      if (r.pk.id != null) {
+        const iid = Number(r.pk.id);
+        await x.execute({ sql: `DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE import_id = ?)`, args: [iid] });
+        await x.execute({ sql: `DELETE FROM tag_rule_suppressions WHERE transaction_id IN (SELECT id FROM transactions WHERE import_id = ?)`, args: [iid] });
+        await x.execute({ sql: 'DELETE FROM transactions WHERE import_id = ?', args: [iid] });
+        await x.execute({ sql: 'DELETE FROM imports WHERE id = ?', args: [iid] });
+        stats.touchedTransactions = true;
+      }
     } else {
       await x.execute({ sql: `DELETE FROM balance_history WHERE ${r.where}`, args: r.args });
     }
@@ -593,7 +609,8 @@ async function applyClientOp(x: Exec, op: RemoteOp, stats: ApplyStats): Promise<
     });
   }
 
-  const exists = (await one(x, `SELECT 1 AS x FROM ${t.tbl} WHERE ${r.where}`, r.args)) != null;
+  let exists = r.args[0] != null && (await one(x, `SELECT 1 AS x FROM ${t.tbl} WHERE ${r.where}`, r.args)) != null;
+  if (!exists && op.tbl === 'transactions') exists = await adoptCsvTwin(x, r, fields);
   const win: Record<string, unknown> = {};
   for (const fld of t.fields) {
     if (!(fld in fields)) continue;
@@ -603,12 +620,15 @@ async function applyClientOp(x: Exec, op: RemoteOp, stats: ApplyStats): Promise<
   }
   // Account references come in wire form.
   if (op.tbl === 'transactions' && 'account_id' in win) win.account_id = await localAccountId(x, String(win.account_id));
+  if (op.tbl === 'transactions' && 'import_id' in win) win.import_id = await localImportId(x, win.import_id);
+  if (op.tbl === 'imports' && 'account_id' in win) win.account_id = await localAccountId(x, String(win.account_id));
   delete win.source; // immutable after insert
 
   if (!exists) {
     const ins = await insertClientRow(x, op, r, fields, win);
     if (!ins) { stats.skipped++; return; }
     if (op.tbl === 'transactions') stats.touchedTransactions = true;
+    if (op.tbl === 'imports') r.pk.id = (await one(x, 'SELECT id FROM imports WHERE wire_id = ?', [String(r.pk.wire)]))?.id ?? null;
   } else {
     const keys = Object.keys(win);
     if (keys.length > 0) {
@@ -622,6 +642,35 @@ async function applyClientOp(x: Exec, op: RemoteOp, stats: ApplyStats): Promise<
   if (Object.keys(win).length > 0) await supersedeLocal(x, t, r.pk, Object.keys(win), h, stats);
   await logRemote(x, op, r.pk);
   stats.applied++;
+}
+
+async function localImportId(x: Exec, wire: unknown): Promise<number | null> {
+  if (wire == null) return null;
+  const r = await one(x, 'SELECT id FROM imports WHERE wire_id = ?', [String(wire)]);
+  return r ? Number(r.id) : null;
+}
+
+/**
+ * A pulled CSV row whose (account, dedup_key) is already held under another id
+ * (a legacy id this device had not re-keyed yet) IS that row: take the wire id.
+ */
+async function adoptCsvTwin(x: Exec, r: ClientResolved, fields: Record<string, unknown>): Promise<boolean> {
+  if (fields.account_id == null || fields.dedup_key == null) return false;
+  const account = await localAccountId(x, String(fields.account_id));
+  const twin = await one(x, 'SELECT id FROM transactions WHERE account_id = ? AND dedup_key = ? AND id != ?',
+    [account, String(fields.dedup_key), String(r.pk.id)]);
+  if (!twin) return false;
+  const old = String(twin.id);
+  const next = String(r.pk.id);
+  await x.execute({ sql: 'UPDATE transactions SET id = ? WHERE id = ?', args: [next, old] });
+  await x.execute({ sql: 'UPDATE transaction_tags SET transaction_id = ? WHERE transaction_id = ?', args: [next, old] });
+  await x.execute({ sql: 'UPDATE tag_rule_suppressions SET transaction_id = ? WHERE transaction_id = ?', args: [next, old] });
+  await x.execute({
+    sql: `UPDATE _oplog SET pushed = ${OP_SUPERSEDED}, reason = 'adopted' WHERE pushed IN (${OP_PENDING}, ${OP_HELD})
+          AND kind = 'upsert' AND tbl = 'transactions' AND json_extract(pk, '$.id') IN (?, ?)`,
+    args: [old, next],
+  });
+  return true;
 }
 
 /** Create a pulled client row. False when it cannot be created (partial op, unknown parent). */
@@ -649,6 +698,19 @@ async function insertClientRow(
     });
     return true;
   }
+  if (op.tbl === 'imports') {
+    const account = full.account_id == null ? null : await localAccountId(x, String(full.account_id));
+    if (account == null || full.file_hash == null || full.file_name == null
+        || !(await one(x, 'SELECT 1 AS x FROM accounts WHERE id = ?', [account]))) return false;
+    const rowCount = Number(full.row_count ?? 0);
+    await x.execute({
+      sql: `INSERT INTO imports (account_id, file_name, file_hash, imported_at, row_count, imported, skipped, min_date, max_date, config, wire_id)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, '{}', ?)`,
+      args: [account, String(full.file_name), String(full.file_hash), Number(full.imported_at ?? Date.now()), rowCount, rowCount,
+             arg(full.min_date), arg(full.max_date), String(r.pk.wire)],
+    });
+    return true;
+  }
   // transactions
   const accountLocal = full.account_id == null ? null : await localAccountId(x, String(full.account_id));
   const source = fields.source ?? full.source;
@@ -661,7 +723,8 @@ async function insertClientRow(
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
     args: [String(r.pk.id), accountLocal, dateOnly(full.date), String(full.name), arg(full.merchant_name), Number(full.amount),
            arg(full.manual_category), arg(full.raw_category), arg(full.manual_category), arg(full.display_name),
-           arg(full.ignored) ?? 0, arg(full.original_date), String(source), arg(full.import_id), arg(full.dedup_key)],
+           arg(full.ignored) ?? 0, arg(full.original_date), String(source), await localImportId(x, fields.import_id),
+           arg(full.dedup_key)],
   });
   return true;
 }
@@ -690,7 +753,17 @@ export async function pruneVanishedClientRows(x: Exec, tables: SnapshotTables): 
     await deleteAccountCascade(x, local);
     n++;
   }
-  for (const t of await all(x, `SELECT id FROM transactions WHERE source = 'manual' AND id LIKE 'manual-%'`)) {
+  const importIds = ids('imports', 'id');
+  for (const i of await all(x, `SELECT id, wire_id FROM imports WHERE wire_id IS NOT NULL`)) {
+    const local = String(i.id);
+    if (importIds.has(String(i.wire_id))) continue;
+    if (await hasOp('imports', 'id', local, open) || !(await hasOp('imports', 'id', local, String(OP_DONE)))) continue;
+    await x.execute({ sql: 'UPDATE transactions SET import_id = NULL WHERE import_id = ?', args: [Number(local)] });
+    await x.execute({ sql: 'DELETE FROM imports WHERE id = ?', args: [Number(local)] });
+    n++;
+  }
+  for (const t of await all(x,
+    `SELECT id FROM transactions WHERE source IN ('manual', 'csv') AND (id LIKE 'manual-%' OR id GLOB '${CSV_DERIVED_GLOB}')`)) {
     const id = String(t.id);
     if (txs.has(id)) continue;
     if (await hasOp('transactions', 'id', id, open) || !(await hasOp('transactions', 'id', id, String(OP_DONE)))) continue;
@@ -739,7 +812,7 @@ export async function applyRemoteOp(x: Exec, ctx: MemberCtx, op: RemoteOp, stats
 export type SnapshotTables = Record<string, { rows: Row[]; deletes?: unknown[] } | undefined>;
 
 const SNAPSHOT_ORDER = [
-  'accounts', 'transactions', 'balance_history',
+  'accounts', 'imports', 'transactions', 'balance_history',
   'categories', 'settings', 'hidden_categories', 'household_members',
   'tags', 'category_rules', 'name_rules', 'transaction_tags',
 ] as const;
@@ -760,6 +833,7 @@ export function snapshotOps(tables: SnapshotTables): RemoteOp[] {
         mk(tbl, { id: r.id }, r, r.origin === 'client' ? 'upsert' : 'server_upsert');
         continue;
       }
+      if (tbl === 'imports') { mk(tbl, { id: r.id }, r, 'upsert'); continue; }
       if (tbl === 'transactions') {
         const client = r.source === 'csv' || r.source === 'manual';
         mk(tbl, { id: r.id }, client ? r : { ...r, removed: Boolean(r.removed) }, client ? 'upsert' : 'server_upsert');

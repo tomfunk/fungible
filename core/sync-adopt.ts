@@ -87,7 +87,7 @@ async function setState(c: Client, key: string, value: string): Promise<void> {
   });
 }
 
-async function ensureBackup(c: Client): Promise<void> {
+export async function ensureBackup(c: Client): Promise<void> {
   if (await getState(c, 'adopt_backup_done')) return;
   if (_beforeAdopt) await _beforeAdopt();
   else {
