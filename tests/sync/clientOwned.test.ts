@@ -17,7 +17,7 @@ vi.mock('../../core/db.js', () => ({
 
 import { makeDevice, connect, q, type Device } from './harness.js';
 import { FakeServer } from './fakeServer.js';
-import { runSyncCycle, getSyncInfo } from '../../core/sync-client.js';
+import { runSyncCycle, getSyncInfo, formatPushError } from '../../core/sync-client.js';
 import { enableHostedMode, disableHostedMode } from '../../core/sync-mode.js';
 import {
   createManualAccount, createCsvAccount, updateAccountValue, updateAccountNickname, deleteAccount,
@@ -323,6 +323,26 @@ describe('boolean wire fields', () => {
       fields: { name: 'n', type: 't', origin: 'client', excluded: 0 }, hlc })).toBe('forbidden_field');
     expect(server.inject(USER, 'x', { op_id: 'n2', tbl: 'transactions', pk: { id: 'manual-n' }, kind: 'upsert',
       fields: { ignored: 1 }, hlc })).toBe('forbidden_field');
+  });
+});
+
+describe('reject detail', () => {
+  it('surfaces the server detail on the error entry and formats it', async () => {
+    const [a] = await twoDevices();
+    use(a);
+    const acct = await createManualAccount('Rental House', 1000);
+    await cycle(a);
+    // Queue an op carrying a field outside the server's allowlist.
+    const dev = (await q<{ device_id: string }>(a.client, 'SELECT device_id FROM _oplog LIMIT 1'))[0].device_id;
+    await a.client.execute({
+      sql: `INSERT INTO _oplog (op_id, tbl, pk, kind, fields, hlc, device_id, pushed) VALUES ('0123456789abcdef0123456789abcdef', 'accounts', ?, 'upsert', ?, ?, ?, 0)`,
+      args: [JSON.stringify({ id: acct }), JSON.stringify({ bogus_col: 1 }), `${String(Date.now()).padStart(15, '0')}-09999-${dev}`, dev],
+    });
+    const res = await cycle(a);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors[0]).toMatchObject({ table: 'accounts', reason: 'forbidden_field', detail: { field: 'bogus_col', expected: 'allowed account field' } });
+    expect(formatPushError(res.errors[0])).toBe('forbidden_field: bogus_col expected allowed account field');
+    expect(formatPushError({ reason: 'invalid_pk' })).toBe('invalid_pk');
   });
 });
 

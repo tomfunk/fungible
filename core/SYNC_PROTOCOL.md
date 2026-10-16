@@ -171,11 +171,15 @@ not paid (any endpoint).
 
 ```
 request  { device_id, ops: [ {op_id, tbl, pk, kind, fields?, hlc} ... ] }   max 500
-response 200 { accepted: [op_id], rejected: [ {op_id, reason} ], server_seq }
+response 200 { accepted: [op_id], rejected: [ {op_id, reason, detail?} ], server_seq }
 ```
 
 Each op is applied in its own savepoint; a bad op does not poison the batch.
-Per-op results are in `accepted` / `rejected`. Reject reasons:
+Per-op results are in `accepted` / `rejected`. `detail` (`{field, expected}`) is
+present for `forbidden_field`, `forbidden_owner`, `invalid_amount`,
+`invalid_source` and `invalid_pk`; the client surfaces it on the `errors` entry of
+`runSyncCycle` (`PushConflict.detail`, rendered by `formatPushError` as e.g.
+`forbidden_field: excluded expected boolean`). Reject reasons:
 
 | reason | client behaviour |
 |---|---|

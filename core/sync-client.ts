@@ -242,7 +242,16 @@ async function deriveClientAccountIds(c: Client, userId: string): Promise<void> 
 
 // ── Push ─────────────────────────────────────────────────────────────────────
 
-export type PushConflict = { table: string; id: unknown; reason: string; server_row: null };
+export type PushConflict = {
+  table: string; id: unknown; reason: string; server_row: null;
+  /** Which field the server objected to, and what it expected (forbidden_*, invalid_*). */
+  detail?: { field: string; expected: string };
+};
+
+/** "forbidden_field: excluded expected boolean" for display; just the reason when there is no detail. */
+export function formatPushError(e: Pick<PushConflict, 'reason' | 'detail'>): string {
+  return e.detail ? `${e.reason}: ${e.detail.field} expected ${e.detail.expected}` : e.reason;
+}
 
 export type PushStats = {
   accepted: number;
@@ -517,7 +526,7 @@ async function push(c: Client, userId: string, deviceId: string): Promise<PushSt
     });
     if (!res.ok) throw new SyncError('push_failed', res.status);
     const body = (await res.json()) as {
-      accepted?: string[]; rejected?: { op_id: string; reason: string }[];
+      accepted?: string[]; rejected?: { op_id: string; reason: string; detail?: { field?: unknown; expected?: unknown } }[];
     };
     const byId = new Map(batch.map((b) => [b.wire.op_id, b]));
 
@@ -531,6 +540,9 @@ async function push(c: Client, userId: string, deviceId: string): Promise<PushSt
       const b = byId.get(rej.op_id);
       if (!b) continue;
       const err: PushConflict = { table: b.wire.tbl, id: b.wire.pk.id ?? b.wire.pk, reason: rej.reason, server_row: null };
+      if (rej.detail && typeof rej.detail.field === 'string') {
+        err.detail = { field: rej.detail.field, expected: String(rej.detail.expected ?? '') };
+      }
       switch (rej.reason) {
         case 'stale':
           // Informational: a newer write already holds this field. The server

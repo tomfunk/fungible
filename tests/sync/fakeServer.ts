@@ -97,6 +97,13 @@ export class FakeServer {
     return u;
   }
 
+  /** Detail ({field, expected}) of the reject produced by the last apply(), like the real server's rejected[].detail. */
+  private lastDetail: { field: string; expected: string } | null = null;
+  private rej(reason: string, field: string, expected: string): string {
+    this.lastDetail = { field, expected };
+    return reason;
+  }
+
   /** Raw op count for a user's log (any kind). */
   opsOf(userId: string): ServerOp[] { return this.user(userId).ops; }
 
@@ -203,11 +210,12 @@ export class FakeServer {
         : t === 'transaction_tags' ? 3 : 1);
       body.ops = body.ops.map((o, i) => ({ o, i })).sort((a, b) => rank(a.o.tbl) - rank(b.o.tbl) || a.i - b.i).map((x) => x.o);
       const accepted: string[] = [];
-      const rejected: { op_id: string; reason: string }[] = [];
+      const rejected: { op_id: string; reason: string; detail?: { field: string; expected: string } }[] = [];
       for (const op of body.ops) {
+        this.lastDetail = null;
         const r = this.apply(u, body.device_id, op);
         if (r === 'accepted') accepted.push(op.op_id);
-        else rejected.push({ op_id: op.op_id, reason: r });
+        else rejected.push({ op_id: op.op_id, reason: r, ...(this.lastDetail ? { detail: this.lastDetail } : {}) });
       }
       return json(200, { accepted, rejected, server_seq: u.seq });
     }
@@ -274,13 +282,13 @@ export class FakeServer {
     const live = (tbl: string) => u.rows.get(rowKey(tbl, op.pk))?.exists === true;
     // The real server validates these as JSON booleans and rejects 0/1.
     for (const k of op.tbl === 'accounts' ? ['excluded'] : op.tbl === 'transactions' ? ['ignored'] : []) {
-      if (k in fields && fields[k] != null && typeof fields[k] !== 'boolean') return 'forbidden_field';
+      if (k in fields && fields[k] != null && typeof fields[k] !== 'boolean') return this.rej('forbidden_field', k, 'boolean');
     }
     if (op.tbl === 'accounts') {
       const id = String(op.pk.id);
       if (u.plaid.accounts.has(id)) return 'forbidden_owner';
-      if (!id.startsWith('acct-')) return 'invalid_pk';
-      for (const f of Object.keys(fields)) if (!CLIENT_ACCOUNT_FIELDS.includes(f)) return 'forbidden_field';
+      if (!id.startsWith('acct-')) return this.rej('invalid_pk', 'id', 'acct- prefix');
+      for (const f of Object.keys(fields)) if (!CLIENT_ACCOUNT_FIELDS.includes(f)) return this.rej('forbidden_field', f, 'allowed account field');
       if (op.kind === 'upsert') {
         const cur = u.rows.get(rowKey('accounts', op.pk));
         const hadRow = cur != null && cur.fields.origin != null;
@@ -312,7 +320,7 @@ export class FakeServer {
         if (stored === undefined && fields.origin === undefined) return 'invalid_source';
         if (fields.origin !== undefined && fields.origin !== 'client') return fields.origin === 'plaid' ? 'forbidden_owner' : 'invalid_source';
         if (stored !== undefined && fields.origin !== undefined && fields.origin !== stored) return 'invalid_source';
-        if ('balance' in fields && badAmount(fields.balance)) return 'invalid_amount';
+        if ('balance' in fields && badAmount(fields.balance)) return this.rej('invalid_amount', 'balance', 'finite number, abs <= 1e12');
       }
       if (!this.liveClientAccount(u, acct)) return op.kind === 'delete' ? null : 'row_missing';
       return null;
@@ -330,17 +338,17 @@ export class FakeServer {
         return null; // annotation on a row not synced yet: row_missing (caller)
       }
       if (op.kind === 'delete') return null;
-      for (const f of Object.keys(fields)) if (!CLIENT_TX_FIELDS.includes(f)) return 'forbidden_field';
+      for (const f of Object.keys(fields)) if (!CLIENT_TX_FIELDS.includes(f)) return this.rej('forbidden_field', f, 'allowed transaction field');
       const cur = u.rows.get(rowKey('transactions', op.pk));
       const exists = cur?.exists === true;
       const src = fields.source;
       if (!exists && !(cur && cur.fields.source)) {
-        if (src === undefined) return 'invalid_source';
-        if (src === 'plaid') return 'forbidden_owner';
+        if (src === undefined) return this.rej('invalid_source', 'source', 'present on insert');
+        if (src === 'plaid') return this.rej('forbidden_owner', 'source', 'csv or manual');
         if (src !== 'csv' && src !== 'manual') return 'invalid_source';
         if (!id.startsWith(`${src}-`)) return 'invalid_source';
       } else if (src !== undefined && src !== cur!.fields.source?.v) return 'invalid_source';
-      if ('amount' in fields && badAmount(fields.amount)) return 'invalid_amount';
+      if ('amount' in fields && badAmount(fields.amount)) return this.rej('invalid_amount', 'amount', 'finite number, abs <= 1e12');
       const acct = fields.account_id ?? cur?.fields.account_id?.v;
       if (acct == null) return 'invalid_pk';
       if ('account_id' in fields || !exists) {
