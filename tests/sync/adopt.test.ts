@@ -122,7 +122,7 @@ describe('BYOK adoption', () => {
     await cycle();
 
     for (const [id, f] of [
-      ['S-2', { manual_category: 'Gas' }], ['S-3', { ignored: 1 }], ['S-c2', { manual_category: 'Coffee' }],
+      ['S-2', { manual_category: 'Gas' }], ['S-3', { ignored: true }], ['S-c2', { manual_category: 'Coffee' }],
     ] as const) {
       expect(server.row(USER, 'transactions', { id })).toMatchObject(f);
     }

@@ -293,6 +293,39 @@ describe('server behaviours the client must survive', () => {
   });
 });
 
+describe('boolean wire fields', () => {
+  it('excluded and ignored leave the device as JSON booleans and apply back as 0/1; the server rejects 0/1', async () => {
+    const [a, b] = await twoDevices();
+    use(a);
+    const acct = await createManualAccount('Rental House', 1000);
+    await addTransaction({ accountId: acct, date: '2026-03-04', name: 'Roof repair', amount: 10, category: 'Home' });
+    await a.client.execute(`UPDATE accounts SET excluded = 1 WHERE id = '${acct}'`);
+    await a.client.execute(`UPDATE transactions SET ignored = 1 WHERE account_id = '${acct}'`);
+    const res = await cycle(a);
+    expect(res.errors).toEqual([]);
+
+    const sent = server.opsOf(USER).filter((o) => o.fields && ('excluded' in o.fields || 'ignored' in o.fields));
+    expect(sent.length).toBeGreaterThan(0);
+    for (const o of sent) {
+      for (const k of ['excluded', 'ignored']) {
+        if (k in o.fields!) expect(typeof o.fields![k]).toBe('boolean');
+      }
+    }
+    expect(server.liveRows(USER, 'accounts')[0].excluded).toBe(true);
+    expect(server.liveRows(USER, 'transactions')[0].ignored).toBe(true);
+
+    await cycle(b);
+    expect(await q(b.client, 'SELECT excluded FROM accounts WHERE name = ?', ['Rental House'])).toEqual([{ excluded: 1 }]);
+    expect(await q(b.client, 'SELECT ignored FROM transactions')).toEqual([{ ignored: 1 }]);
+
+    const hlc = `${String(Date.now()).padStart(15, '0')}-00000-x`;
+    expect(server.inject(USER, 'x', { op_id: 'n1', tbl: 'accounts', pk: { id: 'acct-n' }, kind: 'upsert',
+      fields: { name: 'n', type: 't', origin: 'client', excluded: 0 }, hlc })).toBe('forbidden_field');
+    expect(server.inject(USER, 'x', { op_id: 'n2', tbl: 'transactions', pk: { id: 'manual-n' }, kind: 'upsert',
+      fields: { ignored: 1 }, hlc })).toBe('forbidden_field');
+  });
+});
+
 describe('tag link deletes', () => {
   it('deleting a tagged manual transaction removes the link on the other device', async () => {
     const [a, b] = await twoDevices();

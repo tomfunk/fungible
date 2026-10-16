@@ -296,6 +296,15 @@ type Resolution =
   | { moot: string }
   | { held: string };
 
+/** accounts.excluded / transactions.ignored are 0/1 locally but JSON booleans on the wire (the server rejects 0/1). */
+function toWireFields(tbl: string, fields: Record<string, unknown>): Record<string, unknown> {
+  const bools = tbl === 'accounts' ? ['excluded'] : tbl === 'transactions' ? ['ignored'] : [];
+  if (bools.length === 0) return fields;
+  const out = { ...fields };
+  for (const k of bools) if (k in out && out[k] != null) out[k] = typeof out[k] === 'boolean' ? out[k] : Number(out[k]) === 1;
+  return out;
+}
+
 async function resolveForWire(
   c: Client, op: Row, member: { fwd: Map<string, string> },
 ): Promise<Resolution> {
@@ -308,7 +317,7 @@ async function resolveForWire(
   };
   const fields = op.fields ? (JSON.parse(String(op.fields)) as Record<string, unknown>) : undefined;
   const withFields = (wirePk: Record<string, unknown>): Resolution => ({
-    wire: { ...base, pk: wirePk, ...(base.kind === 'upsert' ? { fields: fields ?? {} } : {}) },
+    wire: { ...base, pk: wirePk, ...(base.kind === 'upsert' ? { fields: toWireFields(tbl, fields ?? {}) } : {}) },
   });
 
   switch (tbl) {
@@ -358,7 +367,7 @@ async function resolveForWire(
         if (a.client && a.wire_id == null) return { held: 'no_derived_id' };
         out.account_id = a.w;
       }
-      return { wire: { ...base, pk: { id: wire }, fields: out } };
+      return { wire: { ...base, pk: { id: wire }, fields: toWireFields(tbl, out) } };
     }
     case 'balance_history': {
       const acct = await one(c, `SELECT wire_id, ${clientAccountSql('accounts')} AS client FROM accounts WHERE id = ?`, [String(pk.account_id)]);
@@ -417,7 +426,7 @@ async function resolveForWire(
           out.import_id = null;
         } else out.import_id = imp.wire_id;
       }
-      return { wire: { ...base, pk: { id }, fields: out } };
+      return { wire: { ...base, pk: { id }, fields: toWireFields(tbl, out) } };
     }
     default: return { moot: 'unknown_table' };
   }
