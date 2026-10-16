@@ -32,6 +32,10 @@ Synced tables:
 | accounts (`origin='client'`) | client-owned | `{id: text}` (`acct-` prefix) | `name, type, subtype, institution_name, mask, nickname, owner, apr, excluded`, `origin` (insert only); upsert + delete |
 | balance_history | owner follows the account | `{account_id, date}` | client-owned rows: `balance` (per-field LWW); upsert + delete |
 
+`accounts.excluded` and `transactions.ignored` are JSON booleans on the wire
+(`true`/`false`); the server rejects `0`/`1` with `forbidden_field`. Locally they
+are stored 0/1; the client coerces on push and accepts either on apply.
+
 `user_id` is never sent; the bearer token identifies the user.
 
 Settings allowlist (client and server both enforce): `plaid_default_start_date`,

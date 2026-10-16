@@ -77,7 +77,7 @@ beforeAll(async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ device_id: 'probe', ops: [{
-          op_id: `probe${Date.now()}`, tbl: 'accounts', pk: { id: `acct-${crypto.randomUUID()}` }, kind: 'upsert',
+          op_id: crypto.randomUUID().replace(/-/g, ''), tbl: 'accounts', pk: { id: `acct-${crypto.randomUUID()}` }, kind: 'upsert',
           fields: { name: 'probe', type: 'other', origin: 'client' }, hlc,
         }] }),
       });

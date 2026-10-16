@@ -269,6 +269,10 @@ export class FakeServer {
   /** Ownership / source / amount validation for client-owned rows. Returns a reject reason or null. */
   private checkOwnership(u: UserState, op: Omit<ServerOp, 'server_seq' | 'device_id'>, fields: Record<string, unknown>): string | null {
     const live = (tbl: string) => u.rows.get(rowKey(tbl, op.pk))?.exists === true;
+    // The real server validates these as JSON booleans and rejects 0/1.
+    for (const k of op.tbl === 'accounts' ? ['excluded'] : op.tbl === 'transactions' ? ['ignored'] : []) {
+      if (k in fields && fields[k] != null && typeof fields[k] !== 'boolean') return 'forbidden_field';
+    }
     if (op.tbl === 'accounts') {
       const id = String(op.pk.id);
       if (u.plaid.accounts.has(id)) return 'forbidden_owner';
