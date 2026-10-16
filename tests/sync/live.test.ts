@@ -38,6 +38,8 @@ const email = () => `live+${Date.now()}+${Math.random().toString(36).slice(2, 8)
 const PW = 'test-password-123';
 
 let oplogDeployed = false;
+// True when the server accepts client-origin writes (accounts/transactions/balances).
+let clientOwnedDeployed = false;
 const devices: Device[] = [];
 afterAll(() => { for (const d of devices) d.close(); });
 
@@ -67,7 +69,22 @@ beforeAll(async () => {
       body: JSON.stringify({ device_id: 'probe', ops: [] }),
     });
     oplogDeployed = res.status !== 404;
-  } catch { oplogDeployed = false; }
+    if (oplogDeployed) {
+      // Does it know client-owned accounts? A server without them answers
+      // forbidden_table (or errors); never fail CI on that, skip.
+      const hlc = `${String(Date.now()).padStart(15, '0')}-00000-probe`;
+      const r2 = await fetch(`${URL_}/sync/ops`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ device_id: 'probe', ops: [{
+          op_id: crypto.randomUUID().replace(/-/g, ''), tbl: 'accounts', pk: { id: `acct-${crypto.randomUUID()}` }, kind: 'upsert',
+          fields: { name: 'probe', type: 'other', origin: 'client' }, hlc,
+        }] }),
+      });
+      const j = r2.ok ? ((await r2.json()) as { accepted?: string[] }) : null;
+      clientOwnedDeployed = (j?.accepted?.length ?? 0) === 1;
+    }
+  } catch { oplogDeployed = false; clientOwnedDeployed = false; }
 });
 
 describe('live: operation-log sync (skipped without FUNGIBLE_SYNC_TEST_URL or a deployed /sync/ops)', () => {
@@ -124,5 +141,37 @@ describe('live: operation-log sync (skipped without FUNGIBLE_SYNC_TEST_URL or a 
     const info = await getSyncInfo(a.d.client);
     expect(info.pendingCount).toBe(0);
     expect(info.rejectedCount).toBe(0);
+  });
+
+  it('client-owned rows: a manual account with transactions and a balance syncs to a second device', async (ctx) => {
+    if (!URL_ || !oplogDeployed || !clientOwnedDeployed) ctx.skip();
+    const a = await dev(memoryAuthAdapter());
+    use(a);
+    await register(email(), PW);
+    const uid = (await sessionUserId())!;
+    await enableHostedMode({ userId: uid, client: a.d.client, dataDir: a.d.dir });
+    const { createManualAccount, deleteAccount } = await import('../../core/accounts.js');
+    const { addTransaction } = await import('../../core/transactions.js');
+    const acct = await createManualAccount('Live Rental', 1234);
+    await addTransaction({ accountId: acct, date: '2026-03-04', name: 'Live repair', amount: 10, category: 'Home' });
+    const sa = await runSyncCycle({ client: a.d.client });
+    expect(sa.errors).toEqual([]);
+
+    const b = await dev(memoryAuthAdapter({ access: (await getAccessToken())! }));
+    use(b);
+    await enableHostedMode({ userId: uid, client: b.d.client, dataDir: b.d.dir });
+    const sb = await runSyncCycle({ client: b.d.client });
+    expect(sb.errors).toEqual([]);
+    expect((await q(b.d.client, 'SELECT name FROM accounts')).map((r) => r.name)).toEqual(['Live Rental']);
+    expect((await q(b.d.client, 'SELECT name FROM transactions')).map((r) => r.name)).toEqual(['Live repair']);
+    expect((await q(b.d.client, 'SELECT balance FROM balance_history'))[0]).toEqual({ balance: 1234 });
+
+    use(a);
+    await deleteAccount(acct);
+    expect((await runSyncCycle({ client: a.d.client })).errors).toEqual([]);
+    use(b);
+    await runSyncCycle({ client: b.d.client });
+    expect(await q(b.d.client, 'SELECT id FROM accounts')).toEqual([]);
+    expect(await q(b.d.client, 'SELECT id FROM transactions')).toEqual([]);
   });
 });

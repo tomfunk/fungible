@@ -26,8 +26,15 @@ Synced tables:
 | category_rules | co-owned | `{id: uuid}` | `priority, match_type, pattern, category, min_amount, max_amount` |
 | name_rules | co-owned | `{id: uuid}` | `match_type, pattern, replacement, min_amount, max_amount` |
 | transaction_tags | co-owned | `{transaction_id, tag_id}` | (none) |
-| transactions | server-owned + annotations | `{id: text}` (Plaid id) | client-writable: `manual_category, display_name, ignored` |
-| accounts, balance_history | server-owned | pull only | |
+| transactions (`source='plaid'`) | server-owned + annotations | `{id: text}` (Plaid id) | client-writable: `manual_category, display_name, ignored` (upsert only) |
+| transactions (`source` in `csv`,`manual`) | client-owned | `{id: text}` (`manual-`/`csv-` prefix) | `account_id, date, name, merchant_name, amount, raw_category, source` (insert only), `import_id, dedup_key, original_date, manual_category, display_name, ignored`; upsert + delete |
+| accounts (`origin='plaid'`) | server-owned | pull only | |
+| accounts (`origin='client'`) | client-owned | `{id: text}` (`acct-` prefix) | `name, type, subtype, institution_name, mask, nickname, owner, apr, excluded`, `origin` (insert only); upsert + delete |
+| balance_history | owner follows the account | `{account_id, date}` | client-owned rows: `balance` (per-field LWW); upsert + delete |
+
+`accounts.excluded` and `transactions.ignored` are JSON booleans on the wire
+(`true`/`false`); the server rejects `0`/`1` with `forbidden_field`. Locally they
+are stored 0/1; the client coerces on push and accepts either on apply.
 
 `user_id` is never sent; the bearer token identifies the user.
 
@@ -35,6 +42,56 @@ Settings allowlist (client and server both enforce): `plaid_default_start_date`,
 `pretax_monthly`. Any other key is `forbidden_field`. Never synced: canvases,
 tag_rules, tag_rule_suppressions, account-scoped category/name rules
 (`account_id IS NOT NULL` locally; the server has no account column), `device_id`.
+
+### Ownership (client-owned rows)
+
+Ownership is per ROW and immutable after insert: `transactions.source` in
+`plaid|csv|manual`, `accounts.origin` in `plaid|client`; balance rows follow
+their account. Plaid-owned rows are written by the server only (a client can
+never create one: `forbidden_owner`); the client writes its own CSV/manual
+accounts, manual transactions and manual balances, and annotations on
+Plaid-owned transactions. Everything a client does not own is pull-only.
+
+Rules the server enforces (and the client mirrors):
+
+- ids: client-origin writes must use the `acct-` / `manual-` / `csv-` prefixes
+  (anything else: `invalid_pk`); an INSERT must carry the owner column
+  (`source` / `origin`) in `fields` and `source` may never change afterwards
+  (`invalid_source`). Prefixed id without `source`: `invalid_source`.
+- `amount` / `balance` must be finite with abs <= 1e12 (`invalid_amount`).
+- a non-allowlisted field on a Plaid-owned row is `forbidden_owner`; an unknown
+  field on a client row is `forbidden_field`.
+- `category` and `pending` are never sent: category is derived locally from
+  rules, pending is always 0.
+- deletes of client rows are soft. Deleting a client account tombstones its
+  client-owned transactions, balances (and imports) and appends **one delete op
+  per child with `device_id` null**, which every device including the origin
+  receives: apply idempotently, never echo.
+- `balance_history` INSERTs must carry `origin: 'client'` in `fields` (the owner
+  column is not inherited from the account; missing: `invalid_source`). An
+  update need not send it; if sent it must equal the stored value.
+- the server does NOT emit delete ops for `transaction_tags` links when a client
+  transaction or account is deleted (no FK). The client sends explicit link
+  deletes (pk `{transaction_id, tag_id}`) with the transaction delete, and for
+  an account delete for the links of all its child transactions. Child
+  transaction/balance deletes queued in the same batch as the account delete
+  are dropped (they would come back `stale`); link deletes are kept. Import
+  deletes do not cascade to rows.
+- `row_missing` is also returned when the parent account does not exist on the
+  server (yet, or any more): retryable, the op stays queued.
+- `(account_id, dedup_key)` is unique among live client transactions
+  (`conflict_unique`).
+- batches are processed in rank order (accounts/tags, imports/co-owned,
+  transactions/balances, transaction_tags); the client also sends parents first.
+
+Wire kinds: client-owned rows arrive as `upsert`/`delete`; Plaid-owned rows as
+`server_upsert`. The snapshot (`GET /sync/pull`) omits tombstones for every
+table and carries `origin` / `source` / `dedup_key` / `import_id` per row.
+`balance_history` ops are keyed `{account_id, date}`; `id` is no longer in op
+fields (snapshot rows still carry one).
+
+`merged_into` (accounts) and `absorbs` (transactions) are accepted but not
+validated server-side and not used by this client yet.
 
 ### Ids
 
@@ -46,8 +103,17 @@ tag_rules, tag_rule_suppressions, account-scoped category/name rules
 - `household_members`: wire id = SHA-1 derived from `(userId, localId)` where
   local ids are `self`, `spouse`, `child-N`. Ids the user does not derive (a
   foreign client's) are pinned to the next free local slot `child-16+`.
-- `transactions`: the Plaid-assigned text id. A client only sends annotation
-  ops for transactions it received from the server.
+- `transactions`: Plaid rows use the Plaid-assigned text id; a client only sends
+  annotation ops for transactions it received from the server. Manual
+  transactions are `manual-<uuid>` (same id locally and on the wire).
+- `accounts` (client-owned): wire id `acct-<uuidv5>` over `fungible/account/v1:
+  <userId>:<norm institution>:<norm name>:<norm type>/<norm subtype>:<dup>`,
+  derived once and never changed (a rename keeps it). Two devices that create
+  the same account converge on one row. Locally the account keeps its original
+  id (`manual-<uuid>` / `csv-acct-<uuid>`, which the UIs recognise) and the wire
+  id lives in `accounts.wire_id`; a pulled client account gets a local id
+  derived from the wire uuid in the same shapes. Plaid accounts use the server
+  id on both sides.
 
 ### HLC
 
@@ -102,10 +168,13 @@ Per-op results are in `accepted` / `rejected`. Reject reasons:
 |---|---|
 | `forbidden_table` | permanent; reported once; counted in `rejectedCount` |
 | `forbidden_field` | permanent (settings key outside allowlist, unknown field) |
-| `invalid_pk` | permanent |
+| `forbidden_owner` | permanent: write to a Plaid-owned column/row, or an attempt to create a Plaid-owned row |
+| `invalid_source` | permanent: owner column missing on insert, changed, or inconsistent with the id prefix |
+| `invalid_amount` | permanent: non-finite or abs > 1e12 |
+| `invalid_pk` | permanent (also: client-origin write with an id that lacks its prefix) |
 | `conflict_unique` | permanent for this op; the colliding server row arrives by pull and the local row adopts its uuid (natural-key adoption); reported once |
 | `stale` | informational: a newer write holds the field(s). Op marked superseded; `CycleStats.superseded++` |
-| `row_missing` | **retryable**: a partial `transactions` op (or `transaction_tags` whose tag is not there yet) arrived before its row. Op stays queued; retried every cycle |
+| `row_missing` | **retryable**: a partial `transactions` op (or `transaction_tags` whose tag is not there yet) arrived before its row, or a client transaction/balance whose parent account is not on the server. Op stays queued; retried every cycle |
 | `invalid_hlc` | wall too far ahead of server time (or malformed). Client re-stamps and retries; `CycleStats.clockSkew = true` |
 | `server_error` | retryable |
 
@@ -157,8 +226,29 @@ A device does not mix `/sync/push` and `/sync/ops` after cutover.
   copies; real local edits made after enabling still win by HLC.
 - **Coalescing**: pending upserts of one row with no delete between are merged
   into one op before pushing.
-- **Local-only rows**: annotations/links on transactions this device never
+- **Local-only rows**: annotations/links on Plaid transactions this device never
   received from the server are held (not sent, not "pending", not rejected).
+  CSV-source transactions are held too until their ids are derivable (they are
+  counted in `SyncInfo.localOnlyCount` so a UI can say "N imported rows not yet
+  synced"); manual transactions and client accounts/balances are synced.
+- **Client-owned capture**: triggers on `accounts` (origin client), manual/csv
+  `transactions` and balances of client accounts, installed by migration 3 with
+  the `accounts.origin` / `accounts.wire_id` columns (hosted enable only; a BYOK
+  database never gets them). Enable backfills existing client accounts, manual
+  transactions and balances, parents first, after the snapshot.
+- **Cascade**: a pending account delete makes the child ops queued in the same
+  push moot (the server cascades and emits the child deletes); applying a
+  pulled account delete removes its children locally.
+- **Snapshot**: client rows the server acknowledged earlier but no longer lists
+  are deleted locally after a resync (tombstones are omitted); rows with a
+  pending or held local op are kept.
+- **Volume**: no bulk op; per-row upserts coalesced locally, <= 500 per
+  batch, idempotent by op_id, so a killed push resumes from what is still
+  pending.
+- **Client accounts vs Plaid accounts**: a client account that never reached
+  the server and unambiguously matches a pulled Plaid account is adopted like a
+  local Plaid account (re-keyed; its manual transactions follow). One already
+  on the server stays beside its twin until a client-driven merge exists.
 - **BYOK adoption**: see `core/sync-adopt.ts` (institution+mask+type for
   accounts; one-to-one amount / date +-3d / name for transactions; annotations
   and tag links move to the server row; unmatched rows stay local-only).

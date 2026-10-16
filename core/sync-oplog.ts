@@ -1,7 +1,8 @@
 import type { Client, InStatement } from '@libsql/client';
 import { formatHlc, tickHlc, type HlcState } from './hlc.js';
 import {
-  SYNC_TABLES, SYNCED_SETTINGS_SQL_LIST, type SyncTable,
+  SYNC_TABLES, SYNCED_SETTINGS_SQL_LIST, CLIENT_ACCOUNT_FIELDS, CLIENT_TX_FIELDS, CLIENT_TX_BODY_FIELDS,
+  clientAccountSql, type SyncTable,
 } from './sync-spec.js';
 
 // The local operation log and the SQLite triggers that fill it. Portable: no
@@ -35,6 +36,8 @@ export const OP_MOOT = 4;
 export const OP_SUPERSEDED = 5;
 
 export const OPLOG_MIGRATION_VERSION = 2;
+/** Client-owned accounts / transactions / balances (see installClientOwnedStatements). */
+export const CLIENT_OWNED_MIGRATION_VERSION = 3;
 
 const NOW_MS = `CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`;
 const APPLYING_OFF = `NOT EXISTS (SELECT 1 FROM _sync_state WHERE key = 'applying' AND value = '1')`;
@@ -306,4 +309,141 @@ export async function installStatements(
 
 export async function oplogInstalled(client: Pick<Client, 'execute'>): Promise<boolean> {
   return tableExists(client, '_oplog');
+}
+
+// ── Client-owned rows (migration 3) ──────────────────────────────────────────
+//
+// CSV/manual accounts, manual transactions and manual balances sync as
+// client-owned rows. Installed by the hosted-mode enable migration only (a BYOK
+// database never gets the columns or triggers). Local pk shapes:
+//
+//   accounts         {"id": <local id>, "wire": <acct-uuid or null until derived>}
+//   balance_history  {"account_id": <local id>, "wire": <wire id or null>, "date"}
+//   transactions     {"id"}; client DELETEs also carry "account_id" (cascade moot)
+//
+// A transaction's source is immutable and its id prefix says who owns it, so
+// plaid-source rows never hit these triggers.
+
+const clientTx = (p: 'NEW' | 'OLD') => `${p}.source IN ('manual', 'csv')`;
+const txFieldsJson = `json_object(${CLIENT_TX_FIELDS.map((c) => `${q(c)}, NEW.${c}`).join(', ')})`;
+const acctFieldsJson =
+  `json_object(${CLIENT_ACCOUNT_FIELDS.map((c) => `${q(c)}, NEW.${c}`).join(', ')}, 'origin', 'client')`;
+const acctChanged = (cols: readonly string[]) =>
+  `(SELECT json_group_object(k, v) FROM (${cols
+    .map((c, i) => `${i ? 'UNION ALL ' : ''}SELECT ${q(c)} AS k, NEW.${c} AS v WHERE OLD.${c} IS NOT NEW.${c}`)
+    .join(' ')}))`;
+const acctOwnedSql = (idExpr: string) =>
+  `EXISTS (SELECT 1 FROM accounts _a WHERE _a.id = ${idExpr} AND ${clientAccountSql('_a')})`;
+const wireOf = (idExpr: string) => `(SELECT wire_id FROM accounts WHERE id = ${idExpr})`;
+
+export function clientOwnedTriggers(): string[] {
+  const out: string[] = [];
+  const off = APPLYING_OFF;
+  // accounts
+  out.push(trigger('_sync_accounts_ins', 'INSERT ON accounts', `${off} AND ${clientAccountSql('NEW')}`,
+    logOp('accounts', 'upsert', `json_object('id', NEW.id, 'wire', NEW.wire_id)`, acctFieldsJson)));
+  out.push(trigger('_sync_accounts_upd', `UPDATE OF ${CLIENT_ACCOUNT_FIELDS.join(', ')} ON accounts`,
+    `${off} AND ${clientAccountSql('NEW')} AND (${anyChanged([...CLIENT_ACCOUNT_FIELDS])})`,
+    logOp('accounts', 'upsert', `json_object('id', NEW.id, 'wire', NEW.wire_id)`, acctChanged(CLIENT_ACCOUNT_FIELDS))));
+  out.push(trigger('_sync_accounts_del', 'DELETE ON accounts', `${off} AND ${clientAccountSql('OLD')}`,
+    logOp('accounts', 'delete', `json_object('id', OLD.id, 'wire', OLD.wire_id)`, null)));
+  // balance_history (rows of client accounts only)
+  const bpk = (p: 'NEW' | 'OLD') =>
+    `json_object('account_id', ${p}.account_id, 'wire', ${wireOf(`${p}.account_id`)}, 'date', ${p}.date)`;
+  out.push(trigger('_sync_balance_history_ins', 'INSERT ON balance_history',
+    `${off} AND ${acctOwnedSql('NEW.account_id')}`,
+    logOp('balance_history', 'upsert', bpk('NEW'), `json_object('balance', NEW.balance, 'origin', 'client')`)));
+  out.push(trigger('_sync_balance_history_upd', 'UPDATE OF balance ON balance_history',
+    `${off} AND ${acctOwnedSql('NEW.account_id')} AND OLD.balance IS NOT NEW.balance AND OLD.account_id IS NEW.account_id AND OLD.date IS NEW.date`,
+    logOp('balance_history', 'upsert', bpk('NEW'), `json_object('balance', NEW.balance)`)));
+  out.push(trigger('_sync_balance_history_del', 'DELETE ON balance_history',
+    `${off} AND ${acctOwnedSql('OLD.account_id')}`,
+    logOp('balance_history', 'delete', bpk('OLD'), null)));
+  // transactions the client owns (manual / csv). Annotation edits are covered
+  // by the annotation trigger installed with migration 2.
+  out.push(trigger('_sync_transactions_ins', 'INSERT ON transactions', `${off} AND ${clientTx('NEW')}`,
+    logOp('transactions', 'upsert', `json_object('id', NEW.id)`, txFieldsJson)));
+  out.push(trigger('_sync_transactions_upd_body', `UPDATE OF ${CLIENT_TX_BODY_FIELDS.join(', ')} ON transactions`,
+    `${off} AND ${clientTx('NEW')} AND (${anyChanged([...CLIENT_TX_BODY_FIELDS])})`,
+    logOp('transactions', 'upsert', `json_object('id', NEW.id)`, changedFields(SYNC_TABLES.transactions, [...CLIENT_TX_BODY_FIELDS]))));
+  out.push(trigger('_sync_transactions_del', 'DELETE ON transactions', `${off} AND ${clientTx('OLD')}`,
+    logOp('transactions', 'delete', `json_object('id', OLD.id, 'account_id', OLD.account_id)`, null)));
+  return out;
+}
+
+/**
+ * Local client-owned rows as upsert ops, parents first (accounts, then
+ * transactions, then balances; transaction_tags ride in collectBackfill).
+ * CSV-source rows are not queued: their ids are not derivable yet (P1), they
+ * stay local-only and are counted in SyncInfo.localOnlyCount.
+ */
+export async function collectClientBackfill(client: Pick<Client, 'execute'>): Promise<OpInput[]> {
+  const ops: OpInput[] = [];
+  if (!(await tableExists(client, 'accounts'))) return ops;
+  const hasOrigin = await hasColumn(client, 'accounts', 'origin');
+  const hasWire = await hasColumn(client, 'accounts', 'wire_id');
+  const plaidish =
+    `(item_id IS NOT NULL OR EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = accounts.id AND COALESCE(t.source, 'plaid') = 'plaid')` +
+    ` OR id IN (SELECT value FROM _sync_state WHERE key LIKE 'account_map:%'))`;
+  const owned = hasOrigin ? `COALESCE(origin, CASE WHEN ${plaidish} THEN 'plaid' ELSE 'client' END) = 'client'` : `NOT ${plaidish}`;
+  const accts = await rowsOf(client, `SELECT *${hasWire ? '' : ', NULL AS wire_id'} FROM accounts WHERE ${owned} ORDER BY rowid`);
+  const ids = new Set(accts.map((a) => String(a.id)));
+  const add = (tbl: string, pk: Record<string, unknown>, fields: Record<string, unknown>) =>
+    ops.push({ tbl, pk, kind: 'upsert', fields, origin: 'backfill' });
+  for (const a of accts) {
+    const f: Record<string, unknown> = { origin: 'client' };
+    for (const c of CLIENT_ACCOUNT_FIELDS) f[c] = a[c] ?? null;
+    add('accounts', { id: a.id, wire: a.wire_id ?? null }, f);
+  }
+  if (ids.size > 0 && (await tableExists(client, 'transactions'))) {
+    for (const t of await rowsOf(client, `SELECT * FROM transactions WHERE source = 'manual' ORDER BY rowid`)) {
+      if (!ids.has(String(t.account_id)) && !(await accountExists(client, String(t.account_id)))) continue;
+      const f: Record<string, unknown> = {};
+      for (const c of CLIENT_TX_FIELDS) f[c] = t[c] ?? null;
+      add('transactions', { id: t.id }, f);
+    }
+  }
+  if (ids.size > 0 && (await tableExists(client, 'balance_history'))) {
+    for (const b of await rowsOf(client, 'SELECT account_id, date, balance FROM balance_history ORDER BY account_id, date')) {
+      if (!ids.has(String(b.account_id))) continue;
+      const a = accts.find((x) => String(x.id) === String(b.account_id));
+      add('balance_history', { account_id: b.account_id, wire: a?.wire_id ?? null, date: b.date }, { balance: b.balance, origin: 'client' });
+    }
+  }
+  return ops;
+}
+
+async function accountExists(client: Pick<Client, 'execute'>, id: string): Promise<boolean> {
+  const r = await client.execute({ sql: 'SELECT item_id FROM accounts WHERE id = ?', args: [id] });
+  return r.rows.length > 0;
+}
+
+/**
+ * Migration 3: additive columns (accounts.origin, accounts.wire_id), the
+ * client-owned triggers and the enable-time backfill of existing local client
+ * accounts / manual transactions / balances. Hosted mode only.
+ */
+export async function installClientOwnedStatements(
+  client: Pick<Client, 'execute'>,
+  nowMs: number = Date.now(),
+): Promise<InStatement[]> {
+  const stmts: InStatement[] = [];
+  if (!(await tableExists(client, 'accounts'))) return stmts;
+  if (!(await hasColumn(client, 'accounts', 'origin'))) stmts.push('ALTER TABLE accounts ADD COLUMN origin TEXT');
+  if (!(await hasColumn(client, 'accounts', 'wire_id'))) stmts.push('ALTER TABLE accounts ADD COLUMN wire_id TEXT');
+  stmts.push('CREATE INDEX IF NOT EXISTS idx_accounts_wire_id ON accounts(wire_id)');
+  // Origin backfill: Plaid links (item_id, Plaid-source transactions, adopted
+  // accounts) are plaid; everything else was created on this device: client.
+  stmts.push(
+    `UPDATE accounts SET origin = CASE
+        WHEN item_id IS NOT NULL
+          OR EXISTS (SELECT 1 FROM transactions t WHERE t.account_id = accounts.id AND COALESCE(t.source, 'plaid') = 'plaid')
+          OR id IN (SELECT value FROM _sync_state WHERE key LIKE 'account_map:%')
+        THEN 'plaid' ELSE 'client' END
+      WHERE origin IS NULL`,
+  );
+  stmts.push(...clientOwnedTriggers());
+  const ops = await collectClientBackfill(client);
+  stmts.push(...(await queueOpsStatements(client, ops, nowMs)));
+  return stmts;
 }

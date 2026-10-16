@@ -4,13 +4,20 @@
  * survive: per-user monotonic server_seq, per-FIELD last-writer-wins by HLC,
  * soft deletes that a newer upsert revives, idempotency by op_id, and the
  * reject reasons (forbidden_table, forbidden_field, invalid_pk, invalid_hlc,
- * stale, row_missing, conflict_unique), plus 402 and 410 (compaction).
+ * stale, row_missing, conflict_unique, forbidden_owner, invalid_source,
+ * invalid_amount), plus 402 and 410 (compaction).
+ *
+ * Client-owned rows (see core/SYNC_PROTOCOL.md "Ownership"): accounts with
+ * origin 'client' (`acct-` ids), transactions with source csv|manual
+ * (`csv-`/`manual-` ids) and balance_history keyed {account_id, date}. Deletes
+ * are soft; deleting a client account tombstones its client-owned children and
+ * appends one delete op per child with device_id null.
  */
 
 export type ServerOp = {
   server_seq: number;
   op_id: string;
-  device_id: string;
+  device_id: string | null;
   tbl: string;
   pk: Record<string, unknown>;
   kind: 'upsert' | 'delete' | 'server_upsert';
@@ -35,7 +42,18 @@ const CO_OWNED: Record<string, { pk: string[]; fields: string[] }> = {
   name_rules: { pk: ['id'], fields: ['match_type', 'pattern', 'replacement', 'min_amount', 'max_amount'] },
   transaction_tags: { pk: ['transaction_id', 'tag_id'], fields: [] },
   transactions: { pk: ['id'], fields: ['manual_category', 'display_name', 'ignored'] },
+  accounts: { pk: ['id'], fields: [] },
+  balance_history: { pk: ['account_id', 'date'], fields: ['balance'] },
 };
+const PLAID_TX_ANNOTATIONS = ['manual_category', 'display_name', 'ignored'];
+const CLIENT_ACCOUNT_FIELDS = [
+  'name', 'type', 'subtype', 'institution_name', 'mask', 'nickname', 'owner', 'apr', 'excluded', 'origin', 'merged_into',
+];
+const CLIENT_TX_FIELDS = [
+  'account_id', 'date', 'name', 'merchant_name', 'amount', 'raw_category', 'source', 'import_id', 'dedup_key',
+  'original_date', 'manual_category', 'display_name', 'ignored', 'absorbs',
+];
+const badAmount = (v: unknown): boolean => typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1e12;
 const SETTINGS_ALLOW = ['plaid_default_start_date', 'pretax_monthly'];
 const MAX_FUTURE_MS = 5 * 60_000;
 
@@ -50,6 +68,8 @@ class UserState {
     transactions: new Map<string, Record<string, unknown>>(),
     balance_history: new Map<string, Record<string, unknown>>(),
   };
+  /** Raw POST batches, for volume / ordering assertions. */
+  batches: { device_id: string; ops: { op_id: string; tbl: string; kind: string }[] }[] = [];
 }
 
 export const rowKey = (tbl: string, pk: Record<string, unknown>): string =>
@@ -61,6 +81,8 @@ export class FakeServer {
   unpaid = new Set<string>();
   /** Make the next N POST /sync/ops fail with 500. */
   failPosts = 0;
+  /** After this many further successful POST /sync/ops, answer 500 until reset (kill-mid-push simulation). */
+  postBudget: number | null = null;
   /** Fail GET /sync/ops after serving this many pages (crash simulation hook). */
   now = () => Date.now();
   /** When false, POST /sync/ops answers 404 (server side not deployed). */
@@ -105,6 +127,13 @@ export class FakeServer {
   putAccount(userId: string, a: { id: string; name: string; type: string; subtype?: string | null; institution_name?: string | null; mask?: string | null }): void {
     this.user(userId).plaid.accounts.set(a.id, a);
     this.serverOp(userId, 'accounts', { id: a.id }, { ...a });
+  }
+
+  /** A Plaid-owned balance point (pk {account_id, date}; snapshot rows still carry an id). */
+  putBalance(userId: string, b: { account_id: string; date: string; balance: number }): void {
+    const u = this.user(userId);
+    u.plaid.balance_history.set(`${b.account_id}|${b.date}`, { id: u.plaid.balance_history.size + 1, ...b });
+    this.serverOp(userId, 'balance_history', { account_id: b.account_id, date: b.date }, { balance: b.balance });
   }
 
   putTransaction(userId: string, t: { id: string; account_id: string; date: string; name: string; amount: number; category?: string | null; pending?: number }): void {
@@ -159,8 +188,18 @@ export class FakeServer {
     }
     if (url.pathname === '/sync/ops' && method === 'POST') {
       if (this.failPosts > 0) { this.failPosts--; return json(500, { error: 'boom' }); }
+      if (this.postBudget !== null) {
+        if (this.postBudget <= 0) return json(500, { error: 'killed' });
+        this.postBudget--;
+      }
       const body = JSON.parse(String(init.body)) as { device_id: string; ops: Omit<ServerOp, 'server_seq' | 'device_id'>[] };
       if (body.ops.length > 500) return json(400, { error: 'too_many_ops' });
+      u.batches.push({ device_id: body.device_id, ops: body.ops.map((o) => ({ op_id: o.op_id, tbl: o.tbl, kind: o.kind })) });
+      // Rank order, like the real server: accounts/tags, then imports/co-owned,
+      // then transactions/balances, then transaction_tags; stable within a rank.
+      const rank = (t: string) => (t === 'accounts' || t === 'tags' ? 0 : t === 'transactions' || t === 'balance_history' ? 2
+        : t === 'transaction_tags' ? 3 : 1);
+      body.ops = body.ops.map((o, i) => ({ o, i })).sort((a, b) => rank(a.o.tbl) - rank(b.o.tbl) || a.i - b.i).map((x) => x.o);
       const accepted: string[] = [];
       const rejected: { op_id: string; reason: string }[] = [];
       for (const op of body.ops) {
@@ -176,7 +215,7 @@ export class FakeServer {
   private snapshot(u: UserState) {
     const tables: Record<string, { rows: Record<string, unknown>[]; deletes: unknown[] }> = {};
     for (const tbl of Object.keys(CO_OWNED)) {
-      if (tbl === 'transactions') continue;
+      if (tbl === 'transactions' || tbl === 'accounts' || tbl === 'balance_history') continue;
       const rows: Record<string, unknown>[] = [];
       for (const [k, r] of u.rows) {
         if (!k.startsWith(`${tbl}|`) || !r.exists) continue;
@@ -184,7 +223,15 @@ export class FakeServer {
       }
       tables[tbl] = { rows, deletes: [] };
     }
-    tables.accounts = { rows: [...u.plaid.accounts.values()], deletes: [] };
+    const clientRows = (tbl: string, pred: (k: string, r: RowState) => boolean) => {
+      const out: Record<string, unknown>[] = [];
+      for (const [k, r] of u.rows) {
+        if (!k.startsWith(`${tbl}|`) || !r.exists || !pred(k, r)) continue;
+        out.push({ ...r.pk, ...Object.fromEntries(Object.entries(r.fields).map(([f, s]) => [f, s.v])) });
+      }
+      return out;
+    };
+    tables.accounts = { rows: [...u.plaid.accounts.values(), ...clientRows('accounts', () => true)], deletes: [] };
     tables.transactions = {
       rows: [...u.plaid.transactions.values()].map((t) => {
         const r = u.rows.get(rowKey('transactions', { id: String(t.id) }));
@@ -193,13 +240,125 @@ export class FakeServer {
       }),
       deletes: [],
     };
-    tables.balance_history = { rows: [...u.plaid.balance_history.values()], deletes: [] };
+    tables.transactions.rows.push(...clientRows('transactions', (_k, r) => /^(manual|csv)-/.test(String(r.pk.id))));
+    let bid = 1_000_000;
+    tables.balance_history = {
+      rows: [...u.plaid.balance_history.values(), ...clientRows('balance_history', () => true).map((r) => ({ id: bid++, ...r }))],
+      deletes: [],
+    };
     return { cursor: 'x', server_seq: u.seq, tables };
   }
 
   /** Apply an op as if another device had pushed it. Returns 'accepted' or the reject reason. */
   inject(userId: string, deviceId: string, op: Omit<ServerOp, 'server_seq' | 'device_id'>): string {
     return this.apply(this.user(userId), deviceId, op);
+  }
+
+  /** Client-origin write to a transactions row the client may own (csv-/manual-)? */
+  private isClientWrite(u: UserState, op: { tbl: string; pk: Record<string, unknown> }, fields: Record<string, unknown>): boolean {
+    if (op.tbl === 'accounts' || op.tbl === 'balance_history') return true;
+    if (op.tbl !== 'transactions') return false;
+    const id = String(op.pk.id);
+    return !u.plaid.transactions.has(id) && (/^(manual|csv)-/.test(id) || 'source' in fields);
+  }
+
+  private liveClientAccount(u: UserState, id: string): boolean {
+    return u.rows.get(rowKey('accounts', { id }))?.exists === true;
+  }
+
+  /** Ownership / source / amount validation for client-owned rows. Returns a reject reason or null. */
+  private checkOwnership(u: UserState, op: Omit<ServerOp, 'server_seq' | 'device_id'>, fields: Record<string, unknown>): string | null {
+    const live = (tbl: string) => u.rows.get(rowKey(tbl, op.pk))?.exists === true;
+    // The real server validates these as JSON booleans and rejects 0/1.
+    for (const k of op.tbl === 'accounts' ? ['excluded'] : op.tbl === 'transactions' ? ['ignored'] : []) {
+      if (k in fields && fields[k] != null && typeof fields[k] !== 'boolean') return 'forbidden_field';
+    }
+    if (op.tbl === 'accounts') {
+      const id = String(op.pk.id);
+      if (u.plaid.accounts.has(id)) return 'forbidden_owner';
+      if (!id.startsWith('acct-')) return 'invalid_pk';
+      for (const f of Object.keys(fields)) if (!CLIENT_ACCOUNT_FIELDS.includes(f)) return 'forbidden_field';
+      if (op.kind === 'upsert') {
+        const cur = u.rows.get(rowKey('accounts', op.pk));
+        const hadRow = cur != null && cur.fields.origin != null;
+        const o = fields.origin;
+        if (o === 'plaid') return 'forbidden_owner';
+        if (o !== undefined && o !== 'client') return 'invalid_source';
+        if (!hadRow && o === undefined) return 'invalid_source';
+      }
+      return null;
+    }
+    if (op.tbl === 'balance_history') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(op.pk.date))) return 'invalid_pk';
+      const acct = String(op.pk.account_id);
+      if (u.plaid.accounts.has(acct)) return 'forbidden_owner';
+      if (op.kind === 'upsert') {
+        for (const f of Object.keys(fields)) if (f !== 'balance' && f !== 'origin') return 'forbidden_field';
+        const cur = u.rows.get(rowKey('balance_history', op.pk));
+        const stored = cur?.fields.origin?.v;
+        if (stored === undefined && fields.origin === undefined) return 'invalid_source';
+        if (fields.origin !== undefined && fields.origin !== 'client') return fields.origin === 'plaid' ? 'forbidden_owner' : 'invalid_source';
+        if (stored !== undefined && fields.origin !== undefined && fields.origin !== stored) return 'invalid_source';
+        if ('balance' in fields && badAmount(fields.balance)) return 'invalid_amount';
+      }
+      if (!this.liveClientAccount(u, acct)) return op.kind === 'delete' ? null : 'row_missing';
+      return null;
+    }
+    if (op.tbl === 'transactions') {
+      const id = String(op.pk.id);
+      if (u.plaid.transactions.has(id)) {
+        if ('source' in fields) return 'forbidden_owner';
+        return null; // annotation allowlist enforced by the caller
+      }
+      const prefixed = /^(manual|csv)-/.test(id);
+      if (!prefixed) {
+        // Unprefixed id, not a Plaid row we know: a client may not create it.
+        if ('source' in fields) return 'invalid_pk';
+        return null; // annotation on a row not synced yet: row_missing (caller)
+      }
+      if (op.kind === 'delete') return null;
+      for (const f of Object.keys(fields)) if (!CLIENT_TX_FIELDS.includes(f)) return 'forbidden_field';
+      const cur = u.rows.get(rowKey('transactions', op.pk));
+      const exists = cur?.exists === true;
+      const src = fields.source;
+      if (!exists && !(cur && cur.fields.source)) {
+        if (src === undefined) return 'invalid_source';
+        if (src === 'plaid') return 'forbidden_owner';
+        if (src !== 'csv' && src !== 'manual') return 'invalid_source';
+        if (!id.startsWith(`${src}-`)) return 'invalid_source';
+      } else if (src !== undefined && src !== cur!.fields.source?.v) return 'invalid_source';
+      if ('amount' in fields && badAmount(fields.amount)) return 'invalid_amount';
+      const acct = fields.account_id ?? cur?.fields.account_id?.v;
+      if (acct == null) return 'invalid_pk';
+      if ('account_id' in fields || !exists) {
+        if (!u.plaid.accounts.has(String(acct)) && !this.liveClientAccount(u, String(acct))) return 'row_missing';
+      }
+      const dk = fields.dedup_key ?? cur?.fields.dedup_key?.v;
+      if (dk != null) {
+        for (const [k, r] of u.rows) {
+          if (!k.startsWith('transactions|') || !r.exists || k === rowKey('transactions', op.pk)) continue;
+          if (r.fields.account_id?.v === acct && r.fields.dedup_key?.v === dk) return 'conflict_unique';
+        }
+      }
+      void live;
+    }
+    return null;
+  }
+
+  private cascadeAccount(u: UserState, accountId: string, hlc: string): void {
+    for (const [k, r] of u.rows) {
+      const child =
+        (k.startsWith('transactions|') && r.fields.account_id?.v === accountId && /^(manual|csv)-/.test(String(r.pk.id))) ||
+        (k.startsWith('balance_history|') && r.pk.account_id === accountId);
+      if (!child || !r.exists) continue;
+      r.exists = false;
+      r.deletedHlc = hlc;
+      u.seq++;
+      u.ops.push({
+        server_seq: u.seq, op_id: `srv-cascade-${u.seq}`, device_id: null,
+        tbl: k.slice(0, k.indexOf('|')), pk: r.pk, kind: 'delete', fields: null, hlc,
+      });
+    }
   }
 
   private apply(u: UserState, deviceId: string, op: Omit<ServerOp, 'server_seq' | 'device_id'>): string {
@@ -211,12 +370,20 @@ export class FakeServer {
     if (!hm) return 'invalid_hlc';
     if (Number(hm[1]) > this.now() + MAX_FUTURE_MS) return 'invalid_hlc';
     const fields = op.fields ?? {};
-    for (const f of Object.keys(fields)) if (!spec.fields.includes(f)) return 'forbidden_field';
+    const own = this.checkOwnership(u, op, fields);
+    if (own) return own;
+    if (!this.isClientWrite(u, op, fields)) {
+      for (const f of Object.keys(fields)) {
+        if (!spec.fields.includes(f)) {
+          return op.tbl === 'transactions' && u.plaid.transactions.has(String(op.pk.id)) ? 'forbidden_owner' : 'forbidden_field';
+        }
+      }
+    }
     if (op.tbl === 'settings' && !SETTINGS_ALLOW.includes(String(op.pk.key))) return 'forbidden_field';
 
     const key = rowKey(op.tbl, op.pk);
     let row = u.rows.get(key);
-    if (op.tbl === 'transactions' && (!row || !row.exists)) return 'row_missing';
+    if (op.tbl === 'transactions' && (!row || !row.exists) && !this.isClientWrite(u, op, fields)) return 'row_missing';
     if (op.tbl === 'transaction_tags' && op.kind === 'upsert') {
       const tag = u.rows.get(rowKey('tags', { id: op.pk.tag_id }));
       if (!tag || !tag.exists) return 'row_missing';
@@ -242,6 +409,7 @@ export class FakeServer {
       if (!row.exists || op.hlc <= newest) { u.ops.push(logged); u.seen.set(op.op_id, 'stale'); return 'stale'; }
       row.exists = false; row.deletedHlc = op.hlc;
       u.ops.push(logged); u.seen.set(op.op_id, 'accepted');
+      if (op.tbl === 'accounts') this.cascadeAccount(u, String(op.pk.id), op.hlc);
       return 'accepted';
     }
 
