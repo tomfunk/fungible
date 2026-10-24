@@ -515,7 +515,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
             ? <Text><Text dimColor>← </Text><Text bold>{formatPeriodLabel(range, anchor)}</Text><Text dimColor> →</Text></Text>
             : <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           }
-          {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
+          {selectedAccount && <Text color={C_WARNING}>{selectedAccount.nickname ?? selectedAccount.name}</Text>}
           {scorecardMode && <Text color={C_MANUAL} bold>{detailMode ? 'scorecard · columns' : 'scorecard'}</Text>}
           <Text dimColor>
             {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : view === 'account' ? 'account' : 'owner'}
@@ -572,10 +572,11 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                 const isFiltered = selectedAccount?.id === acct.id;
                 const drift = scorecardMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
                 const spendColor = drift ? driftColor(drift) : C_NEGATIVE;
+                const label = acct.nickname ?? acct.name;
                 return (
                   <SelectableRow key={acct.id} selected={isSelected}>
                     <Text color={isFiltered ? C_WARNING : isSelected ? C_ACCENT : undefined} dimColor={!isSelected && !isFiltered}>
-                      {(acct.name.length > dashAcctNameW ? acct.name.slice(0, dashAcctNameW - 1) + '…' : acct.name).padEnd(dashAcctNameW)}
+                      {(label.length > dashAcctNameW ? label.slice(0, dashAcctNameW - 1) + '…' : label).padEnd(dashAcctNameW)}
                     </Text>
                     {scorecardMode
                       ? <Text color={drift ? spendColor : C_NEUTRAL} dimColor={!drift}>

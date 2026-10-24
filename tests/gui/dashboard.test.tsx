@@ -156,6 +156,16 @@ describe('GUI Dashboard', () => {
     expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
   });
 
+  it('Accounts view labels a nicknamed account by its nickname, like the Accounts screen', async () => {
+    await db.execute({ sql: "UPDATE accounts SET nickname = 'Joint Visa' WHERE id = 'test-credit'", args: [] });
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Accounts' }));
+    await waitFor(() => expect(screen.getByText('Joint Visa')).toBeTruthy());
+    expect(screen.queryByText('Test Visa')).toBeNull();
+    expect(screen.getByText('Test Checking')).toBeTruthy(); // un-nicknamed accounts keep their name
+  });
+
   describe('scorecard on the All Time range', () => {
     const MSG = 'Scorecard not available for All Time range.';
     const ALLTIME = { range: 'alltime', scorecard: true } as const;

@@ -308,7 +308,7 @@ export function Dashboard() {
           )}
           {selectedAccount && (
             <span className={styles.acctFilter}>
-              {selectedAccount.name}
+              {selectedAccount.nickname ?? selectedAccount.name}
               <button onClick={() => setSelectedAccount(null)}>✕</button>
             </span>
           )}
@@ -664,7 +664,7 @@ export function Dashboard() {
                       onClick={() => drillToTransactions({ accounts: [acct.id] })}
                     >
                       <td className={styles.tdName} style={isFiltered ? { color: 'var(--warning)' } : undefined}>
-                        {acct.name}
+                        {acct.nickname ?? acct.name}
                       </td>
                       {scorecardMode ? (
                         <td className={`num ${cls}`}>{drift ? fmtDelta(drift.medianDelta) : '—'}</td>
