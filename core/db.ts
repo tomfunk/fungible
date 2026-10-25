@@ -130,6 +130,10 @@ export async function initDb() {
       birth_year INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0
     )`,
+    `CREATE TABLE IF NOT EXISTS split_ratios (
+      start_date TEXT PRIMARY KEY,
+      self_pct REAL NOT NULL CHECK(self_pct BETWEEN 0 AND 100)
+    )`,
   ], 'write');
 
   // Idempotent column migrations (each may fail if column exists — that's fine)

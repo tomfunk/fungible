@@ -136,6 +136,11 @@ export const SCHEMA = `
     birth_year INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE split_ratios (
+    start_date TEXT PRIMARY KEY,
+    self_pct REAL NOT NULL CHECK(self_pct BETWEEN 0 AND 100)
+  );
 `;
 
 export async function makeTestDb() {
