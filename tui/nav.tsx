@@ -17,7 +17,7 @@ const SCREEN_KEYS: Record<string, Screen> = {
 const LABELS: Record<Screen, string> = {
   settings: 'settings', dashboard: 'dash', transactions: 'txns', trends: 'trends',
   networth: 'worth', tags: 'tags', health: 'health', rules: 'rules', accounts: 'accounts',
-  canvas: 'canvas',
+  canvas: 'canvas', settle: 'settle',
 };
 
 // Split into two rows so each row stays short enough for narrow terminals

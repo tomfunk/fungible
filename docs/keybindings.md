@@ -47,7 +47,7 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 | `m` | Top merchants for the selected category (Categories view, not in scorecard); `↑ ↓` select, `Enter` opens that merchant's transactions, `Esc` closes |
 | `Space` | Toggle account filter (Account view) |
 | `c` | Clear account filter (Account view) |
-| `s` | Toggle scorecard — categories over / under the typical month |
+| `s` | Toggle scorecard — categories over / under the typical month. In **Owner** view, `s` opens [Settle up](#settle-up) instead |
 | `x` | In scorecard: switch compact bars ↔ delta columns |
 | `f` | Open filter panel |
 | `/` | Search transactions by name (regex); filters category totals live |
@@ -56,6 +56,53 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account. In **Owner** view, spending is split by the owner assigned to each account.
 
 In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER against their typical-month median, with a net verdict at the bottom. `x` swaps the compact bars for delta columns against three baselines — prev period, same period last year, and typical-month average (12 complete calendar periods) — color-coded green / yellow / red by deviation. Scorecard is not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
+
+## Settle up
+
+Splits joint expenses between you and your spouse by a ratio you choose, and settles up one calendar month at a time. Open it with `s` on the Dashboard's **Owner** view. The first time, it asks for:
+
+- **Joint tag** (default `joint`): expenses with this tag are split.
+- **Personal tag** (default `personal`): marks a transaction you've reviewed and kept out of the split.
+- **Settled tag** (default `settled`): settling a month adds it to that month's joint transactions.
+- **Your share %** and the date it **Starts**.
+
+Your spouse's share is 100 minus yours. Both names come from Settings `[0]`, and an expense counts as paid by whoever owns its account (set in Accounts `[8]`).
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Select month |
+| `Enter` | Open that month's joint transactions in Transactions (`Esc` there comes back) |
+| `v` | Review the selected month's unreviewed transactions (see below) |
+| `s` | Settle the selected month (`y` to confirm, `n` to cancel; `v` to review first when some transactions are unreviewed) |
+| `u` | Unsettle the selected month: removes the settled tag from all its transactions (`y` / `n`) |
+| `r` | Split ratios: `a` add, `Enter` edit, `x` delete, `Esc` back |
+| `Esc` | Back to the Dashboard's Owner view |
+
+Once splitting is set up, Settings `[0]` also has a **Settle up joint expenses** row that opens this screen. The joint, personal and settled tags can be renamed on the Tags screen, but not deleted while splitting uses them.
+
+**Review** marks each transaction joint or personal, one at a time. A transaction needs review when it's on your or your spouse's account, dated on or after the first ratio, posted, not ignored, not in a hidden category, and has neither the joint nor the personal tag. Income and refunds need review too. The **Review** column and the detail pane show how many each month has left. `v` steps through the selected month oldest first, showing the account and its owner, the date, merchant, amount and category:
+
+| Key | Action |
+|-----|--------|
+| `j` | Joint, then the next transaction. In a month that's already settled it asks first (`y` / `n`), since the month becomes a top-up |
+| `p` | Personal, then the next transaction |
+| `← →` | Change the category; it's saved with the answer |
+| `k` | Skip; it stays unreviewed |
+| `z` | Undo the last answer (its tag and any category change) and go back to it |
+| `Esc` | Stop; answers so far are kept |
+
+Settling a month that still has unreviewed transactions warns and offers `v` to review first. Finishing that review brings you back to the settle prompt with the updated amount.
+
+**Ratios** take effect on their start date, and each transaction uses the ratio in effect on its date. A ratio can't be added, edited or deleted on or before the date of a settled transaction, so a ratio change never moves an amount you've already settled. A new ratio defaults to the 1st of next month and your current share.
+
+For each month, the detail pane shows what your spouse owes you (their share of what you paid) and what you owe your spouse (your share of what they paid). Whoever is owed more gets paid the difference. When the ratio changes partway through a month, each transaction uses the ratio in effect on its date.
+
+The header shows **All months**: what's left to settle across every month combined, or "settled" when nothing is.
+
+- **What counts:** transactions with the joint tag. Pending, ignored and hidden-category transactions (Transfer, Loan Payment, ...) are left out. Refunds reduce what the payer paid.
+- **Top-ups:** what's left to settle only counts joint transactions without the settled tag. A charge that posts after a month was settled shows up as a **top-up** for just that charge. If a settled transaction stops counting (its joint tag is removed, it moves to a hidden category, or it's ignored), its earlier amount is reversed.
+- **Blocked:** a joint expense on an account owned by neither of you blocks settling that month until the account has an owner.
+- **Warnings only:** pending joint transactions, and a month that isn't over yet.
 
 ## Transactions `[2]`
 
@@ -144,7 +191,7 @@ Shows assets (depository, investment, manual), liabilities (credit), and net wor
 | `t` | View all transactions for selected tag |
 | `a` | Add new tag |
 | `n` | Rename selected tag |
-| `x` | Delete selected tag (immediately, no confirmation) |
+| `x` | Delete selected tag (immediately, no confirmation). The joint and settled tags used by [Settle up](#settle-up) can't be deleted |
 
 In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
 

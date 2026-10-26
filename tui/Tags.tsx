@@ -26,6 +26,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
   const [mode, setMode] = useState<Mode>('list');
   const [newName, setNewName] = useState('');
   const { statusMsg, showStatus } = useStatusMessage();
+  const { statusMsg: warningMsg, showStatus: showWarning } = useStatusMessage(4000);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<TagSort>('name');
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
@@ -161,9 +162,11 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
     if (input === 'n' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
     if (input === 'x' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
-      showStatus(`Deleted "${tag.name}"`);
-      setCursor((c) => Math.max(0, c - 1));
-      void deleteTag(tag.id).then(load);
+      // deleteTag refuses the expense split's tags; say so instead of claiming success.
+      void deleteTag(tag.id).then(
+        () => { showStatus(`Deleted "${tag.name}"`); setCursor((c) => Math.max(0, c - 1)); load(); },
+        (err: unknown) => showWarning(err instanceof Error ? err.message : String(err)),
+      );
       return;
     }
     if (key.return && visibleTags[cursor]) {
@@ -266,6 +269,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
           <Box marginTop={1}><Divider /></Box>
           <Text dimColor>{search ? `${visibleTags.length} of ${tags.length}` : `${tags.length}`} tag{tags.length !== 1 ? 's' : ''}</Text>
           {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
+          {warningMsg && <Text color={C_WARNING}>{warningMsg}</Text>}
 
           {mode === 'add' && (
             <ModalPanel title="New Tag">

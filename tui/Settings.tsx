@@ -4,6 +4,7 @@ import type { Screen } from './App.js';
 import { handleNavKey } from './nav.js';
 import { loadProfile, saveProfile, type Profile } from '../core/profile.js';
 import { getSetting, setSetting, BACKUP_INCLUDE_KEY_KEY } from '../core/settings.js';
+import { getSplitConfig } from '../core/split.js';
 import { C_ACCENT, C_NEUTRAL, CURSOR, THEME_KEY, THEME_NAMES, type ThemeName } from './ui.js';
 import { PageHeader, SectionHeader, SelectableRow } from './components/index.js';
 import { Divider } from './fmt.js';
@@ -24,7 +25,7 @@ type ThemeRow = { kind: 'theme'; id: 'theme'; label: string; value: ThemeName };
 type ToggleRow = { kind: 'toggle'; id: 'backup-include-key'; label: string; value: boolean };
 type SettingsRow = FieldRow | ActionRow | ThemeRow | ToggleRow;
 
-function buildRows(profile: Profile, theme: ThemeName, backupIncludeKey: boolean): SettingsRow[] {
+function buildRows(profile: Profile, theme: ThemeName, backupIncludeKey: boolean, splitReady: boolean): SettingsRow[] {
   const r: SettingsRow[] = [
     { kind: 'field', id: 'self-name', label: 'Your name', value: profile.self.name },
     { kind: 'field', id: 'self-year', label: 'Birth year', value: profile.self.birthYear > 0 ? String(profile.self.birthYear) : '', numeric: true },
@@ -45,6 +46,7 @@ function buildRows(profile: Profile, theme: ThemeName, backupIncludeKey: boolean
     );
   }
   r.push({ kind: 'action', id: 'add-child', label: '[a] Add child' });
+  if (splitReady) r.push({ kind: 'action', id: 'settle-up', label: 'Settle up joint expenses' });
   r.push({ kind: 'theme', id: 'theme', label: 'Theme', value: theme });
   r.push({ kind: 'toggle', id: 'backup-include-key', label: 'Include key', value: backupIncludeKey });
   return r;
@@ -59,10 +61,13 @@ export function Settings({ onNavigate, isActive, showHints }: {
   const [profile, setProfile] = useState<Profile>({ self: { name: '', birthYear: 0 }, children: [] });
   const [theme, setTheme] = useState<ThemeName>(DEFAULT_THEME);
   const [backupIncludeKey, setBackupIncludeKey] = useState(false);
+  // The Settle up entry only appears once expense splitting has been set up.
+  const [splitReady, setSplitReady] = useState(false);
   const [cursor, setCursor] = useState(0);
 
   useEffect(() => {
     void loadProfile().then((p) => { if (p) setProfile(p); });
+    void getSplitConfig().then((c) => setSplitReady(c.status === 'ready'));
     void getSetting(THEME_KEY).then((v) => {
       if (v && (THEME_NAMES as string[]).includes(v)) setTheme(v as ThemeName);
     });
@@ -73,7 +78,7 @@ export function Settings({ onNavigate, isActive, showHints }: {
 
   useEffect(() => { setTyping(editing); }, [editing, setTyping]);
 
-  const rows = useMemo(() => buildRows(profile, theme, backupIncludeKey), [profile, theme, backupIncludeKey]);
+  const rows = useMemo(() => buildRows(profile, theme, backupIncludeKey, splitReady), [profile, theme, backupIncludeKey, splitReady]);
   const clampedCursor = Math.min(cursor, rows.length - 1);
   const currentRow = rows[clampedCursor] as SettingsRow | undefined;
 
@@ -176,6 +181,8 @@ export function Settings({ onNavigate, isActive, showHints }: {
         persist({ ...profile, spouse: { name: '', birthYear: 0 } });
       } else if (currentRow.id === 'add-child') {
         persist({ ...profile, children: [...profile.children, { name: '', birthYear: 0 }] });
+      } else if (currentRow.id === 'settle-up') {
+        onNavigate('settle');
       }
       return;
     }
@@ -298,6 +305,14 @@ export function Settings({ onNavigate, isActive, showHints }: {
           return null;
         })}
       </Box>
+
+      {/* Expense split section (once set up from the Dashboard's Owner view) */}
+      {splitReady && (
+        <Box flexDirection="column" marginTop={1}>
+          <SectionHeader>EXPENSE SPLIT</SectionHeader>
+          {rows.map((row, i) => row.id === 'settle-up' ? renderAction(row, i) : null)}
+        </Box>
+      )}
 
       {/* Appearance section */}
       <Box flexDirection="column" marginTop={1}>

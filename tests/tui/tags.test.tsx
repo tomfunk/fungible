@@ -118,6 +118,16 @@ describe('Tags', () => {
     expect(frame(r)).not.toMatch(/travel\s+\d+ tx/); // the status line still names it; the row is gone
   });
 
+  it("[x] refuses to delete a tag the expense split uses, and says why", async () => {
+    await db.execute("INSERT INTO settings (key, value) VALUES ('split_settled_tag_id', '1')"); // travel
+    const r = tags();
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    await press(r, 'x');
+    await waitFor(() => expect(flatFrame(r)).toContain("used by expense splitting (Settle up) and can't be deleted"));
+    expect(flatFrame(r)).not.toContain('Deleted "travel"');
+    expect((await db.execute('SELECT name FROM tags ORDER BY name')).rows.map((x) => x.name)).toEqual(['travel', 'work']);
+  });
+
   it('[a] creates a tag from the typed name: row written and listed', async () => {
     const r = tags();
     await waitFor(() => expect(frame(r)).toContain('travel'));

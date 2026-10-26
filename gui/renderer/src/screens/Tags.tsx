@@ -137,7 +137,13 @@ export function Tags() {
                   <button
                     className={`ghostBtn ${styles.dangerBtn}`}
                     onClick={async () => {
-                      await api.tags.deleteTag(selected.id);
+                      try {
+                        await api.tags.deleteTag(selected.id);
+                      } catch (err) {
+                        // e.g. the expense split's joint/settled tags, which can't be deleted
+                        showStatus(err instanceof Error ? err.message : String(err));
+                        return;
+                      }
                       setSelectedName(null);
                       showStatus(`Deleted "${selected.name}"`);
                       reload();
