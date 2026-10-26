@@ -83,7 +83,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [flexData, setFlexData] = useState<FlexSummary | null>(null);
   const [uncategorized, setUncategorized] = useState(0);
   const [catCursor, setCatCursor] = useState(0);
-  const [view, setView] = useState<DashView>('categories');
+  const [view, setView] = useState<DashView>(initialFilter?.dashView === 'owner' ? 'owner' : 'categories');
   const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
   useEffect(() => { void track(getDataBounds()).then(setBounds); }, []);
   const [syncing, setSyncing] = useState(false);
@@ -114,6 +114,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   // Owner split
   const [ownerRows, setOwnerRows] = useState<OwnerRow[]>([]);
+  // Until the first owner load lands, an empty ownerRows doesn't mean "no owners".
+  const [ownerLoaded, setOwnerLoaded] = useState(false);
 
   // The session-global filter ANDed with the local account selection drives all
   // summary queries. Until the filter panel lands (PR2) the shared filter is
@@ -137,7 +139,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const token = summaryGuard.begin();
     const ok = <T,>(setter: (v: T) => void) => (v: T) => { if (summaryGuard.isLatest(token)) setter(v); };
     void track(getAccountRows(from, to, qf)).then(ok(setAccountRows));
-    void track(getOwnerRows(from, to, qf)).then(ok(setOwnerRows));
+    void track(getOwnerRows(from, to, qf)).then(ok((rows: OwnerRow[]) => { setOwnerRows(rows); setOwnerLoaded(true); }));
     setAcctCursor(0);
     void track(getRangeSummary(from, to, qf)).then(ok(setSummary));
     void track(getFlexSummary(from, to, qf)).then(ok(setFlexData));
@@ -219,10 +221,10 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   // Don't strand the user on the owner view if the last owner gets unassigned elsewhere.
   useEffect(() => {
-    if (view === 'owner' && !ownerRows.some((r) => r.owner !== 'Unassigned')) {
+    if (ownerLoaded && view === 'owner' && !ownerRows.some((r) => r.owner !== 'Unassigned')) {
       setView('categories');
     }
-  }, [view, ownerRows]);
+  }, [view, ownerRows, ownerLoaded]);
 
   const categories = summary?.byCategory ?? [];
 
@@ -417,6 +419,11 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       return;
     }
 
+    // The Owner view has no scorecard; there [s] opens Settle up on this month.
+    if (input === 's' && view === 'owner') {
+      onNavigate('settle', range === 'month' ? { anchor: getPeriodDates(range, anchor).from } : {});
+      return;
+    }
     if (input === 's') { setScorecardMode((m) => !m); setCatCursor(0); return; }
     if (input === 'x' && scorecardMode) { setDetailMode((t) => !t); setCatCursor(0); return; }
 
@@ -494,7 +501,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                   : view === 'categories'
                     ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : '  ·  [m] merchants'}  ·  [Tab] view  ·  [s] scorecard  ·  [S] sync`
                     : view === 'owner'
-                      ? '← → period  ·  [r] range  ·  [Tab] view  ·  [S] sync'
+                      ? '← → period  ·  [r] range  ·  [s] settle up  ·  [Tab] view  ·  [S] sync'
                       : `[/] search  ·  ← → period  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : ''}  ·  [Tab] view  ·  [s] scorecard  ·  [S] sync`)
               : '[/] search'}
           </Text>
@@ -611,7 +618,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
               </Box>
             ))}
           </Box>
-          <Box marginTop={1}><Text dimColor>Assign owners in [8] accounts → [o]</Text></Box>
+          <Box marginTop={1}><Text dimColor>Assign owners in [8] accounts → [o]  ·  [s] settle up joint expenses</Text></Box>
         </Box>
       ) : displaySummary ? (
         <>

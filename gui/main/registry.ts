@@ -101,6 +101,9 @@ import {
 import { previewBalanceImport, commitBalanceImport } from '../../core/balance-import.js';
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
+import {
+  getSplitConfig, getSettleMonths, setupSplit, settleMonth, unsettleMonth, countTransactionsTagged,
+} from '../../core/split.js';
 import { syncAll, deleteSyncCursor } from '../../core/sync.js';
 import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
 import { withSyncProgress, isSyncInProgress } from './sync-progress.js';
@@ -237,6 +240,15 @@ export const registry = {
     loadProfile,
     saveProfile,
     getHouseholdMembers: async (): Promise<string[]> => householdMembers(await loadProfile()),
+  },
+  // Expense split / settle up (#310). Bridged for parity with the TUI; no GUI screen yet.
+  split: {
+    getSplitConfig,
+    getSettleMonths,
+    setupSplit,
+    settleMonth,
+    unsettleMonth,
+    countTransactionsTagged,
   },
   canvas: {
     loadHistory,

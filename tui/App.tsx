@@ -12,6 +12,7 @@ import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
 import { Canvas, type LoadedCanvasSpec } from './Canvas.js';
 import { Settings } from './Settings.js';
+import { Settle } from './Settle.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider, useRefreshKey } from './RefreshContext.js';
 import { SyncStatusProvider, useSyncStatus } from './SyncStatusContext.js';
@@ -21,7 +22,7 @@ import { getLinkedAccounts } from '../core/queries.js';
 import { C_NEGATIVE } from './ui.js';
 import { CANVAS_SPEC_PATH } from '../core/canvas-history.js';
 
-export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas' | 'settings';
+export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas' | 'settings' | 'settle';
 
 // Transient, per-navigation params. The persistent transaction-filtering
 // dimensions (categories/accounts/owners/tags) live in the shared FilterContext
@@ -37,6 +38,7 @@ export type TxFilter = {
   flex?: 'fixed' | 'flexible' | 'discretionary';
   focusCategory?: string; // land on this category's trend (Trends focus, not a filter)
   focusTag?: string;      // land on this tag's detail (Tags focus, not a filter)
+  dashView?: 'owner';     // land on this Dashboard view (Settle up's Esc returns to Owner)
   drillFrom?: Screen;     // set when a drill-in pushed a shared-filter level; Esc reverses
                           // the drill as a unit (pop + return here) instead of peeling state
 };
@@ -122,6 +124,7 @@ function AppInner() {
       case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
       case 'canvas':       return <Canvas       onNavigate={navigate} onLoadSpec={loadSpec} isActive={screenIsActive} showHints={showHints} spec={canvasSpec} specKey={specKey} />;
       case 'settings':     return <Settings     onNavigate={navigate} isActive={screenIsActive} showHints={showHints} />;
+      case 'settle':       return <Settle       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} showHints={showHints} />;
     }
   })();
 

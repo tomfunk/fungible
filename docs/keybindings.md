@@ -47,7 +47,7 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 | `m` | Top merchants for the selected category (Categories view, not in scorecard); `↑ ↓` select, `Enter` opens that merchant's transactions, `Esc` closes |
 | `Space` | Toggle account filter (Account view) |
 | `c` | Clear account filter (Account view) |
-| `s` | Toggle scorecard — categories over / under the typical month |
+| `s` | Toggle scorecard — categories over / under the typical month. In **Owner** view, `s` opens [Settle up](#settle-up) instead |
 | `x` | In scorecard: switch compact bars ↔ delta columns |
 | `f` | Open filter panel |
 | `/` | Search transactions by name (regex); filters category totals live |
@@ -56,6 +56,33 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account. In **Owner** view, spending is split by the owner assigned to each account.
 
 In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER against their typical-month median, with a net verdict at the bottom. `x` swaps the compact bars for delta columns against three baselines — prev period, same period last year, and typical-month average (12 complete calendar periods) — color-coded green / yellow / red by deviation. Scorecard is not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
+
+## Settle up
+
+Splits joint expenses between you and your spouse by a ratio you choose, and settles up one calendar month at a time. Open it with `s` on the Dashboard's **Owner** view. The first time, it asks for:
+
+- **Joint tag** (default `joint`): expenses with this tag are split.
+- **Settled tag** (default `settled`): settling a month adds it to that month's joint transactions.
+- **Your share %** and the date it **Starts**.
+
+Your spouse's share is 100 minus yours. Both names come from Settings `[0]`, and an expense counts as paid by whoever owns its account (set in Accounts `[8]`).
+
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Select month |
+| `Enter` | Open that month's joint transactions in Transactions (`Esc` there comes back) |
+| `s` | Settle the selected month (`y` to confirm, `n` to cancel) |
+| `u` | Unsettle the selected month: removes the settled tag from all its transactions (`y` / `n`) |
+| `Esc` | Back to the Dashboard's Owner view |
+
+For each month, the detail pane shows what your spouse owes you (their share of what you paid) and what you owe your spouse (your share of what they paid). Whoever is owed more gets paid the difference. When the ratio changes partway through a month, each transaction uses the ratio in effect on its date.
+
+The header shows **All months**: what's left to settle across every month combined, or "settled" when nothing is.
+
+- **What counts:** transactions with the joint tag. Pending, ignored and hidden-category transactions (Transfer, Loan Payment, ...) are left out. Refunds reduce what the payer paid.
+- **Top-ups:** what's left to settle only counts joint transactions without the settled tag. A charge that posts after a month was settled shows up as a **top-up** for just that charge. If a settled transaction stops counting (its joint tag is removed, it moves to a hidden category, or it's ignored), its earlier amount is reversed.
+- **Blocked:** a joint expense on an account owned by neither of you blocks settling that month until the account has an owner.
+- **Warnings only:** pending joint transactions, and a month that isn't over yet.
 
 ## Transactions `[2]`
 

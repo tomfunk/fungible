@@ -1,7 +1,7 @@
 /** Tables the per-screen TUI tests clear between tests (order is FK-safe). */
 export const SCREEN_TABLES = [
   'transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
-  'category_rules', 'name_rules', 'hidden_categories', 'balance_history', 'settings',
+  'category_rules', 'name_rules', 'hidden_categories', 'balance_history', 'settings', 'split_ratios',
 ] as const;
 
 /** Deletes every row from SCREEN_TABLES. */

@@ -56,6 +56,7 @@ const GOLDEN: Record<string, string[]> = {
   imports: ['getImports', 'getImportsOfFile', 'getImportImpact', 'deleteImport', 'moveImport'],
   balanceImport: ['previewBalanceImport', 'commitBalanceImport'],
   profile: ['loadProfile', 'saveProfile', 'getHouseholdMembers'],
+  split: ['getSplitConfig', 'getSettleMonths', 'setupSplit', 'settleMonth', 'unsettleMonth', 'countTransactionsTagged'],
   canvas: ['loadHistory', 'deleteHistoryEntry', 'loadCurrentSpec', 'updateSpec'],
   sync: ['syncAll', 'deleteCursorAndResync', 'getStatus', 'getLastSyncedAt', 'isSyncing'],
   config: ['writeEnv'],
