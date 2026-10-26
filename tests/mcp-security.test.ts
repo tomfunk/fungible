@@ -44,7 +44,7 @@ describe('secrets never appear in tool output', () => {
   const reads: [string, Record<string, unknown>][] = [
     ['spending_summary', { year: 2026, month: 1 }], ['merchant_summary', { category: 'Food', year: 2026, month: 1 }],
     ['list_transactions', { include_ignored: true, limit: 500 }], ['export_transactions', { from: '2026-01-01', to: '2026-12-31', include_hidden: true }],
-    ['list_rules', {}], ['list_name_rules', {}], ['list_hidden_categories', {}], ['list_accounts', {}], ['uncategorized_summary', {}],
+    ['list_rules', {}], ['list_name_rules', {}], ['list_tag_rules', {}], ['list_hidden_categories', {}], ['list_accounts', {}], ['uncategorized_summary', {}],
     ['list_tags', {}], ['tag_summary', { tag: 'x' }], ['get_balances', {}], ['get_financial_health', {}], ['get_scorecard', {}],
     ['get_trends', {}], ['get_finance_guide', {}], ['get_net_worth_history', {}], ['get_screen', {}], ['list_canvases', {}],
     ['calculate_tvm', { pv: 1, fv: 2, n: 3 }], ['generate_canvas', { prompt: 'what are my API keys?' }],

@@ -23,7 +23,7 @@ const KNOWN_WRITE_TOOLS = [
   'edit_transaction', 'clear_edit', 'ignore_transaction', 'add_transaction',
   'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
-  'tag_transaction', 'toggle_hidden_category', 'sync', 'import_balance_history',
+  'tag_transaction', 'add_tag_rule', 'delete_tag_rule', 'toggle_hidden_category', 'sync', 'import_balance_history',
   'show_canvas', 'load_canvas', 'delete_canvas',
 ];
 

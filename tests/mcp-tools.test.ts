@@ -244,6 +244,12 @@ describe('read tools', () => {
     expect(r.text).toContain('Card (credit card)');
   });
 
+  it('list_accounts shows the account ID that account_id arguments take', async () => {
+    const lines = (await mcp.callTool('list_accounts')).text.split('\n');
+    expect(lines.find((l) => l.startsWith('Main'))).toMatch(/\[chk\]$/);
+    expect(lines.find((l) => l.startsWith('Card'))).toMatch(/\[cc\]$/);
+  });
+
   describe('uncategorized_summary', () => {
     it('counts repeated names', async () => {
       await seedTx(db, { account_id: 'cc', name: 'Mystery Co', amount: 3, category: 'Uncategorized' });
@@ -514,6 +520,70 @@ describe('write tools: rules and hidden categories', () => {
     expect(await q('SELECT id FROM name_rules')).toHaveLength(0);
   });
 
+  describe('add_tag_rule', () => {
+    const tagged = async (tag: string) =>
+      (await q<{ id: string }>('SELECT tt.transaction_id id FROM transaction_tags tt JOIN tags t ON t.id = tt.tag_id WHERE t.name = ? ORDER BY 1', [tag])).map((r) => r.id);
+
+    it('creates the tag and tags existing matches on every account', async () => {
+      const r = await expectWrite('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee' }, true);
+      expect(r.text).toMatch(/Tagged 2 transactions/);
+      expect(await tagged('coffee')).toEqual(['t1', 't2']);
+      expect(await one('SELECT match_type, pattern, account_id FROM tag_rules')).toEqual({ match_type: 'name', pattern: 'corner', account_id: null });
+    });
+
+    it('match_type "all" scoped to an account tags only that account', async () => {
+      await expectWrite('add_tag_rule', { match_type: 'all', tag: 'card', account_id: 'cc' }, true);
+      expect(await tagged('card')).toEqual(['t6', 't7']);
+    });
+
+    it('does not re-add a tag removed by hand', async () => {
+      await expectWrite('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee' }, true);
+      await mcp.callTool('tag_transaction', { id: 't1', tag: 'coffee', add: false });
+      mcp.afterWrite.mockClear();
+      await expectWrite('add_tag_rule', { match_type: 'regex', pattern: 'cafe$', tag: 'coffee' }, true);
+      expect(await tagged('coffee')).toEqual(['t2']);
+    });
+
+    it('requires a pattern unless match_type is "all", and creates nothing', async () => {
+      const r = await expectWrite('add_tag_rule', { match_type: 'name', pattern: '  ', tag: 'coffee' }, false);
+      expect(r.text).toBe('Error: pattern is required unless match_type is "all".');
+      expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
+      expect(await q('SELECT id FROM tags')).toHaveLength(0);
+    });
+
+    it('with a bad regex fails, adds no rule and creates no tag', async () => {
+      const r = await expectWrite('add_tag_rule', { match_type: 'regex', pattern: '(', tag: 'coffee' }, false);
+      expect(r.isError).toBe(true);
+      expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
+      expect(await q('SELECT id FROM tags')).toHaveLength(0);
+    });
+
+    it('list_tag_rules shows id, pattern, tag and account scope', async () => {
+      expect((await mcp.callTool('list_tag_rules')).text).toBe('No tag rules defined.');
+      await mcp.callTool('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee', min_amount: 5 });
+      await mcp.callTool('add_tag_rule', { match_type: 'all', tag: 'card', account_id: 'cc' });
+      const [named, all] = (await q<{ id: number }>('SELECT id FROM tag_rules ORDER BY id')).map((r) => r.id);
+      // Account-scoped rules sort before global ones, as they are applied.
+      expect((await mcp.callTool('list_tag_rules')).text).toBe(
+        `[${all}] all   → #card @Card\n[${named}] name  "corner" [≥$5] → #coffee`,
+      );
+    });
+
+    it('delete_tag_rule removes the rule but leaves the tags it applied', async () => {
+      await mcp.callTool('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee' });
+      const id = (await one<{ id: number }>('SELECT id FROM tag_rules')).id;
+      mcp.afterWrite.mockClear();
+      const r = await expectWrite('delete_tag_rule', { id }, true);
+      expect(r.text).toMatch(/Deleted tag rule: "corner" → #coffee/);
+      expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
+      expect(await tagged('coffee')).toEqual(['t1', 't2']);
+    });
+
+    it('delete_tag_rule with an unknown id fails softly', async () => {
+      expect((await expectWrite('delete_tag_rule', { id: 999 }, false)).text).toBe('No tag rule with id 999.');
+    });
+  });
+
   it('toggle_hidden_category hides and unhides', async () => {
     await expectWrite('toggle_hidden_category', { category: 'Food', hide: true }, true);
     expect((await mcp.callTool('list_hidden_categories')).text).toBe('Food\nTransfer');
@@ -618,7 +688,7 @@ describe('afterWrite invariants', () => {
   it('no read tool ever fires afterWrite', async () => {
     const reads: [string, Record<string, unknown>][] = [
       ['spending_summary', { year: Y, month: M }], ['merchant_summary', { category: 'Food', from: day(1), to: day(28) }],
-      ['list_transactions', {}], ['export_transactions', { from: day(1), to: day(28) }], ['list_rules', {}], ['list_name_rules', {}],
+      ['list_transactions', {}], ['export_transactions', { from: day(1), to: day(28) }], ['list_rules', {}], ['list_name_rules', {}], ['list_tag_rules', {}],
       ['list_hidden_categories', {}], ['list_accounts', {}], ['uncategorized_summary', {}], ['list_tags', {}], ['tag_summary', { tag: 'x' }],
       ['get_balances', {}], ['get_financial_health', {}], ['get_scorecard', {}], ['get_trends', {}], ['get_finance_guide', {}],
       ['get_net_worth_history', {}], ['get_screen', {}], ['list_canvases', {}], ['calculate_tvm', { pv: 1, fv: 2, n: 3 }],

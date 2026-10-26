@@ -271,7 +271,7 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
 
   server.tool(
     'list_accounts',
-    'List all connected bank accounts.',
+    'List all connected bank accounts with their account IDs.',
     {},
     () => run('list_accounts', {}),
   );
@@ -327,6 +327,42 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       add: z.boolean().describe('true to add the tag, false to remove it'),
     },
     (input) => run('tag_transaction', input),
+  );
+
+  // ── list_tag_rules ──────────────────────────────────────────────────────────
+
+  server.tool(
+    'list_tag_rules',
+    'List all tag rules with their IDs, patterns, tags and account scope.',
+    {},
+    () => run('list_tag_rules', {}),
+  );
+
+  // ── add_tag_rule ────────────────────────────────────────────────────────────
+
+  server.tool(
+    'add_tag_rule',
+    'Add a tag rule and apply it to all transactions now and on future imports. Tags removed by hand stay removed. Creates the tag if it does not exist.',
+    {
+      match_type: z.enum(['name', 'regex', 'all']).describe('"name" for substring match, "regex" for regex, "all" to tag every transaction in scope'),
+      pattern:    z.string().optional().describe('Text or regex matched against the transaction name and merchant name (required unless match_type is "all")'),
+      tag:        z.string().describe('Tag name'),
+      min_amount: z.number().optional().describe('Minimum transaction amount (optional)'),
+      max_amount: z.number().optional().describe('Maximum transaction amount (optional)'),
+      account_id: z.string().optional().describe('Scope the rule to a single account ID (from list_accounts); omit for a global rule'),
+    },
+    (input) => run('add_tag_rule', input),
+  );
+
+  // ── delete_tag_rule ─────────────────────────────────────────────────────────
+
+  server.tool(
+    'delete_tag_rule',
+    'Delete a tag rule by ID. Tags it already applied stay in place. Use list_tag_rules to find the ID.',
+    {
+      id: z.number().int().describe('Tag rule ID from list_tag_rules'),
+    },
+    (input) => run('delete_tag_rule', input),
   );
 
   // ── get_balances ────────────────────────────────────────────────────────────
