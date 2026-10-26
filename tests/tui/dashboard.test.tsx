@@ -32,7 +32,7 @@ useSeededScreenDb();
 describe('Dashboard', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  function dash(overrides?: Parameters<typeof Dashboard>[0]) {
+  function dash(overrides?: Partial<Parameters<typeof Dashboard>[0]>) {
     return render(
       <W>
         <Dashboard onNavigate={noop} showHints={false} initialFilter={MAY_FILTER} {...overrides} />
@@ -127,6 +127,35 @@ describe('Dashboard', () => {
       expect(f).toContain('Alex');         // the assigned owner
       expect(f).toContain('Unassigned');   // test-credit has no owner
     });
+  });
+
+  it('s in the owner view opens Settle up on the current month instead of the scorecard', async () => {
+    await db.execute({ sql: "UPDATE accounts SET owner = 'Alex' WHERE id = 'test-checking'", args: [] });
+    const onNavigate = vi.fn();
+    const r = dash({ onNavigate });
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    await pressKeys(r, ['\t', '\t']); // flex, account
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    await press(r, '\t'); // owner
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY OWNER'));
+    await press(r, 's');
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('settle', { anchor: '2026-05-01' }));
+    expect(frame(r)).not.toContain('scorecard');
+  });
+
+  it("lands on the owner view when Settle up's Esc asks for it, once owners load", async () => {
+    await db.execute({ sql: "UPDATE accounts SET owner = 'Alex' WHERE id = 'test-checking'", args: [] });
+    const r = dash({ initialFilter: { ...MAY_FILTER, dashView: 'owner' } });
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('SPENDING BY OWNER');
+      expect(f).toContain('Alex');
+    });
+  });
+
+  it('falls back to categories when asked for the owner view but no account has an owner', async () => {
+    const r = dash({ initialFilter: { ...MAY_FILTER, dashView: 'owner' } });
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
   });
 
   it('r key cycles the range label', async () => {

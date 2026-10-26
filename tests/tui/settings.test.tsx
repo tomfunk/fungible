@@ -16,7 +16,8 @@ vi.mock('../../core/profile.js', async (importActual) => {
 });
 
 import { Settings } from '../../tui/Settings.js';
-import { waitFor as baseWaitFor, frame } from '../helpers/waitFor.js';
+import { waitFor as baseWaitFor, frame, press, pressKeys } from '../helpers/waitFor.js';
+import { setupSplit } from '../../core/split.js';
 
 // Screen loads run slower under coverage/CI load; give every wait generous headroom.
 const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
@@ -95,6 +96,29 @@ describe('Settings', () => {
     const r = render(<W><Settings onNavigate={onNavigate} showHints={false} /></W>);
     r.stdin.write('\x1b');
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+  });
+
+  describe('expense split entry', () => {
+    const household = { self: { name: 'Pat', birthYear: 1985 }, spouse: { name: 'Alex', birthYear: 1986 }, children: [] };
+
+    it('is hidden until expense splitting is set up', async () => {
+      vi.mocked(loadProfile).mockResolvedValue(household);
+      const r = settings();
+      await waitFor(() => expect(frame(r)).toContain('Pat'));
+      expect(frame(r)).not.toContain('EXPENSE SPLIT');
+    });
+
+    it('opens Settle up once it is set up', async () => {
+      vi.mocked(loadProfile).mockResolvedValue(household);
+      await setupSplit({ jointTagName: 'joint', settledTagName: 'settled', selfPct: 60, startDate: '2026-05-01' });
+      const onNavigate = vi.fn();
+      const r = settings({ onNavigate });
+      await waitFor(() => expect(frame(r)).toContain('Settle up joint expenses'));
+      // self name, self year, spouse name, spouse year, add child, settle up
+      await pressKeys(r, Array(5).fill('\u001b[B'));
+      await press(r, '\r');
+      await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('settle'));
+    });
   });
 
   it('loaded profile values appear after async init', async () => {

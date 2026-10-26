@@ -80,6 +80,21 @@ describe('GUI Tags', () => {
     expect(screen.getByText('Select a tag to see its breakdown.')).toBeTruthy();
   });
 
+  it("shows why a tag the expense split uses can't be deleted, and keeps it", async () => {
+    await db.execute("INSERT INTO settings (key, value) VALUES ('split_joint_tag_id', '2')"); // work
+    try {
+      renderScreen(<Tags />);
+      await waitFor(() => expect(screen.getByText('work')).toBeTruthy());
+      await userEvent.click(screen.getByText('work'));
+      await waitFor(() => expect(screen.getByText('# work')).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'delete' }));
+      await waitFor(() => expect(screen.getByText(/used by expense splitting/)).toBeTruthy());
+      expect(screen.getByText('# work')).toBeTruthy();
+    } finally {
+      await db.execute('DELETE FROM settings');
+    }
+  });
+
   it('detail panel shows breakdown and navigates to transactions', async () => {
     // tag a transaction so the detail has data
     await db.execute(`INSERT INTO transaction_tags (transaction_id, tag_id) VALUES ('tx-groc-1', 1)`);

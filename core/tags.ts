@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { loadTagRules, tagRuleMatches } from './tag-rules.js';
+import { SPLIT_JOINT_TAG_KEY, SPLIT_SETTLED_TAG_KEY } from './settings.js';
 
 export type TagOption = { id: number; name: string };
 
@@ -11,7 +12,14 @@ export async function renameTag(id: number, name: string): Promise<void> {
   await db.execute({ sql: 'UPDATE tags SET name = ? WHERE id = ?', args: [name, id] });
 }
 
+// The expense split keeps its settled state in a tag (core/split.ts), so
+// deleting either of its tags would erase every month's settled history.
 export async function deleteTag(id: number): Promise<void> {
+  const used = await db.execute({
+    sql: 'SELECT 1 FROM settings WHERE key IN (?, ?) AND value = ?',
+    args: [SPLIT_JOINT_TAG_KEY, SPLIT_SETTLED_TAG_KEY, String(id)],
+  });
+  if (used.rows.length > 0) throw new Error("This tag is used by expense splitting (Settle up) and can't be deleted");
   await db.batch([
     { sql: 'DELETE FROM transaction_tags WHERE tag_id = ?', args: [id] },
     { sql: 'DELETE FROM tag_rules WHERE tag_id = ?', args: [id] },

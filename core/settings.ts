@@ -20,6 +20,15 @@ export const PRETAX_MONTHLY_KEY = 'pretax_monthly';
 export const BACKUP_INCLUDE_KEY_KEY = 'backup_include_key';
 
 /**
+ * Settings keys for the expense split's tags (core/split.ts). They hold tag
+ * ids, not names, so a rename on the Tags screen keeps working. Defined here
+ * rather than in split.ts so core/tags.ts can refuse to delete these tags
+ * without importing split.ts (which imports tags.ts).
+ */
+export const SPLIT_JOINT_TAG_KEY = 'split_joint_tag_id';
+export const SPLIT_SETTLED_TAG_KEY = 'split_settled_tag_id';
+
+/**
  * Extra days added on top of the start-date calculation. Plaid's docs don't
  * specify the timezone used to compute the history window, so a small buffer
  * guards against losing the first day to a server/local timezone difference.
