@@ -238,6 +238,14 @@ describe('read tools', () => {
     expect((await mcp.callTool('list_hidden_categories')).text).toBe('Transfer');
   });
 
+  it('list_name_rules shows both amount bounds when a rule has both', async () => {
+    await db.execute("INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES ('name', 'both', 'B', 5, 20), ('name', 'min', 'L', 5, NULL), ('name', 'max', 'U', NULL, 20)");
+    const text = (await mcp.callTool('list_name_rules')).text;
+    expect(text).toContain('"both" [$5–$20] → "B"');
+    expect(text).toContain('"min" [≥$5] → "L"');
+    expect(text).toContain('"max" [≤$20] → "U"');
+  });
+
   it('list_accounts shows nicknames over names', async () => {
     const r = await mcp.callTool('list_accounts');
     expect(r.text).toContain('Main (checking)');
