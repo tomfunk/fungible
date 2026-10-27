@@ -32,6 +32,7 @@ import {
   getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
   type ImportRow, type ImportImpact,
 } from '../core/imports.js';
+import { getSheetSources, createSheetAccount, setSheetLink, clearSheetLink, syncSheets, type SheetSource } from '../core/sheets.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { fmtSyncedAt, fmtBalanceAge } from '../core/fmt.js';
@@ -47,7 +48,7 @@ const dupeSourceLabel = (p: DupePair | undefined) => (p?.csvSource === 'manual' 
 
 type MainView = 'accounts' | 'links' | 'add-data' | 'dupes';
 type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
-type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr' | 'excluded';
+type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr' | 'excluded' | 'sheet';
 
 type AddStep =
   | 'landing'
@@ -72,6 +73,9 @@ type AddStep =
   | 'manual-value'
   | 'manual-confirm'
   | 'manual-done'
+  | 'sheet-name'
+  | 'sheet-url'
+  | 'sheet-done'
   | 'new-acct-name'
   | 'new-acct-type';
 
@@ -96,6 +100,14 @@ const SUBTYPES: Record<string, string[]> = {
  *  away — so we capture it and pin it for the life of the link. */
 export function extractLinkUrl(chunk: string): string | null {
   return chunk.match(/https?:\/\/localhost:\d+/)?.[0] ?? null;
+}
+
+/** A sheet account can be anything but bank-linked or a manual asset (see core/sheets.ts setSheetLink). */
+const canLinkSheet = (acct: LinkedAccount) => acct.item_id === null && !acct.id.startsWith('manual-');
+
+/** "12 new" or "3 new, 1 updated, 2 removed". */
+function describeSheetSync(r: SyncItemResult): string {
+  return [`${r.added} new`, ...(r.modified ? [`${r.modified} updated`] : []), ...(r.removed ? [`${r.removed} removed`] : [])].join(', ');
 }
 
 function fmtDate(d: string | null): string {
@@ -211,6 +223,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [manualValue, setManualValue] = useState('');
   const [manualValueError, setManualValueError] = useState('');
 
+  // Google Sheet account (Add Data → [g])
+  const [sheetName, setSheetName] = useState('');
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [sheetError, setSheetError] = useState('');
+  const [sheetBusy, setSheetBusy] = useState(false);
+  const [sheetResult, setSheetResult] = useState<SyncItemResult | null>(null);
+  // Linked sheets by account id, for the rows and the edit panel's Sheet link.
+  const [sheetSources, setSheetSources] = useState<Map<string, SheetSource>>(new Map());
+
   // New CSV account state (inline creation during CSV import)
   const [newAcctName, setNewAcctName] = useState('');
   const [newAcctType, setNewAcctType] = useState('credit');
@@ -229,6 +250,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [ownerMembers, setOwnerMembers] = useState<string[]>([]);
   const [editApr, setEditApr] = useState('');
   const [editExcluded, setEditExcluded] = useState(false);
+  const [editSheetUrl, setEditSheetUrl] = useState('');
+  // Kept in the panel rather than the timed status line: it says what to fix in the sheet.
+  const [editSheetError, setEditSheetError] = useState('');
+  // Saving a new sheet link fetches the sheet first; keys wait until it answers.
+  const [editSaving, setEditSaving] = useState(false);
 
   // Links view state — one row per Plaid connection, not per account.
   const [linkedItems, setLinkedItems] = useState<LinkedItem[]>([]);
@@ -287,7 +313,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const syncElapsed = busyPhase === 'sync' ? elapsedSuffix : '';
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'bh-file', 'manual-name', 'manual-value', 'new-acct-name']);
+  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'bh-file', 'manual-name', 'manual-value', 'sheet-name', 'sheet-url', 'new-acct-name']);
   const TEXT_INPUT_MODES = new Set<AcctMode>(['edit', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
@@ -308,6 +334,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   async function loadAccounts(): Promise<LinkedAccount[]> {
     const accts = await track(getLinkedAccounts());
     setLinkedAccounts(accts);
+    void track(getSheetSources()).then((sources) => setSheetSources(new Map(sources.map((s) => [s.accountId, s]))));
     // Cheap item-level query; kept in step with the account list so a sync or a
     // link updates both views at once.
     void track(getLinkedItems()).then((items) => {
@@ -346,6 +373,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     setEditOwner(acct.owner ?? '');
     setEditApr(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
     setEditExcluded(acct.excluded);
+    setEditSheetUrl(sheetSources.get(acct.id)?.url ?? '');
+    setEditSheetError('');
     setEditField('nickname');
     setAcctMode('edit');
   }
@@ -355,6 +384,24 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (!acct) return;
     const isDebt = editType === 'credit' || editType === 'loan';
     const aprVal = editApr.trim() ? parseFloat(editApr) : null;
+    // The sheet link goes first: linking checks the sheet, and when that fails
+    // the panel stays open on the reason so the sheet can be fixed.
+    const sheetAfter = editSheetUrl.trim();
+    const relinking = canLinkSheet(acct) && sheetAfter !== (sheetSources.get(acct.id)?.url ?? '');
+    if (relinking) {
+      setEditSaving(true);
+      setEditSheetError('');
+      try {
+        if (sheetAfter) await setSheetLink(acct.id, sheetAfter);
+        else await clearSheetLink(acct.id);
+      } catch (err) {
+        setEditSheetError(err instanceof Error ? err.message : String(err));
+        setEditField('sheet');
+        return;
+      } finally {
+        setEditSaving(false);
+      }
+    }
     try {
       await updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
       await updateAccountNickname(acct.id, editNickname.trim() || null);
@@ -362,18 +409,58 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       await updateAccountExcluded(acct.id, editExcluded);
       if (isDebt) await updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
       setAcctMode('list');
-      showAcctMsg(`Updated ${editNickname.trim() || acct.name}`);
+      const label = editNickname.trim() || acct.name;
+      if (relinking && sheetAfter) {
+        showAcctMsg(`Updated ${label} — syncing its sheet…`);
+        void syncSheetNow(acct.id)
+          .then((r) => (r.error ? showAcctErr(`${label}: ${r.error}`) : showAcctMsg(`${label}: synced — ${describeSheetSync(r)}`)))
+          .catch((err) => showAcctErr(`${label}: ${err instanceof Error ? err.message : String(err)}`));
+      } else {
+        showAcctMsg(`Updated ${label}`);
+      }
       void loadAccounts();
     } catch {
       showAcctErr(`Failed to update ${acct.name}`);
     }
   }
 
+  /** Syncs a just-linked sheet now rather than on the next sync. Its outcome
+   *  feeds the shared store, like any sync, so a failure badges its row. */
+  async function syncSheetNow(accountId: string): Promise<SyncItemResult> {
+    const [result] = await syncSheets(true, [accountId]);
+    if (!result) throw new Error('No sheet is linked to this account');
+    mergeSyncResult([result], [accountId]);
+    void loadAccounts();
+    return result;
+  }
+
+  async function saveSheetAccount() {
+    setSheetBusy(true);
+    setSheetError('');
+    let id: string;
+    try {
+      id = await createSheetAccount(sheetName, sheetUrl);
+    } catch (err) {
+      // Nothing was created; stay on the link so the sheet can be fixed and retried.
+      setSheetError(err instanceof Error ? err.message : String(err));
+      setSheetBusy(false);
+      return;
+    }
+    try {
+      setSheetResult(await syncSheetNow(id));
+    } catch (err) {
+      setSheetResult({ itemId: id, added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: err instanceof Error ? err.message : String(err) });
+    }
+    setSheetBusy(false);
+    setAddStep('sheet-done');
+  }
+
   // Name the accounts behind a failed item so the status line points at the row,
   // not an opaque item id. Falls back to the item id if accounts aren't loaded yet.
   function describeSyncFailures(failed: SyncItemResult[]): string {
     return failed.map((r) => {
-      const names = linkedAccounts.filter((a) => a.item_id === r.itemId).map((a) => a.nickname ?? a.name);
+      // A sheet's result is keyed by its account id, a Plaid item's by item id.
+      const names = linkedAccounts.filter((a) => a.item_id === r.itemId || a.id === r.itemId).map((a) => a.nickname ?? a.name);
       const who = names.length > 0 ? names.join(', ') : r.itemId;
       return `${who} — ${r.error}`;
     }).join('  ·  ');
@@ -814,9 +901,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     // ── Accounts view ──────────────────────────────────────────────────────────
     if (mainView === 'accounts') {
       if (acctMode === 'edit') {
+        if (editSaving) return;
         if (key.escape) { setAcctMode('list'); return; }
         if (key.return) { void saveEdit(); return; }
         const isDebt = editType === 'credit' || editType === 'loan';
+        const acct = linkedAccounts[acctCursor];
         // Owner is only focusable once household members exist to cycle through.
         const editFields: EditField[] = [
           'nickname',
@@ -824,6 +913,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           'type', 'subtype',
           ...(isDebt ? ['apr'] as const : []),
           'excluded',
+          ...(acct && canLinkSheet(acct) ? ['sheet'] as const : []),
         ];
         if (key.upArrow) {
           setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.max(0, i - 1)]; });
@@ -871,6 +961,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         }
         if (editField === 'excluded') {
           if (key.leftArrow || key.rightArrow || input === ' ') { setEditExcluded((v) => !v); return; }
+          return;
+        }
+        if (editField === 'sheet') {
+          // A link is long to backspace through; Ctrl+U clears it, which unlinks on save.
+          if (key.ctrl && input === 'u') { setEditSheetUrl(''); setEditSheetError(''); return; }
+          if (key.backspace || key.delete) { setEditSheetUrl((v) => v.slice(0, -1)); setEditSheetError(''); return; }
+          if (input && !key.ctrl && !key.meta) { setEditSheetUrl((v) => v + input); setEditSheetError(''); return; }
           return;
         }
         return;
@@ -1036,6 +1133,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (input === 'c') { setAddStep('file'); return; }
       if (input === 'b') { setBhError(''); setAddStep('bh-file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
+      if (input === 'g') { setSheetName(''); setSheetUrl(''); setSheetError(''); setSheetResult(null); setAddStep('sheet-name'); return; }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
 
       if (imports.length > 0) {
@@ -1227,6 +1325,29 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.return) { setManualName(''); setManualValue(''); setAddStep('landing'); setMainView('accounts'); }
       return;
     }
+
+    if (addStep === 'sheet-name') {
+      if (key.escape) { setAddStep('landing'); setSheetName(''); return; }
+      if (key.return && sheetName.trim()) { setSheetError(''); setAddStep('sheet-url'); return; }
+      if (key.backspace || key.delete) { setSheetName((n) => n.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setSheetName((n) => n + input); return; }
+      return;
+    }
+
+    if (addStep === 'sheet-url') {
+      if (sheetBusy) return;
+      if (key.escape) { setAddStep('sheet-name'); return; }
+      if (key.return && sheetUrl.trim()) { void saveSheetAccount(); return; }
+      if (key.ctrl && input === 'u') { setSheetUrl(''); setSheetError(''); return; }
+      if (key.backspace || key.delete) { setSheetUrl((v) => v.slice(0, -1)); setSheetError(''); return; }
+      if (input && !key.ctrl && !key.meta) { setSheetUrl((v) => v + input); setSheetError(''); return; }
+      return;
+    }
+
+    if (addStep === 'sheet-done') {
+      if (key.return) { setSheetName(''); setSheetUrl(''); setSheetResult(null); setAddStep('landing'); setMainView('accounts'); }
+      return;
+    }
   }, { isActive: isActive !== false });
 
   // ─── Render ──────────────────────────────────────────────────────────────────
@@ -1296,7 +1417,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 // A placeholder has no real subtype and no mask — leave both blank
                 // rather than claiming 'other'.
                 const label = (acct.awaitingFirstSync ? '⋯' : (SUBTYPE_DISPLAY[raw] ?? raw)).padEnd(14);
-                const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
+                const sheet = sheetSources.get(acct.id);
+                const institution = truncate(acct.institution_name ?? (sheet ? 'Google Sheet' : ''), acctInstW);
                 return (
                   <SelectableRow key={acct.id} selected={isSelected}>
                     <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
@@ -1308,15 +1430,23 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
                     {/* Order matters: a failure outranks everything, then the
                         not-yet-synced placeholder, then the item's real sync time,
-                        then the balance-date fallback for accounts with no item
+                        then a sheet's (its failure badge is keyed by account id,
+                        and its last error outlives this session's badge), then
+                        the balance-date fallback for accounts with no item
                         (manual/CSV). */}
                     <Text dimColor>
-                      {acct.item_id && failingItems.has(acct.item_id)
+                      {failingItems.has(acct.item_id ?? acct.id)
                         ? <Text color={C_NEGATIVE}>⚠ sync failed</Text>
                         : acct.awaitingFirstSync
                         ? <Text color={C_WARNING}>◷ awaiting first sync</Text>
                         : acct.item_last_synced_at !== null
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(acct.item_last_synced_at)}</Text></Text>
+                        : sheet?.lastError
+                        ? <Text color={C_WARNING}>⚠ check its sheet</Text>
+                        : sheet
+                        ? (sheet.lastSyncedAt !== null
+                          ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(sheet.lastSyncedAt)}</Text></Text>
+                          : <Text color={C_WARNING}>not synced</Text>)
                         : acct.balance_age
                         ? <Text color={acct.balance_age.isStale ? C_WARNING : undefined}>{fmtBalanceAge(acct.balance_age)}</Text>
                         : acct.last_synced
@@ -1390,6 +1520,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <EditToggleField label="Subtype" labelWidth={10} active={editField === 'subtype'} value={editSubtype || '—'} valueColor={C_DIM} />
                   {isDebt && <EditTextField label="APR %" labelWidth={10} active={editField === 'apr'} value={editApr} color={C_WARNING} placeholder="0.0" />}
                   <EditToggleField label="Net worth" labelWidth={10} active={editField === 'excluded'} value={editExcluded ? 'Excluded' : 'Included'} valueColor={editExcluded ? C_DIM : C_POSITIVE} />
+                  {canLinkSheet(selectedAcct) && (
+                    <Box flexDirection="column">
+                      <EditTextField label="Sheet link" labelWidth={10} active={editField === 'sheet'} value={editSheetUrl} color={C_WARNING} placeholder="published CSV link" emptyText="none" />
+                      {editSaving
+                        ? <Text color={C_WARNING}>Checking the sheet…</Text>
+                        : editSheetError
+                        ? <Text color={C_NEGATIVE}>{editSheetError}</Text>
+                        : editField === 'sheet'
+                        ? <Text dimColor>The sheet becomes the source of truth for this account. Ctrl+U clears the link, which unlinks it on save and keeps its transactions.</Text>
+                        : sheetSources.get(selectedAcct.id)?.lastError
+                        ? <Text color={C_WARNING}>Last sync: {sheetSources.get(selectedAcct.id)?.lastError}</Text>
+                        : null}
+                    </Box>
+                  )}
                 </Box>
                 <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
               </ModalPanel>
@@ -1599,8 +1743,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 <Text color={C_ACCENT}>[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
                 <Text color={C_ACCENT}>[b] Import balance history <Text dimColor>Past balances from a date,account,balance file</Text></Text>
                 <Text color={C_ACCENT}>[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
+                <Text color={C_ACCENT}>[g] Google Sheet         <Text dimColor>An account whose transactions come from a sheet, like cash</Text></Text>
                 <Text color={syncStatus === 'syncing' ? C_WARNING : C_ACCENT}>
-                  [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
+                  [s] Force sync          <Text dimColor>Re-sync from Plaid and sheets now</Text>
                 </Text>
               </Box>
               {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text></Box>}
@@ -2014,6 +2159,54 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text bold color={C_POSITIVE}>Asset added</Text>
               <Text><Text color={C_ACCENT}>{manualName}</Text> added to your accounts.</Text>
               <Text dimColor>Update its value anytime from the Accounts tab with [v].</Text>
+              <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
+            </Box>
+          )}
+
+          {addStep === 'sheet-name' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Google Sheet — Account name</Text>
+              <Text dimColor>A sheet you keep becomes the source of truth for this account's transactions (e.g. "Cash (Pat)")</Text>
+              <Box marginTop={1} gap={1}><Text>Name: </Text><TextInput value={sheetName} color={C_WARNING} /></Box>
+              <Text dimColor>Enter to continue · Esc cancel</Text>
+            </Box>
+          )}
+
+          {addStep === 'sheet-url' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Google Sheet — Published CSV link</Text>
+              <Text dimColor>Account: <Text color={C_ACCENT}>{sheetName}</Text></Text>
+              <Box flexDirection="column">
+                <Text dimColor>In Google Sheets: File → Share → Publish to web, pick the tab and &quot;Comma-separated values (.csv)&quot;, publish, and copy the link.</Text>
+                <Text dimColor>
+                  First row: <Text color={C_NEUTRAL}>ID, Date, Description, Amount</Text>, and optionally <Text color={C_NEUTRAL}>Category</Text>.
+                  {' '}Give each row its own ID (1, 2, 3…). Amount is positive for money spent.
+                </Text>
+                <Text dimColor>Anyone with a published link can read the sheet.</Text>
+              </Box>
+              <Box marginTop={1} gap={1}><Text>Link: </Text><TextInput value={sheetUrl} color={C_WARNING} /></Box>
+              {sheetBusy
+                ? <Text color={C_WARNING}>Checking the sheet…</Text>
+                : sheetError && <Text color={C_NEGATIVE}>{sheetError}</Text>}
+              <Text dimColor>Enter to check the sheet and add the account · Ctrl+U clear · Esc back</Text>
+            </Box>
+          )}
+
+          {addStep === 'sheet-done' && sheetResult && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold color={C_POSITIVE}>Account added</Text>
+              <Text>
+                <Text color={C_ACCENT}>{sheetName}</Text> syncs from its sheet with every sync. It&apos;s excluded from net worth;
+                {' '}its transactions still count as spending.
+              </Text>
+              {sheetResult.added + sheetResult.modified + sheetResult.removed > 0 && <Text>Synced — {describeSheetSync(sheetResult)}</Text>}
+              {sheetResult.error
+                ? <Text color={C_WARNING}>{sheetResult.error}</Text>
+                : sheetResult.added === 0 && <Text dimColor>The sheet has no rows yet.</Text>}
+              <Text dimColor>
+                Next: set its owner from the Accounts tab (Enter on the account). To tag every row, add a tag rule
+                {' '}scoped to this account on the Rules screen.
+              </Text>
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
           )}

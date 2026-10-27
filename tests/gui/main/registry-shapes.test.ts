@@ -55,6 +55,7 @@ const GOLDEN: Record<string, string[]> = {
   ],
   imports: ['getImports', 'getImportsOfFile', 'getImportImpact', 'deleteImport', 'moveImport'],
   balanceImport: ['previewBalanceImport', 'commitBalanceImport'],
+  sheets: ['getSheetSources', 'createSheetAccount', 'setSheetLink', 'clearSheetLink', 'syncSheets'],
   profile: ['loadProfile', 'saveProfile', 'getHouseholdMembers'],
   canvas: ['loadHistory', 'deleteHistoryEntry', 'loadCurrentSpec', 'updateSpec'],
   sync: ['syncAll', 'deleteCursorAndResync', 'getStatus', 'getLastSyncedAt', 'isSyncing'],

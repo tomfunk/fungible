@@ -35,6 +35,7 @@ Personal finance, keyboard-first. Available as a **terminal UI** or a **desktop 
 
 - **Plaid sync** — connect bank accounts and pull transactions automatically; 15-min debounce with force-sync option
 - **CSV import** — import statement exports from any bank with flexible column mapping
+- **Google Sheet accounts** — keep transactions no bank reports (like cash) in a sheet published as CSV; each sync mirrors it into its own account. The sheet's first row is `ID, Date, Description, Amount` (and optionally `Category`)
 - **Balance history import** — load past balances from a `date,account,balance` CSV to fill in net worth history
 - **Manual assets** — track a house, car, or other asset by name and value
 - **Category & name rules** — substring or regex rules that auto-categorize and rename transactions; survives re-syncs

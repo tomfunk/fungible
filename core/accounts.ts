@@ -96,6 +96,7 @@ export async function deleteAccount(id: string): Promise<void> {
     // The transactions they described are gone with the account, so the import
     // records would only ever report zero rows present.
     { sql: 'DELETE FROM imports WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM sheet_sources WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM accounts WHERE id = ?', args: [id] },
   ], 'write');
 }

@@ -51,6 +51,13 @@ export const SCHEMA = `
     config TEXT NOT NULL
   );
 
+  CREATE TABLE sheet_sources (
+    account_id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    last_synced_at INTEGER,
+    last_error TEXT
+  );
+
   CREATE TABLE category_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     priority INTEGER NOT NULL DEFAULT 0,

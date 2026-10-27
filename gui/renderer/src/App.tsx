@@ -43,7 +43,8 @@ function AppInner() {
     void api.queries.getLinkedAccounts().then((accts) => {
       if (!live) return;
       const m: Record<string, string> = {};
-      for (const a of accts) if (a.item_id) m[a.item_id] = a.nickname ?? a.name;
+      // A sheet account's failure is keyed by its account id (core/sheets.ts).
+      for (const a of accts) m[a.item_id ?? a.id] = a.nickname ?? a.name;
       setAcctNames(m);
     });
     return () => { live = false; };

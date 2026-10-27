@@ -58,6 +58,7 @@ import {
 } from '../../core/tags.js';
 import { countPatternMatches } from '../../core/rule-utils.js';
 import { countTagRuleMatches } from '../../core/tag-rules.js';
+import { getSheetSources, createSheetAccount, setSheetLink, clearSheetLink, syncSheets } from '../../core/sheets.js';
 import {
   getUncategorizedCount as getTotalUncategorizedCount,
   deleteCategoryRule,
@@ -232,6 +233,14 @@ export const registry = {
   balanceImport: {
     previewBalanceImport,
     commitBalanceImport,
+  },
+  // Wrapped so the fetch these take for tests isn't part of the IPC surface.
+  sheets: {
+    getSheetSources,
+    createSheetAccount: (name: string, url: string) => createSheetAccount(name, url),
+    setSheetLink: (accountId: string, url: string) => setSheetLink(accountId, url),
+    clearSheetLink,
+    syncSheets: (force?: boolean, accountIds?: string[]) => syncSheets(force, accountIds),
   },
   profile: {
     loadProfile,
