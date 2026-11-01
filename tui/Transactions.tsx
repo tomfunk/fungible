@@ -46,6 +46,9 @@ type AddField = 'date' | 'name' | 'amount' | 'type' | 'account' | 'category';
 /** Reattributed dates are always stored as ISO YYYY-MM-DD; reject anything else before calling core. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Shown ahead of a pending row's description, inside the description column. */
+const PENDING_LABEL = 'pending ';
+
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
 
 
@@ -882,6 +885,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         // independent below — it's a separate signal (money in vs. out) worth
         // keeping even on a manual row.
         const isManualRow = tx.source === 'manual';
+        // Pending rows are listed here but left out of every summary total, so
+        // label them; otherwise the list and the dashboard silently disagree.
+        const isPending = !!tx.pending;
         const hasTags = !!tx.tag_names;
         return (
           <Box key={tx.id} flexDirection="column">
@@ -889,7 +895,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               <Text color={isManualRow ? C_MANUAL : isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
                 {tx.date}{tx.original_date ? <Text color={C_MANUAL}>*</Text> : null}
               </Text>
-              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored}>{padTruncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW)}</Text>
+              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored}>
+                {isPending ? <Text color={C_WARNING}>{PENDING_LABEL}</Text> : null}
+                {padTruncate(tx.display_name ?? tx.merchant_name ?? tx.name, isPending ? descW - PENDING_LABEL.length : descW)}
+              </Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
                 {fmtTxAmount(tx.amount).padStart(10)}
               </Text>
