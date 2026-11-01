@@ -221,6 +221,13 @@
   margin-left: 1px;
 }
 
+/* Still pending at the bank (tx.pending). Every summary total leaves these
+   out, so the list labels them. Matches the TUI's "pending" label (C_WARNING). */
+.pendingMark {
+  color: var(--warning);
+  margin-right: 6px;
+}
+
 .tdDesc {
   overflow: hidden;
   text-overflow: ellipsis;
