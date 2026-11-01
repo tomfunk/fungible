@@ -522,6 +522,15 @@ describe('Transactions', () => {
     await waitFor(() => expect(frame(r)).not.toContain('2026-05-14*'));
   });
 
+  it('labels a pending row, which the dashboard totals leave out, and only that row', async () => {
+    await db.execute({ sql: 'UPDATE transactions SET pending = 1 WHERE id = ?', args: ['tx-groc-2'] });
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('pending Trader Joes'));
+    expect(frame(r).match(/pending /g)).toHaveLength(1);
+    expect(frame(r)).toContain('Whole Foods'); // a posted row, unlabeled
+    expect(frame(r)).toMatch(/6 transactions/); // still listed, not filtered out
+  });
+
   // The tag panel titles itself with whatever row the cursor is on, so its
   // applied-tag marks have to track that row too. Under a "lacks" filter the
   // row leaves the list the moment it's tagged and the next one slides into

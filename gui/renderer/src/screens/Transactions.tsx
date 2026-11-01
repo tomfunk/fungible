@@ -372,6 +372,7 @@ export function Transactions() {
             const isIgnored = !!tx.ignored;
             const isDateManual = !!tx.original_date;
             const isManualRow = tx.source === 'manual';
+            const isPending = !!tx.pending;
             return (
               <tr
                 key={tx.id}
@@ -390,7 +391,14 @@ export function Transactions() {
                     </span>
                   )}
                 </td>
-                <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
+                <td className={styles.tdDesc}>
+                  {isPending && (
+                    <span className={styles.pendingMark} title="Pending at the bank — not counted in totals until it posts">
+                      pending
+                    </span>
+                  )}
+                  {tx.display_name ?? tx.merchant_name ?? tx.name}
+                </td>
                 <td
                   className={`${styles.tdCat} ${
                     isIgnored || isManualRow ? '' : tx.category === 'Uncategorized' ? 'warn' : isPinned ? 'manual' : 'dim'
