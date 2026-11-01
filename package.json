@@ -65,7 +65,7 @@
     "ink-testing-library": "^4.0.0",
     "jsdom": "^30.0.1",
     "react-dom": "^19.3.0",
-    "recharts": "^3.9.1",
+    "recharts": "^3.10.1",
     "typescript": "^7.0.2",
     "vite": "^7.3.5",
     "vitest": "^5.0.0"
