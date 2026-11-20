@@ -1000,7 +1000,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
       {mode === 'edit' && selected && (
         <ModalPanel borderColor={editPattern.trim() ? C_MANUAL : undefined}>
-          <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
+          <Text bold>Edit  <Text dimColor>{selected.display_name ?? selected.merchant_name ?? selected.name}</Text></Text>
 
           <TransactionDetailLines detail={editDetail && editDetail.id === selected.id ? editDetail.detail : undefined} />
 

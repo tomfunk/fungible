@@ -14,7 +14,7 @@ import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useLoadGuard } from '../hooks/useLoadGuard.js';
 import type { TagOption } from '../../../../core/tags.js';
-import { fmtTxAmount } from '../../../../core/fmt.js';
+import { fmtTransactionSource, fmtTxAmount } from '../../../../core/fmt.js';
 import styles from './Transactions.module.css';
 
 type SortCol = 'date' | 'name' | 'amount' | 'category';
@@ -680,7 +680,7 @@ function EditModal({
   if (suggestion) {
     const isConflict = !!suggestion.conflictingRule;
     return (
-      <Modal title={<>Edit <span className="dim">{tx.name}</span></>} onClose={onClose} accent="var(--manual)">
+      <Modal title={<>Edit <span className="dim">{tx.display_name ?? tx.merchant_name ?? tx.name}</span></>} onClose={onClose} accent="var(--manual)">
         <p className={styles.ruleHint}>
           {isConflict ? (
             <>
@@ -715,7 +715,7 @@ function EditModal({
   }
 
   return (
-    <Modal title={<>Edit <span className="dim">{tx.name}</span></>} onClose={onClose} accent={isRule ? 'var(--manual)' : undefined}>
+    <Modal title={<>Edit <span className="dim">{tx.display_name ?? tx.merchant_name ?? tx.name}</span></>} onClose={onClose} accent={isRule ? 'var(--manual)' : undefined}>
       <DetailBlock detail={detail} />
       <div className={styles.formGrid}>
         <label>Name</label>
@@ -778,15 +778,7 @@ function DetailBlock({
   if (detail.status === 'error') return <p className={`dim ${styles.detailNote}`}>Details unavailable</p>;
   const d = detail.data;
   const account = `${d.accountName}${d.accountMask ? ` ••${d.accountMask}` : ''}${d.institution ? ` · ${d.institution}` : ''}`;
-  const imported = d.importedAt ? d.importedAt.slice(0, 10) : null;
-  const source =
-    d.source === 'plaid'
-      ? 'Plaid'
-      : d.source === 'csv'
-        ? `CSV${d.importFile ? `: ${d.importFile}` : ''}${imported ? ` · imported ${imported}` : ''}`
-        : d.source === 'manual'
-          ? 'Manual entry'
-          : null;
+  const source = fmtTransactionSource(d);
   return (
     <div className={styles.detailBlock}>
       <span>Account</span>

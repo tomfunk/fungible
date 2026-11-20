@@ -672,6 +672,15 @@ describe('GUI Transactions: bulk actions', () => {
       await waitFor(() => expect(screen.getByText(/^Edit/)).toBeTruthy());
     }
 
+    it('title uses the list-row label, not the raw bank name', async () => {
+      await db.execute("UPDATE transactions SET display_name = 'Groceries Run' WHERE name = 'Trader Joes'");
+      renderScreen(<Transactions />);
+      await waitFor(() => expect(screen.getByText('Groceries Run')).toBeTruthy());
+      await userEvent.click(screen.getByText('Groceries Run'));
+      await waitFor(() => expect(screen.getByText(/^Edit/).textContent).toBe('Edit Groceries Run'));
+      await waitFor(() => expect(screen.getByText('Bank description').nextElementSibling?.textContent).toContain('Trader Joes'));
+    });
+
     it('shows a loading note while the form is already usable', async () => {
       vi.spyOn(registry.queries, 'getTransactionDetail').mockReturnValue(new Promise(() => {}));
       await openEdit();

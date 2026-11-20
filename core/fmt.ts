@@ -103,3 +103,19 @@ export function sortTags<T extends { earliest: string | null; latest: string | n
 export function fmtBalanceAge(age: BalanceAge): string {
   return age.days === 0 ? 'updated today' : `updated ${age.days}d ago`;
 }
+
+/** Display text for where a transaction came from (Plaid, CSV import, manual entry). */
+export function fmtTransactionSource(d: {
+  source: 'plaid' | 'csv' | 'manual' | null;
+  importFile: string | null;
+  importedAt: string | null;
+}): string {
+  if (d.source === 'plaid') return 'Plaid';
+  if (d.source === 'manual') return 'Manual entry';
+  if (d.source === 'csv') {
+    return 'CSV'
+      + (d.importFile ? `: ${d.importFile}` : '')
+      + (d.importedAt ? ` · imported ${d.importedAt.slice(0, 10)}` : '');
+  }
+  return '';
+}

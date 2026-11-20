@@ -1059,6 +1059,21 @@ describe('Transactions: row-level keys write the expected rows', () => {
       expect(f).not.toContain('Pending');
     });
 
+    it('title shows the list label, raw bank name only in Bank description; long description wraps without truncation', async () => {
+      const longName = 'TRADER JOES #123 SF POS PURCHASE REFERENCE 9988776655 ENDOFDESCRIPTIONMARKER';
+      await db.execute({ sql: `UPDATE transactions SET source='plaid', merchant_name='Trader Joe''s', display_name=NULL, name=? WHERE id='tx-groc-2'`, args: [longName] });
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Trader Joe'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flatFrame(r)).toContain('Bank description'));
+      const lines = frame(r).split('\n');
+      const title = lines.find(l => l.includes('Edit  ')) ?? '';
+      expect(title).toContain("Trader Joe's");
+      expect(title).not.toContain('TRADER JOES #123');
+      expect(flatFrame(r)).toContain('ENDOFDESCRIPTIONMARKER');
+      expect(flatFrame(r)).toContain('Enter save');
+    });
+
     it('csv row: shows import file and date; pending marker', async () => {
       const ins = await db.execute({
         sql: `INSERT INTO imports (account_id, file_name, file_hash, imported_at, row_count, config) VALUES ('test-credit','chase-may.csv','h',?,1,'{}')`,
