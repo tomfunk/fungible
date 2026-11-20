@@ -120,7 +120,10 @@
   width: 120px;
 }
 .colActions {
-  width: 130px;
+  /* Must fit the widest button set (tag unignore clear delete, ~215px incl.
+     margins + right inset). At 130px the buttons overflowed the fixed-width
+     cell and the last one poked past the hover highlight. */
+  width: 230px;
 }
 
 .table thead th {
@@ -262,7 +265,7 @@
 .tdActions {
   white-space: nowrap;
   text-align: right !important;
-  padding-right: 10px !important;
+  padding-right: 12px !important;
 }
 
 .rowBtn {
@@ -271,7 +274,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 2px 7px;
-  margin-left: 4px;
+  margin-left: 6px;
   visibility: hidden;
 }
 
