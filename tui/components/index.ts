@@ -11,3 +11,4 @@ export { SearchBar } from './SearchBar.js';
 export { DialRow } from './DialRow.js';
 export { TruncatedText } from './TruncatedText.js';
 export { EditTextField, EditToggleField } from './EditField.js';
+export { TransactionDetailLines } from './TransactionDetailLines.js';

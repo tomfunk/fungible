@@ -45,6 +45,7 @@ import {
   addTransaction,
 } from '../../core/transactions.js';
 import { exportTransactionsCsv } from '../../core/export.js';
+import { getTransactionDetail } from '../../core/transaction-detail.js';
 import {
   getTagOptions,
   getTransactionTagIds,
@@ -143,6 +144,7 @@ export const registry = {
     getImportTargets,
     getAllTags,
     getTagSummary,
+    getTransactionDetail,
   },
   transactions: {
     setTransactionCategory,

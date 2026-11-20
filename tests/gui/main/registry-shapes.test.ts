@@ -29,7 +29,7 @@ const GOLDEN: Record<string, string[]> = {
     'getAccountRows', 'getOwnerRows', 'getFilterOptions', 'getCategoryDriftData', 'getFlexDriftData',
     'getAccountDriftData', 'getSearchFilteredData', 'countSearchMatches', 'getTransactions', 'getAllCategories',
     'getHiddenCategorySet', 'getNetWorthHistory', 'getAccountsWithBalances', 'getLinkedAccounts', 'getLinkedItems',
-    'getImportTargets', 'getAllTags', 'getTagSummary',
+    'getImportTargets', 'getAllTags', 'getTagSummary', 'getTransactionDetail',
   ],
   transactions: [
     'setTransactionCategory', 'clearTransactionOverride', 'setTransactionDate', 'clearTransactionDate',

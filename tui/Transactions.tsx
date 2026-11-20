@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text, useInput, useStdout } from 'ink';
 import { writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +20,7 @@ import {
 } from '../core/tags.js';
 import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getAllRules, getDataBounds, getLastSyncedAt, getLinkedAccounts, type TxRow, type SortMode, type LinkedAccount } from '../core/queries.js';
+import { getTransactionDetail, type TransactionDetail } from '../core/transaction-detail.js';
 import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
@@ -28,7 +29,7 @@ import { handleNavKey } from './nav.js';
 import { Divider, padTruncate } from './fmt.js';
 import { fmtTimeAgo, fmtTxAmount } from '../core/fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_WARNING, C_MANUAL, C_ACCENT } from './ui.js';
-import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
+import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField, TransactionDetailLines } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 import { useLoadError, LoadError } from './useLoadError.js';
@@ -72,6 +73,14 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   // Edit panel state
   const [editField, setEditField] = useState<EditField>('name');
   const [editName, setEditName] = useState('');
+  // Read-only provenance for the row being edited, keyed by id so a late
+  // load for a previous row can never paint under a different one. detail
+  // null = load failed/not found; no entry = still loading.
+  const [editDetail, setEditDetail] = useState<{ id: string; detail: TransactionDetail | null } | null>(null);
+  const { stdout } = useStdout();
+  // Drop the blank rows between edit fields on short terminals so the extra
+  // detail lines don't push the hint line off-screen. Unknown rows (tests) = tall.
+  const compactEdit = (stdout?.rows ?? 99) < 30;
   const [editDate, setEditDate] = useState('');
   const [editCatCursor, setEditCatCursor] = useState(0);
   const [editPattern, setEditPattern] = useState('');
@@ -151,6 +160,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       || (mode === 'add' && (addField === 'name' || addField === 'date' || addField === 'amount'));
     setTyping(isTextInput);
   }, [mode, editField, addField]);
+  useEffect(() => { if (mode !== 'edit') setEditDetail(null); }, [mode]);
 
   const selected = txs[cursor];
 
@@ -160,6 +170,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openEdit() {
     if (!selected) return;
+    const txId = selected.id;
+    setEditDetail(null);
+    // Never rejects: editing must not depend on the detail load.
+    void track(getTransactionDetail(txId).catch(() => null)).then((d) => setEditDetail({ id: txId, detail: d }));
     void track(getAllCategories()).then((cats) => {
       setCategories(cats);
       setEditName('');
@@ -988,7 +1002,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         <ModalPanel borderColor={editPattern.trim() ? C_MANUAL : undefined}>
           <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
 
-          <Box marginTop={1} flexDirection="column" gap={1}>
+          <TransactionDetailLines detail={editDetail && editDetail.id === selected.id ? editDetail.detail : undefined} />
+
+          <Box marginTop={1} flexDirection="column" gap={compactEdit ? 0 : 1}>
             <EditTextField label="Name" labelWidth={12} active={editField === 'name'} value={editName} color={C_WARNING} placeholder="type new name…" emptyText="(unchanged)" />
             <EditToggleField label="Category" labelWidth={12} active={editField === 'category'} value={categories[editCatCursor] ?? '—'} />
             <EditTextField label="Date" labelWidth={12} active={editField === 'date'} value={editDate} color={C_WARNING} placeholder="YYYY-MM-DD" emptyText="—" />
