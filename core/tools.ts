@@ -862,7 +862,10 @@ async function executeToolImpl(
       }[];
       if (!rules.length) return 'No name rules defined.';
       return rules.map((r) => {
-        const amt = r.min_amount != null ? ` [≥$${r.min_amount}]` : r.max_amount != null ? ` [≤$${r.max_amount}]` : '';
+        const amt = r.min_amount != null && r.max_amount != null
+          ? ` [$${r.min_amount}–$${r.max_amount}]`
+          : r.min_amount != null ? ` [≥$${r.min_amount}]`
+          : r.max_amount != null ? ` [≤$${r.max_amount}]` : '';
         const scope = r.account_id ? ` @${r.account_name ?? r.account_id}` : '';
         return `[${r.id}] ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → "${r.replacement}"${scope}`;
       }).join('\n');
