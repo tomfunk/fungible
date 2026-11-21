@@ -658,6 +658,10 @@ export type TxRow = {
   // is reattributed to another period; NULL unless `date` has been overridden.
   // UI uses it to show "reattributed from X" and offer restore-to-posting-date.
   original_date: string | null;
+  // 1 while the bank still reports the transaction as pending. Every summary
+  // total (dashboard, trends, health) leaves pending rows out, but this list
+  // shows them, so the UI marks them to explain why the two can disagree.
+  pending: number;
 };
 
 function buildSearchRe(search: string): RegExp {
@@ -746,7 +750,7 @@ export async function getTransactions(filters: {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({
-    sql: `SELECT t.id, t.date, t.original_date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored, t.source,
+    sql: `SELECT t.id, t.date, t.original_date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored, t.pending, t.source,
             (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
           FROM transactions t ${where}
           ORDER BY ${SORT_ORDER_BY[sort]}

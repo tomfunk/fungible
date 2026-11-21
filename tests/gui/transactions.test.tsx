@@ -233,6 +233,17 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.getByText(/category rule \(\d+ updated\)/)).toBeTruthy());
   });
 
+  it('labels a pending row, which the dashboard totals leave out, and only that row', async () => {
+    await db.execute({ sql: 'UPDATE transactions SET pending = 1 WHERE id = ?', args: ['tx-groc-2'] });
+    renderScreen(<Transactions />);
+    await waitFor(() => expect(screen.getByText('Trader Joes')).toBeTruthy());
+    const marks = screen.getAllByText('pending');
+    expect(marks).toHaveLength(1);
+    expect(marks[0].closest('tr')!.textContent).toContain('Trader Joes');
+    expect(marks[0].getAttribute('title')).toMatch(/not counted in totals/);
+    expect(screen.getByText('9 transactions')).toBeTruthy(); // still listed, not filtered out
+  });
+
   it('ignore hover action marks a transaction ignored', async () => {
     renderScreen(<Transactions />);
     await waitFor(() => expect(screen.getAllByText('Sweetgreen').length).toBeGreaterThan(0));

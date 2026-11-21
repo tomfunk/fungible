@@ -675,6 +675,18 @@ describe('getTransactions — original_date', () => {
   });
 });
 
+describe('getTransactions — pending', () => {
+  // The list keeps pending rows that every summary total drops, so it has to
+  // say which ones they are for the UI to mark them.
+  it('lists pending rows alongside posted ones and flags which is which', async () => {
+    await insertTx({ amount: 30, date: '2026-10-31', name: 'Posted' });
+    await insertTx({ amount: 40, date: '2026-10-31', name: 'Still pending', pending: 1 });
+    const rows = await getTransactions({ from: '2026-10-01', to: '2026-10-31' });
+    const byName = Object.fromEntries(rows.map((r) => [r.name, Number(r.pending)]));
+    expect(byName).toEqual({ Posted: 0, 'Still pending': 1 });
+  });
+});
+
 // ──────────────────────────────────────────────────────────────────────
 describe('hasAccounts', () => {
   it('returns false when no accounts linked', async () => {
