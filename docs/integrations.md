@@ -118,12 +118,15 @@ Same set across MCP and HTTP.
 | `delete_name_rule` | Delete a name rule |
 | `list_hidden_categories` | List hidden categories |
 | `toggle_hidden_category` | Show or hide a category |
-| `list_accounts` | List connected accounts |
+| `list_accounts` | List connected accounts with their IDs (for tools that take `account_id`) |
 | `sync` | Pull latest transactions from Plaid |
 | `uncategorized_summary` | Most common uncategorized transaction names |
 | `list_tags` | List tags with transaction counts |
 | `tag_summary` | Income / expenses / category breakdown for a tag |
 | `tag_transaction` | Add or remove a tag on a transaction |
+| `list_tag_rules` | List tag rules |
+| `add_tag_rule` | Add a tag rule (substring, regex, or all) and apply it to existing transactions |
+| `delete_tag_rule` | Delete a tag rule (tags it already applied stay) |
 | `get_balances` | Current balances, net worth, total cash and liquid |
 | `get_financial_health` | Runway, FIRE number, years to retirement |
 | `get_trends` | Month-by-month spending trends for the last N months |
