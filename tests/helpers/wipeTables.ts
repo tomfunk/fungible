@@ -1,5 +1,6 @@
 /** Tables the per-screen TUI tests clear between tests (order is FK-safe). */
 export const SCREEN_TABLES = [
+  'sheet_sources',
   'transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
   'category_rules', 'name_rules', 'hidden_categories', 'balance_history', 'settings',
 ] as const;

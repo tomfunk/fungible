@@ -124,6 +124,15 @@ export async function initDb() {
       max_date TEXT,
       config TEXT NOT NULL
     )`,
+    // A published Google Sheet CSV that is the source of truth for one
+    // account's transactions (core/sheets.ts). last_synced_at is written only
+    // by a sync that applied the sheet, as plaid_items.last_synced_at is.
+    `CREATE TABLE IF NOT EXISTS sheet_sources (
+      account_id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      last_synced_at INTEGER,
+      last_error TEXT
+    )`,
     `CREATE TABLE IF NOT EXISTS household_members (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL DEFAULT '',

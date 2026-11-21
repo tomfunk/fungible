@@ -6,6 +6,7 @@ import { applyTagRules } from './tag-rules.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
 import { cascadeDeleteTransactionsSql } from './imports.js';
 import { decryptToken } from './crypto.js';
+import { syncSheets } from './sheets.js';
 import type { AccountsGetResponse, Transaction, TransactionsSyncResponse } from 'plaid';
 import { describeSyncProgress, type SyncProgress, type SyncProgressFn } from './sync-progress.js';
 
@@ -179,7 +180,8 @@ export type SyncItemResult = {
 };
 
 /**
- * Syncs every Plaid item, or just `itemIds` when given a non-empty list —
+ * Syncs every Plaid item and every sheet-backed account, or just the Plaid
+ * items in `itemIds` when given a non-empty list —
  * used right after a link so the new institution syncs immediately instead of
  * waiting for the next launch. Per-item error capture and the debounce are
  * unchanged either way.
@@ -228,5 +230,9 @@ export async function syncAll(
       });
     }
   }
+  // Sheet-backed accounts (core/sheets.ts) ride along with a full sync only: a
+  // scoped sync speaks for the Plaid items it names. Their results are keyed by
+  // account id rather than item id.
+  if (!itemIds) results.push(...await syncSheets(force));
   return results;
 }

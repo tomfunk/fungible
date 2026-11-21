@@ -301,7 +301,7 @@ export function Accounts() {
                       <td className="dim">{awaiting ? '' : (SUBTYPE_DISPLAY[raw] ?? raw)}</td>
                       <td className="dim">{acct.institution_name ?? ''}</td>
                       <td>
-                        {acct.item_id && failingItems.has(acct.item_id) ? (
+                        {failingItems.has(acct.item_id ?? acct.id) ? (
                           <span className="neg">⚠ sync failed</span>
                         ) : awaiting ? (
                           <span className="warn">◷ awaiting first sync</span>
