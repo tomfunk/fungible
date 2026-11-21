@@ -341,3 +341,32 @@
   width: 100px;
   margin-left: 8px;
 }
+
+.detailBlock {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 4px 14px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detailBlock > span:nth-child(odd) {
+  color: var(--text-dim);
+}
+
+.detailNote {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.pendingBadge {
+  grid-column: 2;
+  justify-self: start;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--warn, var(--text-dim));
+}

@@ -9,11 +9,12 @@ import { Modal } from '../components/Modal.js';
 import { MONTHS } from '../../../../core/dateUtils.js';
 import type { SortMode, TxRow, FilterOptionAccount } from '../../../../core/queries.js';
 import type { RuleSuggestion } from '../../../../core/rules.js';
+import type { TransactionDetail } from '../../../../core/transaction-detail.js';
 import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useLoadGuard } from '../hooks/useLoadGuard.js';
 import type { TagOption } from '../../../../core/tags.js';
-import { fmtTxAmount } from '../../../../core/fmt.js';
+import { fmtTransactionSource, fmtTxAmount } from '../../../../core/fmt.js';
 import styles from './Transactions.module.css';
 
 type SortCol = 'date' | 'name' | 'amount' | 'category';
@@ -559,6 +560,19 @@ function EditModal({
   const [error, setError] = useState('');
   const [suggestion, setSuggestion] = useState<RuleSuggestion | null>(null);
   const matchGuard = useLoadGuard();
+  // Read-only provenance block; never gates the form.
+  const [detail, setDetail] = useState<
+    { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: TransactionDetail }
+  >({ status: 'loading' });
+
+  useEffect(() => {
+    let live = true;
+    api.queries
+      .getTransactionDetail(tx.id)
+      .then((d) => { if (live) setDetail(d ? { status: 'ready', data: d } : { status: 'error' }); })
+      .catch(() => { if (live) setDetail({ status: 'error' }); });
+    return () => { live = false; };
+  }, [tx.id]);
 
   useEffect(() => {
     if (pattern.trim()) {
@@ -666,7 +680,7 @@ function EditModal({
   if (suggestion) {
     const isConflict = !!suggestion.conflictingRule;
     return (
-      <Modal title={<>Edit <span className="dim">{tx.name}</span></>} onClose={onClose} accent="var(--manual)">
+      <Modal title={<>Edit <span className="dim">{tx.display_name ?? tx.merchant_name ?? tx.name}</span></>} onClose={onClose} accent="var(--manual)">
         <p className={styles.ruleHint}>
           {isConflict ? (
             <>
@@ -701,7 +715,8 @@ function EditModal({
   }
 
   return (
-    <Modal title={<>Edit <span className="dim">{tx.name}</span></>} onClose={onClose} accent={isRule ? 'var(--manual)' : undefined}>
+    <Modal title={<>Edit <span className="dim">{tx.display_name ?? tx.merchant_name ?? tx.name}</span></>} onClose={onClose} accent={isRule ? 'var(--manual)' : undefined}>
+      <DetailBlock detail={detail} />
       <div className={styles.formGrid}>
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="(unchanged)" autoFocus />
@@ -751,6 +766,36 @@ function EditModal({
         </button>
       </div>
     </Modal>
+  );
+}
+
+function DetailBlock({
+  detail,
+}: {
+  detail: { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: TransactionDetail };
+}) {
+  if (detail.status === 'loading') return <p className={`dim ${styles.detailNote}`}>Loading details…</p>;
+  if (detail.status === 'error') return <p className={`dim ${styles.detailNote}`}>Details unavailable</p>;
+  const d = detail.data;
+  const account = `${d.accountName}${d.accountMask ? ` ••${d.accountMask}` : ''}${d.institution ? ` · ${d.institution}` : ''}`;
+  const source = fmtTransactionSource(d);
+  return (
+    <div className={styles.detailBlock}>
+      <span>Account</span>
+      <span>{account}</span>
+      <span>Bank description</span>
+      <span>
+        {d.name}
+        {d.merchantName && d.merchantName !== d.name && <span className="dim"> · {d.merchantName}</span>}
+      </span>
+      {source && (
+        <>
+          <span>Source</span>
+          <span>{source}</span>
+        </>
+      )}
+      {d.pending && <span className={styles.pendingBadge}>Pending</span>}
+    </div>
   );
 }
 

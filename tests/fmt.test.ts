@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt, fmtBalanceAge, fmtPctSigned, fmtCompactSigned, fmtSpan, sortTags } from '../core/fmt.js';
+import { fmt, fmtSigned, fmtTxAmount, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo, fmtSyncedAt, fmtBalanceAge, fmtPctSigned, fmtCompactSigned, fmtSpan, sortTags, fmtTransactionSource } from '../core/fmt.js';
 import { useFixedClock } from './helpers/fakeClock.js';
 import { MONTHS } from '../core/dateUtils.js';
 import { bar, truncate } from '../tui/charUtils.js';
@@ -282,5 +282,19 @@ describe('sortTags', () => {
     const before = tags.map((x) => x.name);
     sortTags(tags, 'recent');
     expect(tags.map((x) => x.name)).toEqual(before);
+  });
+});
+
+describe('fmtTransactionSource', () => {
+  it.each([
+    [{ source: null, importFile: 'a.csv', importedAt: '2026-01-02' }, ''],
+    [{ source: 'plaid', importFile: null, importedAt: null }, 'Plaid'],
+    [{ source: 'manual', importFile: null, importedAt: null }, 'Manual entry'],
+    [{ source: 'csv', importFile: null, importedAt: null }, 'CSV'],
+    [{ source: 'csv', importFile: 'chase.csv', importedAt: null }, 'CSV: chase.csv'],
+    [{ source: 'csv', importFile: null, importedAt: '2026-03-04T10:11:12Z' }, 'CSV · imported 2026-03-04'],
+    [{ source: 'csv', importFile: 'chase.csv', importedAt: '2026-03-04 10:11:12' }, 'CSV: chase.csv · imported 2026-03-04'],
+  ] as const)('%j -> %s', (d, expected) => {
+    expect(fmtTransactionSource({ ...d })).toBe(expected);
   });
 });

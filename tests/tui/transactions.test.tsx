@@ -32,6 +32,13 @@ vi.mock('node:fs', async (importActual) => {
   };
 });
 
+// Real getTransactionDetail by default; one test swaps in a rejection to
+// prove the edit modal never depends on the detail load.
+vi.mock('../../core/transaction-detail.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../core/transaction-detail.js')>();
+  return { ...actual, getTransactionDetail: vi.fn(actual.getTransactionDetail) };
+});
+
 // Keep householdMembers real (a pure helper used by the owner picker) but stub
 // the DB-backed loadProfile/saveProfile. loadProfile is a vi.fn so a test can
 // supply a profile whose members populate the cycle.
@@ -41,6 +48,7 @@ vi.mock('../../core/profile.js', async (importActual) => {
 });
 
 import { db } from '../../core/db.js';
+import * as txDetail from '../../core/transaction-detail.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
@@ -1034,5 +1042,65 @@ describe('Transactions: row-level keys write the expected rows', () => {
     await press(r, RIGHT);
     await waitFor(() => expect(flatFrame(r)).toContain('New Year Brunch'));
     expect(flatFrame(r)).not.toContain('Holiday Gift');
+  });
+
+  describe('edit modal transaction details', () => {
+    // Trader Joes is the first row (default sort), on Test Visa ••0002.
+    it('plaid row: shows account, raw bank description and Plaid source', async () => {
+      await db.execute(`UPDATE transactions SET source='plaid', merchant_name='Trader Joe''s', name='TRADER JOES #123 SF' WHERE id='tx-groc-2'`);
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Trader Joe'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flatFrame(r)).toContain('Bank description'));
+      const f = flatFrame(r);
+      expect(f).toContain('Test Visa ••0002');
+      expect(f).toContain('TRADER JOES #123 SF (Trader Joe\'s)');
+      expect(f).toMatch(/Source\s+Plaid/);
+      expect(f).not.toContain('Pending');
+    });
+
+    it('title shows the list label, raw bank name only in Bank description; long description wraps without truncation', async () => {
+      const longName = 'TRADER JOES #123 SF POS PURCHASE REFERENCE 9988776655 ENDOFDESCRIPTIONMARKER';
+      await db.execute({ sql: `UPDATE transactions SET source='plaid', merchant_name='Trader Joe''s', display_name=NULL, name=? WHERE id='tx-groc-2'`, args: [longName] });
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Trader Joe'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flatFrame(r)).toContain('Bank description'));
+      const lines = frame(r).split('\n');
+      const title = lines.find(l => l.includes('Edit  ')) ?? '';
+      expect(title).toContain("Trader Joe's");
+      expect(title).not.toContain('TRADER JOES #123');
+      expect(flatFrame(r)).toContain('ENDOFDESCRIPTIONMARKER');
+      expect(flatFrame(r)).toContain('Enter save');
+    });
+
+    it('csv row: shows import file and date; pending marker', async () => {
+      const ins = await db.execute({
+        sql: `INSERT INTO imports (account_id, file_name, file_hash, imported_at, row_count, config) VALUES ('test-credit','chase-may.csv','h',?,1,'{}')`,
+        args: [Date.UTC(2026, 4, 20)],
+      });
+      await db.execute({ sql: `UPDATE transactions SET source='csv', pending=1, import_id=? WHERE id='tx-groc-2'`, args: [Number(ins.lastInsertRowid)] });
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flatFrame(r)).toContain('CSV: chase-may.csv · imported 2026-05-20'));
+      expect(flatFrame(r)).toContain('Pending');
+      expect(flatFrame(r)).not.toContain('details unavailable');
+    });
+
+    it('load failure: modal still opens, says details unavailable, and saving works', async () => {
+      vi.mocked(txDetail.getTransactionDetail).mockRejectedValueOnce(new Error('boom'));
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flatFrame(r)).toContain('details unavailable'));
+      expect(flatFrame(r)).toContain('Enter save');
+      expect(flatFrame(r)).not.toContain('Bank description');
+      r.stdin.write('Groceries Run');
+      await waitFor(() => expect(flatFrame(r)).toContain('Groceries Run'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flatFrame(r)).not.toContain('Enter save'));
+      await waitFor(() => expect(flatFrame(r)).toContain('Groceries Run'));
+    });
   });
 });

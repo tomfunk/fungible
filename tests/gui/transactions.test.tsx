@@ -658,4 +658,89 @@ describe('GUI Transactions: bulk actions', () => {
     expect((await readTx(db, 'tx-shopping'))!.ignored).toBe(0);
     expect((await readTx(db, 'tx-bills-1'))!.ignored).toBe(0); // was never ignored; stays so
   });
+
+  describe('edit modal details', () => {
+    const base = {
+      id: 'tx-trader', accountName: 'Everyday Checking', accountMask: '4242', institution: 'Chase',
+      name: 'TRADER JOE S #552 OAKLAND', merchantName: null, displayName: null, pending: false,
+      source: 'plaid' as const, importFile: null, importedAt: null,
+    };
+    async function openEdit() {
+      renderScreen(<Transactions />);
+      await waitFor(() => expect(screen.getByText('Trader Joes')).toBeTruthy());
+      await userEvent.click(screen.getByText('Trader Joes'));
+      await waitFor(() => expect(screen.getByText(/^Edit/)).toBeTruthy());
+    }
+
+    it('title uses the list-row label, not the raw bank name', async () => {
+      await db.execute("UPDATE transactions SET display_name = 'Groceries Run' WHERE name = 'Trader Joes'");
+      renderScreen(<Transactions />);
+      await waitFor(() => expect(screen.getByText('Groceries Run')).toBeTruthy());
+      await userEvent.click(screen.getByText('Groceries Run'));
+      await waitFor(() => expect(screen.getByText(/^Edit/).textContent).toBe('Edit Groceries Run'));
+      await waitFor(() => expect(screen.getByText('Bank description').nextElementSibling?.textContent).toContain('Trader Joes'));
+    });
+
+    it('shows a loading note while the form is already usable', async () => {
+      vi.spyOn(registry.queries, 'getTransactionDetail').mockReturnValue(new Promise(() => {}));
+      await openEdit();
+      expect(screen.getByText('Loading details…')).toBeTruthy();
+      expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+      vi.restoreAllMocks();
+    });
+
+    it('shows account, raw bank description, differing merchant and plaid source', async () => {
+      vi.spyOn(registry.queries, 'getTransactionDetail').mockResolvedValue({ ...base, merchantName: 'Trader Joe\'s', pending: true });
+      await openEdit();
+      await waitFor(() => expect(screen.getByText('Everyday Checking ••4242 · Chase')).toBeTruthy());
+      expect(screen.getByText(/TRADER JOE S #552 OAKLAND/)).toBeTruthy();
+      expect(screen.getByText(/Trader Joe's/)).toBeTruthy();
+      expect(screen.getByText('Plaid')).toBeTruthy();
+      expect(screen.getByText('Pending')).toBeTruthy();
+      vi.restoreAllMocks();
+    });
+
+    it('shows csv file and import date, and omits merchant when identical to the name', async () => {
+      vi.spyOn(registry.queries, 'getTransactionDetail').mockResolvedValue({
+        ...base, accountMask: null, institution: null, merchantName: base.name,
+        source: 'csv', importFile: 'chase-march.csv', importedAt: '2026-04-02T10:00:00.000Z',
+      });
+      await openEdit();
+      await waitFor(() => expect(screen.getByText('CSV: chase-march.csv · imported 2026-04-02')).toBeTruthy());
+      expect(screen.getByText('Everyday Checking')).toBeTruthy();
+      expect(screen.getAllByText(/TRADER JOE S #552 OAKLAND/)).toHaveLength(1);
+      expect(screen.queryByText('Pending')).toBeNull();
+      vi.restoreAllMocks();
+    });
+
+    it('shows manual entry source', async () => {
+      vi.spyOn(registry.queries, 'getTransactionDetail').mockResolvedValue({ ...base, source: 'manual' });
+      await openEdit();
+      await waitFor(() => expect(screen.getByText('Manual entry')).toBeTruthy());
+      vi.restoreAllMocks();
+    });
+
+    it('on error says details are unavailable and Save still works', async () => {
+      vi.spyOn(registry.queries, 'getTransactionDetail').mockRejectedValue(new Error('boom'));
+      await openEdit();
+      await waitFor(() => expect(screen.getByText('Details unavailable')).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(screen.getByText('No changes')).toBeTruthy());
+      vi.restoreAllMocks();
+    });
+
+    it('null detail also reads as unavailable', async () => {
+      vi.spyOn(registry.queries, 'getTransactionDetail').mockResolvedValue(null);
+      await openEdit();
+      await waitFor(() => expect(screen.getByText('Details unavailable')).toBeTruthy());
+      vi.restoreAllMocks();
+    });
+
+    it('real core query: seeded row shows its account', async () => {
+      await openEdit();
+      await waitFor(() => expect(screen.queryByText('Loading details…')).toBeNull());
+      expect(screen.queryByText('Details unavailable')).toBeNull();
+      expect(screen.getByText('Bank description')).toBeTruthy();
+    });
+  });
 });
