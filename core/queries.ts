@@ -245,7 +245,7 @@ export async function getDataBounds(): Promise<{ minDate: string; maxDate: strin
   return { minDate: row?.minDate ?? '2000-01-01', maxDate: row?.maxDate ?? '2099-12-31' };
 }
 
-export type AccountRow = { id: string; name: string; subtype: string | null; spending: number; income: number };
+export type AccountRow = { id: string; name: string; nickname: string | null; subtype: string | null; spending: number; income: number };
 
 // Per-account spending/income. Honors the shared filter's other dimensions
 // (categories/owners/tags) but ignores its own accounts dimension — the view
@@ -255,7 +255,7 @@ export type AccountRow = { id: string; name: string; subtype: string | null; spe
 export async function getAccountRows(from: string, to: string, filter?: Filter): Promise<AccountRow[]> {
   const f = buildFilterClause({ ...filter, accounts: undefined }, 't');
   const result = await db.execute({
-    sql: `SELECT a.id, a.name, a.subtype,
+    sql: `SELECT a.id, a.name, a.nickname, a.subtype,
             COALESCE(SUM(CASE WHEN t.amount > 0 AND t.date >= ? AND t.date <= ?
                               AND t.pending = 0 AND t.ignored = 0
                               AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as spending,
@@ -264,7 +264,7 @@ export async function getAccountRows(from: string, to: string, filter?: Filter):
                                AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as income
           FROM accounts a
           LEFT JOIN transactions t ON t.account_id = a.id${f.clause}
-          GROUP BY a.id, a.name, a.subtype
+          GROUP BY a.id, a.name, a.nickname, a.subtype
           ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, spending DESC`,
     args: [from, to, from, to, ...f.args],
   });

@@ -103,6 +103,16 @@ describe('Dashboard', () => {
     expect(frame(r)).not.toContain('Test Checking');
   });
 
+  it('account view labels a nicknamed account by its nickname, like the Accounts screen', async () => {
+    await db.execute({ sql: "UPDATE accounts SET nickname = 'Joint Visa' WHERE id = 'test-credit'", args: [] });
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    await pressKeys(r, ['\t', '\t']); // flex, account
+    await waitFor(() => expect(frame(r)).toContain('Joint Visa'));
+    expect(frame(r)).not.toContain('Test Visa');
+    expect(frame(r)).toContain('Test Checking'); // un-nicknamed accounts keep their name
+  });
+
   it('owner view is skipped in the Tab cycle when no account has an owner', async () => {
     // Seeded accounts have no owner, so account → Tab should wrap back to categories.
     const r = dash();
